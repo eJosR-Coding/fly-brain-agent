@@ -23,7 +23,7 @@ Mode: strict (source: global orchestrator config "Strict TDD Mode: enabled"). Ru
 
 ## Tasks
 - [x] T1 Scaffold repo (git, uv, README, .gitignore). Route: inline (mechanical).
-- [ ] T2 `flybrain.atlas`: load annotations, µm positions, find / count_by / describe. Route: delegated writer (2+ non-trivial files).
+- [x] T2 `flybrain.atlas`: load annotations, µm positions, find / count_by / describe. Route: delegated writer (2+ non-trivial files).
 - [ ] T3 MCP server (FastMCP) wrapping the atlas + how to register it in Claude Code. Route: delegated writer.
 
 ## Acceptance criteria
@@ -33,6 +33,9 @@ Mode: strict (source: global orchestrator config "Strict TDD Mode: enabled"). Ru
 
 ## Progress / evidence
 - T1: see commit log.
+- T2 RED: `uv run pytest -q` failed at collection with `ModuleNotFoundError: No module named 'flybrain.atlas'` before implementation.
+- T2 GREEN: `uv run pytest -q` -> 16 passed (15 fixture tests + 1 real-data integration). Real data: 139,248 neurons, extent within 2% of 815 x 392 x 278 um.
+- T2 commit: pending (writer does not commit).
 
 ## Next step
-T2.
+T3.

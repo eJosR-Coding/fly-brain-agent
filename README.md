@@ -18,9 +18,20 @@ core       flybrain.atlas          positions in µm, cell types, neurotransmitte
 
 | Layer | State |
 |---|---|
-| core: atlas | in progress |
+| core: atlas | done |
 | tools: MCP server | planned |
 | agent, backend, frontend | planned |
+
+## Core
+
+```python
+from flybrain.atlas import load_atlas
+
+atlas = load_atlas("data/raw/flywire_neuron_annotations.tsv")
+atlas.find(cell_type="PEN", side="left", limit=5)  # prefix match, filters are AND-ed
+atlas.count_by("top_nt", super_class="central")    # {"acetylcholine": ..., "unknown": ...}
+atlas.describe(720575940628857210)                  # one neuron as a plain dict (positions in um)
+```
 
 ## Data
 
