@@ -32,10 +32,10 @@ Mode: strict (source: global orchestrator config "Strict TDD Mode: enabled"). Ru
 - MCP server starts and lists its tools.
 
 ## Progress / evidence
-- T1: see commit log.
+- T1: commit d3a9ff1 (main).
 - T2 RED: `uv run pytest -q` failed at collection with `ModuleNotFoundError: No module named 'flybrain.atlas'` before implementation.
 - T2 GREEN: `uv run pytest -q` -> 16 passed (15 fixture tests + 1 real-data integration). Real data: 139,248 neurons, extent within 2% of 815 x 392 x 278 um.
-- T2 commit: pending (writer does not commit).
+- T2: commit 774b938 (feat/atlas-core). Parent re-ran pytest: 16 passed. Review assess: medium, review_due=false (under_budget, 198 lines) -> stays pending in slice. Engram mirror: pending (mem_save blocked by hook/auto-mode).
 
 ## Next step
 T3.
