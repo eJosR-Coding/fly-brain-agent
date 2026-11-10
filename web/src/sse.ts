@@ -26,6 +26,20 @@ export class SSEParser {
     return out;
   }
 
+  /** End of stream: a held-back trailing CR was a real line terminator. An unterminated partial line is dropped (per spec). */
+  end(): SSEEvent[] {
+    if (!this.buffer.endsWith("\r")) return [];
+    const lines = this.buffer.split(/\r\n|\n|\r/);
+    this.buffer = "";
+    lines.pop(); // the empty remainder after the final CR
+    const out: SSEEvent[] = [];
+    for (const line of lines) {
+      const ev = this.line(line);
+      if (ev) out.push(ev);
+    }
+    return out;
+  }
+
   private line(line: string): SSEEvent | null {
     if (line === "") return this.dispatch();
     if (line.startsWith(":")) return null; // comment / ping
@@ -67,6 +81,7 @@ export async function* parseSSE(stream: ReadableStream<Uint8Array>): AsyncGenera
       yield* parser.push(decoder.decode(value, { stream: true }));
     }
     yield* parser.push(decoder.decode());
+    yield* parser.end();
   } finally {
     reader.releaseLock();
   }

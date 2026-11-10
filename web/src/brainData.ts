@@ -54,6 +54,12 @@ export async function loadBrain(fetchFn: typeof fetch = fetch, base = "/api"): P
   if (buf.byteLength !== meta.bytes) {
     throw new Error(`brain points are ${buf.byteLength} bytes, meta says ${meta.bytes}`);
   }
+  if (buf.byteLength % 12 !== 0) {
+    throw new Error(`brain points are ${buf.byteLength} bytes, not a multiple of 12 (3 float32 per neuron)`);
+  }
+  if (buf.byteLength !== meta.count * 12) {
+    throw new Error(`meta says ${meta.count} points but the data holds ${buf.byteLength / 12} (${meta.count} points need ${meta.count * 12} bytes)`);
+  }
   const positions = new Float32Array(buf);
   const { min, max } = computeBounds(positions);
   const center: Vec3 = [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2];
