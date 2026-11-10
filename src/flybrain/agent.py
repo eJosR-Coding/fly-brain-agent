@@ -18,13 +18,15 @@ final reply is reported instead of returned as '', and a dead MCP server stops t
 with ServerStoppedError instead of letting the model improvise without tools.
 """
 
+from collections.abc import AsyncIterator
+
 from langchain_core.runnables import RunnableConfig
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from flybrain.agent_mcp import server_gone, stopped_error
+from flybrain.agent_mcp import ServerStoppedError, server_gone, stopped_error
 
 SYSTEM_PROMPT = (
     "You explore the FlyWire fruit-fly brain through tools. "
@@ -61,8 +63,11 @@ def _route(state: MessagesState, config: RunnableConfig) -> str:
         return END
     budget = (config.get("configurable") or {}).get("max_tool_rounds")
     if budget is not None:
+        history = state["messages"][:-1]
+        # budget is per TURN: with a checkpointer the history spans the whole conversation
+        turn_start = max((i for i, m in enumerate(history) if m.type == "human"), default=-1) + 1
         done = sum(
-            1 for m in state["messages"][:-1]
+            1 for m in history[turn_start:]
             if getattr(m, "tool_calls", None) or getattr(m, "invalid_tool_calls", None)
         )
         if done >= budget:
@@ -87,8 +92,11 @@ def _reject_invalid_calls(state: MessagesState):
     return {"messages": replies}
 
 
-def build_graph(model, tools):
-    """Compile the explicit agent <-> tools loop for a chat model and tools."""
+def build_graph(model, tools, checkpointer=None):
+    """Compile the explicit agent <-> tools loop for a chat model and tools.
+
+    Pass a checkpointer (e.g. InMemorySaver) to get multi-turn memory per thread_id.
+    """
     model_with_tools = model.bind_tools(tools)
 
     async def call_model(state: MessagesState):
@@ -105,7 +113,7 @@ def build_graph(model, tools):
     )
     graph.add_edge("tools", "agent")
     graph.add_edge("fix_calls", "agent")
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 def _hard_stop(max_steps: int) -> str:
@@ -138,3 +146,66 @@ async def ask(graph, question: str, max_steps: int = MAX_STEPS) -> str:
         return _hard_stop(max_steps)  # the model wanted another round past the budget
     answer = result["messages"][-1].text
     return answer if answer.strip() else NO_ANSWER
+
+
+def _check_max_steps(max_steps) -> None:
+    if isinstance(max_steps, bool) or not isinstance(max_steps, int) or max_steps < 1:
+        raise ValueError(f"max_steps must be an int >= 1, got {max_steps!r}")
+
+
+async def stream_events(
+    graph, question: str, thread_id: str, max_steps: int = MAX_STEPS
+) -> AsyncIterator[dict]:
+    """Run one turn and yield typed events (plain dicts) as the graph progresses.
+
+    Types: ``tool_call`` {tool, args}, ``tool_result`` {tool, content, error},
+    ``answer`` {text}, ``error`` {message}. Failures never raise: they become one final
+    ``error`` event (same texts as ``ask``), so a consumer can always close the stream.
+    ``thread_id`` selects the conversation memory (needs a checkpointer in the graph).
+    A tool_call event is emitted when the model asks; if the budget then cuts the run,
+    that last request never executes and the turn ends with the hard-stop error.
+    """
+    _check_max_steps(max_steps)
+    config = {
+        "recursion_limit": 2 * max_steps + 2,
+        "configurable": {"max_tool_rounds": max_steps, "thread_id": thread_id},
+    }
+    last_agent: AIMessage | None = None
+    try:
+        async for update in graph.astream(
+            {"messages": [HumanMessage(question)]}, config=config, stream_mode="updates"
+        ):
+            for node, delta in update.items():
+                for msg in (delta or {}).get("messages", []):
+                    if node == "agent":
+                        last_agent = msg
+                        for tc in getattr(msg, "tool_calls", None) or []:
+                            yield {"type": "tool_call", "tool": tc["name"], "args": tc["args"]}
+                    elif isinstance(msg, ToolMessage):
+                        yield {
+                            "type": "tool_result",
+                            "tool": msg.name,
+                            "content": msg.text,
+                            "error": msg.status == "error",
+                        }
+    except GraphRecursionError:
+        yield {"type": "error", "message": _hard_stop(max_steps)}
+        return
+    except ServerStoppedError as exc:
+        yield {"type": "error", "message": str(exc)}
+        return
+    except Exception as exc:  # model/provider failure: report it, never hang the stream
+        dead = server_gone(exc)
+        if dead is not None:
+            yield {"type": "error", "message": str(stopped_error(dead))}
+        else:
+            reason = " ".join(str(exc).split()) or type(exc).__name__
+            yield {"type": "error", "message": f"model call failed: {reason}"}
+        return
+    if last_agent is None:
+        yield {"type": "error", "message": NO_ANSWER}
+    elif getattr(last_agent, "tool_calls", None) or getattr(last_agent, "invalid_tool_calls", None):
+        yield {"type": "error", "message": _hard_stop(max_steps)}
+    else:
+        text = last_agent.text
+        yield {"type": "answer", "text": text if text.strip() else NO_ANSWER}
