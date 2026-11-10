@@ -45,5 +45,8 @@ The backend (T5) streams highlights as row indices, but nothing renders them. Th
 - README updated (Viewer section, roadmap, badge 235 = 212 python + 23 web).
 - Engram mirror: pending (mem_save blocked by hook/auto-mode in this session).
 
+- Review (2026-11-10), 4 slices, all granted, approved, acknowledged: P 3133884..49ec384 (PR #4 turn-cleanup fixes, 314 lines) review-70175b8a2011f4f7; Q f988eb3..0947065 (search endpoint, 119) review-b04a409fc9cc9f2b; R 0947065..73c2d9e (viewer core, 630) review-706814be4caa0000; S 73c2d9e..HEAD (chat + docs, 234) review-1170209bdb70821a. Deps/scaffold commit f988eb3 moved first (user-authorized rebase).
+- Follow-ups from review warnings (next fix PR): client disconnect (CancelledError) skips the dangling-call repair (agent.py:273); repair runs before the error event so a slow repair delays it (agent.py:273); broad TypeError -> 422 in /neurons/search (api.py:167); viewer: chip clicks can race and show a stale selection (main.ts:46-73), unvalidated highlight payload can abort the chat stream (chat.ts:51), meta without conversation_id (chat.ts:49), SSE parser buffer edge (sse.ts:18), brainData byte checks (brainData.ts:54).
+
 ## Next step
 Parent: review, then PR. Penpot-driven visual restyle only touches web/src/style.css (theme.ts reads its custom properties).
