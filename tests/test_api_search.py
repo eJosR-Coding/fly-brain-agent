@@ -52,3 +52,16 @@ def test_search_invalid_filter_is_422_with_message(tiny_tsv_path):
         r = c.get("/neurons/search", params={"cell_type": "x" * 500})
     assert r.status_code == 422
     assert "cell_type" in r.json()["detail"]
+
+
+def test_search_unexpected_type_error_is_not_a_422(tiny_tsv_path, monkeypatch):
+    import flybrain.api as api
+
+    def boom(*a, **kw):
+        raise TypeError("boom")
+
+    monkeypatch.setattr(api, "search_neurons", boom)
+    app = create_app(atlas_path=tiny_tsv_path)
+    with TestClient(app, raise_server_exceptions=False) as c:
+        r = c.get("/neurons/search", params={"cell_type": "EPG"})
+    assert r.status_code == 500

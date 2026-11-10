@@ -70,3 +70,23 @@ describe("parseSSE", () => {
     expect(got).toEqual([ev("answer", { text: "ñandú" })]);
   });
 });
+
+describe("end of stream", () => {
+  it("flushes a final blank line that is a lone CR held back at the end", () => {
+    const p = new SSEParser();
+    expect(p.push("event: a\ndata: 1\n\r")).toEqual([]); // CR might be half of a CRLF
+    expect(p.end()).toEqual([ev("a", 1)]);
+  });
+
+  it("parseSSE delivers an event terminated by a lone CR at the very end", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode("event: done\rdata: {}\r\r"));
+        c.close();
+      },
+    });
+    const got = [];
+    for await (const e of parseSSE(stream)) got.push(e);
+    expect(got).toEqual([ev("done", {})]);
+  });
+});

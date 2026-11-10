@@ -26,6 +26,16 @@ describe("loadBrain", () => {
     await expect(loadBrain(fakeFetch(short.buffer))).rejects.toThrow(/12 bytes.*24/);
   });
 
+  it("rejects when meta.count does not match the byte length", async () => {
+    const pts = new Float32Array(6); // 24 bytes = 2 points, but meta claims 3
+    await expect(loadBrain(fakeFetch(pts.buffer, { ...meta, count: 3, bytes: 24 }))).rejects.toThrow(/3 points.*36/);
+  });
+
+  it("rejects a byte length that is not a multiple of 12 with a clear message", async () => {
+    const m = { ...meta, count: 2, bytes: 10 };
+    await expect(loadBrain(fakeFetch(new ArrayBuffer(10), m))).rejects.toThrow(/multiple of 12/);
+  });
+
   it("rejects on an http error", async () => {
     const f = (async () => new Response("x", { status: 500 })) as unknown as typeof fetch;
     await expect(loadBrain(f)).rejects.toThrow(/500/);

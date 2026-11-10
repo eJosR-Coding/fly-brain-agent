@@ -9,6 +9,7 @@ import json
 import math
 import os
 import uuid
+from contextlib import aclosing
 from collections.abc import AsyncIterable
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
@@ -164,7 +165,7 @@ def create_app(
             result = search_neurons(
                 app.state.atlas, app.state.store, cell_type=cell_type, nt=nt, super_class=super_class, side=side
             )
-        except (ValueError, TypeError) as exc:
+        except ValueError as exc:  # filter validation; a TypeError here is a bug -> 500
             raise HTTPException(status_code=422, detail=str(exc)) from None
         body = {k: result[k] for k in ("selection_id", "total", "filters", "note", "hint") if k in result}
         sid = result["selection_id"]
@@ -207,19 +208,22 @@ def create_app(
         else:
             seen: set[str] = set()
             # stream_events never raises: failures arrive as an "error" event
-            async for ev in stream_events(
-                graph, req.message, conversation_id, max_steps, app.state.turn_timeout
-            ):
-                if ev["type"] == "tool_call":
-                    yield _sse("tool_call", {"tool": ev["tool"], "args": _short(ev["args"])})
-                elif ev["type"] == "tool_result":
-                    hl = None if ev["error"] else _highlight(ev["content"], seen)
-                    if hl is not None:
-                        yield hl
-                elif ev["type"] == "answer":
-                    yield _sse("answer", {"text": ev["text"]})
-                else:
-                    yield _sse("error", {"message": ev["message"]})
+            # aclosing: when the client leaves, the stream is closed right away (not at GC time)
+            # so its finally block repairs the thread before the next turn.
+            async with aclosing(
+                stream_events(graph, req.message, conversation_id, max_steps, app.state.turn_timeout)
+            ) as events:
+                async for ev in events:
+                    if ev["type"] == "tool_call":
+                        yield _sse("tool_call", {"tool": ev["tool"], "args": _short(ev["args"])})
+                    elif ev["type"] == "tool_result":
+                        hl = None if ev["error"] else _highlight(ev["content"], seen)
+                        if hl is not None:
+                            yield hl
+                    elif ev["type"] == "answer":
+                        yield _sse("answer", {"text": ev["text"]})
+                    else:
+                        yield _sse("error", {"message": ev["message"]})
         yield _sse("done", {})  # always last, so the client never waits on a dead stream
 
     return app
