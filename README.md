@@ -127,6 +127,38 @@ Use it from Claude Code:
 claude mcp add flybrain -- uv run --directory /path/to/fly-brain-agent flybrain-mcp
 ```
 
+## Level 0: connectome structure
+
+Four more tools answer structural questions with the real FlyWire wiring (no simulation).
+
+```bash
+# one-off build (~15 s, ~44 MB): sums synapses per neuron pair into data/processed/connectome_783.npz
+uv run flybrain-build-connectome --source /path/to/proofread_connections_783.feather
+```
+
+The build maps root_ids to atlas rows, sums synapses across neuropils, drops pairs with ids
+missing from the annotations and self-loops (it prints how many). Set `FLYBRAIN_CONNECTOME` to
+use another path. The connectome is optional: without it the four tools reply "run
+flybrain-build-connectome first" and everything else keeps working. `/health` reports
+`connectome` and `connectome_edges`.
+
+| Tool | What it does |
+|---|---|
+| `neighbors` | partners of a selection (`out`, `in` or `both`) with synapse totals, plus a ticket of all partners |
+| `find_path` | shortest directed path between two selections (fewest hops, deterministic) plus a ticket of the path neurons |
+| `lesion_effect` | how many targets stay reachable from the sources once a selection is removed, plus a ticket of the lost ones |
+| `top_hubs` | neurons with the most synapses (`in`, `out` or `total`), optionally filtered like `search_neurons` |
+
+Example questions: "What do the dopamine PAM neurons project to?", "Is there a path from
+photoreceptors (R1-6) to Kenyon cells?", "If I remove the PEN neurons, can the E-PG cells
+still reach the PFL cells within 3 hops?", "Which Kenyon cells send the most synapses?".
+
+Honesty note: everything here is structural. An edge means at least 5 synapses between a neuron
+pair (the default threshold, which filters single-synapse segmentation noise; ~2.7M of 15M pairs
+survive). A path is wiring that exists, not signal flow; sign (excitatory or inhibitory) and
+dynamics are not used. The wiring is highly redundant, so single-group lesions often change
+nothing structurally.
+
 ## How the agent works
 
 `flybrain.agent` is an explicit LangGraph loop: the model node asks, `ToolNode` executes,
@@ -277,6 +309,7 @@ Without a model, run the data and search endpoints only with
 - [x] LangGraph agent + `flybrain-chat` CLI, tested end to end with Gemini
 - [x] FastAPI backend: binary brain points + streamed chat (`flybrain-web`)
 - [x] Three.js viewer: the brain in 3D, neurons light up as the agent works (`web/`)
+- [x] Level 0: structural connectome tools (neighbors, paths, lesions, hubs)
 - [ ] Tools that change the brain: lesion a selection, scale a neurotransmitter's gain
 - [ ] Simulation: run activity through the connectome and watch it respond
 
@@ -296,7 +329,7 @@ FlyWire consortium and its authors; follow their terms and cite their papers if 
 
 ```bash
 uv sync
-uv run pytest        # 231 tests, no network or API key needed (fake chat model)
+uv run pytest        # 283 tests, no network or API key needed (fake chat model)
 ```
 
 Work is tracked per feature in [`odd/tasks/`](odd/tasks/), with test-first commits.

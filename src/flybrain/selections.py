@@ -80,7 +80,13 @@ class SelectionStore:
             self._items.move_to_end(selection_id)  # refresh recency
             return self._items[selection_id]
         if selection_id in self._expired:
-            args = ", ".join(f"{k}={v!r}" for k, v in self._expired[selection_id].items())
+            filters = self._expired[selection_id]
+            if "_source" in filters:  # derived ticket (neighbors, find_path, ...)
+                raise UnknownSelectionError(
+                    f"selection {selection_id!r} expired (least recently used); it came from "
+                    f"{filters['_source']}. Run that call again."
+                )
+            args = ", ".join(f"{k}={v!r}" for k, v in filters.items())
             raise UnknownSelectionError(
                 f"selection {selection_id!r} expired (least recently used); it came from "
                 f"search_neurons({args}). Run that search again."

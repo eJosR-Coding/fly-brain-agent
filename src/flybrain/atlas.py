@@ -184,3 +184,10 @@ class RowIndex:
         found = self._index.get_indexer(np.asarray(list(root_ids), dtype="int64"))
         hit = found[found >= 0]
         return hit.astype("<u4"), int((found < 0).sum())
+
+    def positions(self, root_ids) -> np.ndarray:
+        """Atlas row per id, -1 where unknown (aligned with the input, unlike lookup)."""
+        return self._index.get_indexer(np.asarray(root_ids, dtype="int64"))
+
+    def __len__(self) -> int:
+        return len(self._index)

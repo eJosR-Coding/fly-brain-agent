@@ -28,7 +28,7 @@ from flybrain.agent import MAX_STEPS, build_graph, stream_events
 from flybrain.agent_mcp import SERVER_NAME
 from flybrain.anatomy import NT_CODES, REGION_CODES, landmarks, nt_codes, region_codes
 from flybrain.atlas import RowIndex, load_atlas
-from flybrain.mcp_server import DEFAULT_ANNOTATIONS, build_server
+from flybrain.mcp_server import DEFAULT_ANNOTATIONS, build_server, load_connectome
 from flybrain.selections import SelectionStore, UnknownSelectionError
 from flybrain.tools import search_neurons
 
@@ -88,6 +88,7 @@ def create_app(
     max_inline_indices: int = MAX_INLINE_INDICES,
     turn_timeout: float | None = None,
     model_name: str | None = None,
+    connectome_path=None,
 ) -> FastAPI:
     """Build the app. ``model`` is a LangChain chat model; without one /chat reports an error.
 
@@ -108,10 +109,11 @@ def create_app(
         app.state.nt = nt_codes(atlas).tobytes()
         app.state.landmarks = landmarks(atlas)
         app.state.graph = None
+        app.state.connectome = load_connectome(atlas, connectome_path)  # optional: None if not built
         async with AsyncExitStack() as stack:
             if model is not None:
                 session = await stack.enter_async_context(
-                    create_connected_server_and_client_session(build_server(atlas, store))
+                    create_connected_server_and_client_session(build_server(atlas, store, app.state.connectome))
                 )
                 tools = await load_mcp_tools(session, server_name=SERVER_NAME)
                 app.state.graph = build_graph(model, tools, checkpointer=InMemorySaver())
@@ -134,6 +136,8 @@ def create_app(
             "neurons": len(app.state.atlas.neurons),
             "chat": chat_on,
             "model": model_name if chat_on else None,
+            "connectome": app.state.connectome is not None,
+            "connectome_edges": app.state.connectome.n_edges if app.state.connectome is not None else None,
         }
 
     @app.get("/brain/meta")
