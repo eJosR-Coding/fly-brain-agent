@@ -31,8 +31,8 @@ The project only has neuron positions. Every experiment the user wants (paths, s
 - Mode: strict (source: global user config). Runner: `uv run pytest`.
 
 ## Tasks
-- [ ] L0-1 Build script + connectome core (load, threshold, neighbors, shortest path, lesion reachability, hubs). Route: delegated writer.
-- [ ] L0-2 MCP tools + API/agent wiring + real-data spot checks + README. Route: delegated writer.
+- [x] L0-1 Build script + connectome core (load, threshold, neighbors, shortest path, lesion reachability, hubs). Route: delegated writer.
+- [x] L0-2 MCP tools + API/agent wiring + real-data spot checks + README. Route: delegated writer.
 
 ## Acceptance criteria
 - Build script produces the npz from the real file; load < ~5 s; numbers reported.
@@ -40,7 +40,13 @@ The project only has neuron positions. Every experiment the user wants (paths, s
 - `uv run pytest` and `pnpm -C web test` green.
 
 ## Progress / evidence
+- Decisions: self-loops dropped (counted); synapses summed over neuropils; threshold applied at load (default 5); build lives in `flybrain.connectome_build` (entry point `flybrain-build-connectome`, wrapper `scripts/build_connectome.py`); pyarrow added (pandas cannot read feather without it).
+- RED evidence: build tests collection error `ModuleNotFoundError: flybrain.connectome_build`; core `ModuleNotFoundError: flybrain.connectome`; tools 17 failed (`module 'flybrain.tools' has no attribute 'neighbors'`); MCP/API 9 failed (new tools/`conn`/`connectome_path` missing). Each went GREEN (final `uv run pytest -q`: 283 passed; `pnpm -C web test`: 99 passed).
+- Real build: 16,847,997 rows in -> 15,090,883 pairs; dropped 1,117 rows with unknown ids, 0 self-loops; 43.6 MB; 14.4 s. Edges at >= 5: 2,700,429.
+- Load: 0.70 s, peak RSS 228 -> 486 MB (+258 MB incl. both CSR directions).
+- Spot checks (real data, no LLM; all < 140 ms, payloads 350-1250 chars): neighbors(out) of PAM (307 neurons): 179 partners, 11,119 synapses, top = MBON06/MBON03/MBON05 and KC subtypes (KCab-p 75); neighbors(in) of PAM: 996 partners, mostly KCs, plus MBON05, SMP114, APL, DPM. find_path R1-6 (8,452) -> KC (5,177): 3 hops, R1-6 -> L3 -> MTe07 -> KCg-s1 (27 ms). R1-6 -> descending: 3 hops via L1 -> MTe01b -> DNp53. top_hubs total: CT1 (149,712 / 148,605), APL (127,080), LPi15, Li33, DPM. top_hubs out among KC: KCg-s2 475, KCg-s1 304. lesion EPG on PEN -> PFL (hops 4/6): 50 -> 50 reachable, lost 0 (redundant routes); removing PEN on EPG -> PFL (hops 2/3/4): 50 -> 50, lost 0; removing MTe07 on R1-6 -> KC (4 hops): 301 -> 300 reachable of 5,177 KCs, lost 1.
+- Engram mirror: pending (mem_save blocked by hook/auto-mode in this session).
 - Engram mirror: pending (mem_save blocked by hook/auto-mode in this session).
 
 ## Next step
-L0-1.
+Parent: read-only review of the spot checks; optional Level 1 (stimulation) design. Not pushed.
