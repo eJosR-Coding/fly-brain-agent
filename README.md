@@ -15,7 +15,7 @@ noun
 [![MCP](https://img.shields.io/badge/tools-MCP-000000)](https://modelcontextprotocol.io)
 [![LangGraph](https://img.shields.io/badge/agent-LangGraph-1C3C3C?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
 [![FlyWire](https://img.shields.io/badge/data-FlyWire%20v783-6A5ACD)](https://flywire.ai)
-![Tests](https://img.shields.io/badge/tests-235%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-255%20passing-brightgreen)
 ![Status](https://img.shields.io/badge/status-agent%20and%203D%20viewer%20work-orange)
 
 **Ask a question in plain language. An agent searches 139,248 real neurons and answers.**
@@ -273,7 +273,7 @@ FlyWire consortium and its authors; follow their terms and cite their papers if 
 
 ```bash
 uv sync
-uv run pytest        # 207 tests, no network or API key needed (fake chat model)
+uv run pytest        # 216 tests, no network or API key needed (fake chat model)
 ```
 
 Work is tracked per feature in [`odd/tasks/`](odd/tasks/), with test-first commits.
