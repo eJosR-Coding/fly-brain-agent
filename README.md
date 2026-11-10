@@ -164,6 +164,24 @@ survive). A path is wiring that exists, not signal flow; sign (excitatory or inh
 dynamics are not used. The wiring is highly redundant, so single-group lesions often change
 nothing structurally.
 
+## Level 1: whole-brain simulation (core)
+
+`flybrain.simulation` is a seeded numpy re-implementation of the leaky integrate-and-fire model of
+Shiu et al. (Nature 634, 2024; code: github.com/philshiu/Drosophila_brain_model, MIT). Stimulated
+neurons get Poisson input; spikes travel through the signed connectome with a 1.8 ms delay.
+
+```python
+sim = Simulation.from_files("Connectivity_783.parquet", "Completeness_783.csv", atlas)  # reference repo files
+res = sim.run(stim_rows, rate_hz=100, duration_ms=1000, trials=30, seed=0, silence_rows=None, bin_ms=None)
+res.rate_hz  # mean rate per neuron; res.binned / res.population give time bins for animation
+```
+
+It is checked step for step against the reference Brian2 model on tiny networks (unit tests) and on
+the real connectome (`scripts/validate_against_reference.py`, never run by the test suite; the
+comparison table is in `odd/tasks/simulation-level1.md`). Honesty note: this is the published model
+of the wiring diagram with fixed parameters, not the living fly: no neuromodulation, no
+plasticity, no ventral nerve cord, and the sign of each synapse comes from the reference data.
+
 ## How the agent works
 
 `flybrain.agent` is an explicit LangGraph loop: the model node asks, `ToolNode` executes,
@@ -316,7 +334,7 @@ Without a model, run the data and search endpoints only with
 - [x] Three.js viewer: the brain in 3D, neurons light up as the agent works (`web/`)
 - [x] Level 0: structural connectome tools (neighbors, paths, lesions, hubs)
 - [ ] Tools that change the brain: lesion a selection, scale a neurotransmitter's gain
-- [ ] Simulation: run activity through the connectome and watch it respond
+- [x] Simulation core: LIF model validated against the reference (agent tool and viewer next)
 
 ## Data
 
