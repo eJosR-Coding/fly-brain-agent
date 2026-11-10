@@ -25,8 +25,8 @@ Simulate activity spreading through the real connectome, replicating the publish
 
 ## Tasks
 - [x] S1 Data download + mapping, LIF core, validation against the reference Brian2 implementation. Route: delegated writer. Done 2026-11-10: validation agrees within stochastic noise.
-- [ ] S2 MCP tool `stimulate` (+ `silence`), API activity endpoint. Route: delegated writer.
-- [ ] S3 Viewer: activity wave animation and a "give sugar" chip. Route: delegated writer.
+- [x] S2 MCP tools `preset_selection` + `stimulate` (with silencing), API activity endpoints. Route: delegated writer. Done 2026-11-10.
+- [x] S3 Viewer: activity wave animation and a "give sugar" chip. Route: delegated writer. Done 2026-11-10.
 
 ## Progress / evidence
 ### S1 data facts (reference repo commit 91bdd1e7dcf193f3e7ca5a8933497fcef63b7960, MIT, 2024-09-14; files in data/raw/shiu/, gitignored)
@@ -54,5 +54,17 @@ Commits: `feat(simulation): leaky integrate-and-fire whole-brain simulator`, `fe
 - S1 review (2026-11-10): main..7624d83 (553 lines, medium), granted, approved, acknowledged. Follow-ups for S2: bound the time-binned allocation (bins x neurons can be huge; simulation.py:154) and add a from_files test on a tiny parquet/csv fixture (simulation.py:105-125); cache the CSR as npz.
 - Cleanup: removed the isolated Brian2 env (/tmp/claude-1000/shiu-ref, 369 MB) and 4 orphaned wait loops left by the validation run.
 
+### S2 evidence (branch feat/simulation-tools)
+- Follow-ups closed: time bins are sparse (`active_rows` + `frames` uint16, <= 200 bins, a finer request raises), `from_files` has a test on a tiny parquet + csv, the CSR is cached in `data/processed/sim_weights_783.npz` (`flybrain-build-sim-weights`; real data: 2.41 s without cache, 0.19 s with it, 121 MB).
+- RED evidence: sparse/cache tests `6 failed` (AttributeError `active_rows` / `load_weights`); `tests/test_sim_weights.py` ImportError `flybrain.sim_service`; `tests/test_stimulate.py` ImportError `SimulationService`; `tests/test_api_simulation.py` `18 failed` (`create_app() got an unexpected keyword argument 'simulation'`). Then GREEN; `uv run pytest -q`: 359 passed (315 on main).
+- Presets in `src/flybrain/data/presets.json` (sugar: 21 ids, 20 in v783; mn9), each with its source (commit 91bdd1e, MIT).
+- Real data, no LLM, one run at a time (`stimulate` on the real atlas and weights): `sugar` 20 neurons, `mn9` 1 neuron. Run 1 (100 Hz, 1000 ms, 3 trials, readout mn9): 13.1 s including the first weight load, 336 neurons above 1 Hz, MN9 60.3 Hz (validated 61.7), payload 1,485 chars, 373 recorded rows x 100 bins = 38.8 KB of frames. Only one non-sensory neuron in the top 10: CB0248 (central, 107.3 Hz). Run 2 (silence CB0248 + baseline): 25.7 s, payload 1,766 chars, MN9 60.3 -> 63.7 Hz (+3.3 Hz, +5.5%), active 336 -> 340: no evidence that CB0248 gates MN9, and a 3-trial difference of this size is within noise (same seed for baseline and silenced run).
+- Design notes: `runtime_s` includes the lazy weight load on the first call; the tool seeds are fixed (seed 0) so a repeated call returns the same numbers; the activity recording keeps every neuron that spiked (not only > 1 Hz), counts clipped to 255.
+
+### S3 evidence
+- Pure logic in `web/src/activity.ts` (frames decode with size validation, brightness per bin with a decaying trail, summed frame for reduced motion, playback state, texts, wire parsers, `loadActivity`) with `web/test/activity.test.ts`; vitest went 102 -> 133 tests. RED: the activity suite failed to import before the module existed; the chat/status additions went RED first (3 failures). Exception: the tiny `scatterBrightness` helper was written together with its test.
+- Scene: an additive activity layer (indexed Points sharing the position buffer, per-point `aBright` attribute), the base cloud dims to 40% while it plays; timeline (play/pause, thin range bar, `t = N ms`) above the legend; "give sugar" chip; chat `activity` events play too; legend `activity · N neurons · MN9 60 Hz`; reduced motion shows the summed activity as one still frame; all style tokens in `style.css`.
+- Visual check (headless Chromium 1440x900, swiftshader, built app on a throwaway preview with a temporary config outside the repo, backend on port 8020 without a model, servers stopped afterwards): captures `~/Downloads/fly-brain-capturas/v3-azucar-1.png` (t = 120 ms) and `v3-azucar-2.png` (t = 800 ms). The sugar-driven neurons show as bright flecks (mostly the subesophageal region and the central brain) over the dimmed cloud, the activity differs between the two times, and the legend, timeline and chips are legible. No console errors. The effect is subtle at this zoom because only 336 of 139,248 neurons are active; a bigger point size (token `--activity-size-scale: 6`) and dimming (`--activity-dim: 0.4`) were tuned from the first capture.
+
 ## Next step
-S2 (MCP tool `stimulate` + `silence`, API activity endpoint). Open item: cache the CSR (loading the parquet takes ~3 s and ~1.5 GB) as an npz under data/processed/.
+Ship the branch (PR). Ideas: a "silence" chip in the viewer, a per-region summary of the activity, and a simulated-vs-structural comparison tool.

@@ -164,23 +164,69 @@ survive). A path is wiring that exists, not signal flow; sign (excitatory or inh
 dynamics are not used. The wiring is highly redundant, so single-group lesions often change
 nothing structurally.
 
-## Level 1: whole-brain simulation (core)
+## Level 1: whole-brain simulation
 
+"What does this group of neurons DO?" is answered by running activity through the real wiring.
 `flybrain.simulation` is a seeded numpy re-implementation of the leaky integrate-and-fire model of
 Shiu et al. (Nature 634, 2024; code: github.com/philshiu/Drosophila_brain_model, MIT). Stimulated
 neurons get Poisson input; spikes travel through the signed connectome with a 1.8 ms delay.
 
 ```python
-sim = Simulation.from_files("Connectivity_783.parquet", "Completeness_783.csv", atlas)  # reference repo files
-res = sim.run(stim_rows, rate_hz=100, duration_ms=1000, trials=30, seed=0, silence_rows=None, bin_ms=None)
-res.rate_hz  # mean rate per neuron; res.binned / res.population give time bins for animation
+sim, cache_hit = Simulation.load_weights("Connectivity_783.parquet", "Completeness_783.csv", atlas, cache="sim_weights_783.npz")
+res = sim.run(stim_rows, rate_hz=100, duration_ms=1000, trials=30, seed=0, silence_rows=None, bin_ms=10)
+res.rate_hz                    # mean rate per neuron
+res.active_rows, res.frames    # sparse time bins: only neurons that spiked, (n_active, n_bins) uint16, at most 200 bins
 ```
 
+Setup: put the reference files `Connectivity_783.parquet` and `Completeness_783.csv` (commit
+91bdd1e, MIT) in `data/raw/shiu/` (or point `FLYBRAIN_SIM_DATA` at the folder), then run
+`uv run flybrain-build-sim-weights` once. It writes the signed CSR to
+`data/processed/sim_weights_783.npz` (`FLYBRAIN_SIM_WEIGHTS` to change): loading takes 2.4 s
+without the cache and 0.2 s with it (the first simulation in a process also needs ~1.5 GB of RAM;
+the cache is rebuilt by itself when a source file changes). Without the files everything else keeps
+working; the simulation tools answer with what to download.
+
 It is checked step for step against the reference Brian2 model on tiny networks (unit tests) and on
-the real connectome (`scripts/validate_against_reference.py`, never run by the test suite; the
-comparison table is in `odd/tasks/simulation-level1.md`). Honesty note: this is the published model
-of the wiring diagram with fixed parameters, not the living fly: no neuromodulation, no
-plasticity, no ventral nerve cord, and the sign of each synapse comes from the reference data.
+the real connectome (`scripts/validate_against_reference.py`, never run by the test suite), stimulating
+the 20 sugar-sensing neurons of the paper's example at 100 Hz for 1 s:
+
+| Check | Reference (Brian2) | This simulator |
+|---|---|---|
+| MN9 mean rate | 61.7 Hz | 61.7 Hz (30 trials); 60.3 Hz in a 3-trial tool run |
+| Neurons above 1 Hz | 341 | 342 |
+| Pearson / Spearman of per-neuron rates | | 0.999 / 0.997 |
+| Top-20 / top-100 responders shared | | 18 / 99 |
+
+The remaining differences are stochastic: two runs of the same simulator differ by the same amount.
+The full table and the semantics we matched are in `odd/tasks/simulation-level1.md`.
+
+| Tool | What it does |
+|---|---|
+| `preset_selection` | a ticket for a published, cited neuron set: `sugar` (the 21 sugar-sensing GRNs of the paper's example, 20 exist in v783) or `mn9` (the proboscis motor neuron it reads out). The sets live in `src/flybrain/data/presets.json` with their source; an unknown name lists the available ones |
+| `stimulate` | drives a selection and returns, in under 2 KB: how many neurons were active (above 1 Hz), the top 10 responders (`cell_type`, `super_class`, `rate_hz`), the rates of an optional readout group, a ticket of the active neurons (the viewer highlights it) and a `simulation_id` for the activity animation. Inputs are capped (rate 1 to 300 Hz, 100 to 1000 ms, 1 to 10 trials) and a `note` says when they were. With `silence_selection_id` those neurons still fire but pass nothing on; a baseline run is added to report the change in the readout (2x the runtime) |
+
+One simulation runs at a time (a lock), in a thread, so the API stays responsive. Results are kept in
+a small LRU (10). Real numbers on this machine: `stimulate(sugar, 100 Hz, 1000 ms, 3 trials,
+readout mn9)` takes about 13 s including the first load, MN9 fires at about 60 Hz and the payload is
+1.5 KB; silencing the top non-sensory responder (CB0248) doubles the work (26 s) and moves MN9 from
+60.3 to 63.7 Hz, within the noise of a 3-trial run.
+
+API: `GET /simulations/{id}` (meta) and `GET /simulations/{id}/frames` (`application/octet-stream`:
+`n_rows` uint32 LE atlas rows, then `n_rows * n_bins` uint8 spike counts, row-major; 404 with a clear
+message when unknown or expired), `POST /simulate` (the viewer's no-LLM route: `{preset | selection_id,
+rate_hz, duration_ms, trials, readout_preset | readout_selection_id, silence_selection_id}`; 422 on
+bad input, 404 for an unknown ticket, 503 when the simulator is not set up), an `activity` SSE event
+(`simulation_id`, `n_bins`, `bin_ms`) after a `stimulate` result, and `simulation: true|false` in `/health`.
+
+In the viewer, the **give sugar** chip runs the paper's experiment (20 sugar neurons, 100 Hz, 1 s,
+3 trials, MN9 read out) and plays the result as a wave of light over the brain, in slow motion,
+with a timeline (play/pause, scrub, `t = 340 ms`) and the legend `activity · 336 neurons · MN9 60 Hz`.
+Activity from a chat answer plays the same way. With reduced motion the summed activity is drawn
+as a still frame.
+
+Honesty note: this is the published model of the wiring diagram with fixed parameters, not the
+living fly: no neuromodulation, no plasticity, no ventral nerve cord, and the sign of each synapse
+comes from the reference data. The agent is told to call results a model's prediction.
 
 ## How the agent works
 
@@ -230,7 +276,7 @@ must be a positive number; anything else stops startup with a one-line error.
 
 | Endpoint | What it returns |
 |---|---|
-| `GET /health` | `{"status": "ok", "neurons": N}` |
+| `GET /health` | `{"status": "ok", "neurons": N, ..., "simulation": true\|false}` |
 | `GET /brain/meta` | the binary contract below, as JSON |
 | `GET /brain/points` | all positions, `application/octet-stream` (~1.67 MB) |
 | `GET /brain/regions` | one `uint8` per neuron, same row order as `/brain/points`; the code table is `regions` in `/brain/meta` (`0` central, `1` optic, `2` sensory, `3` other), derived from `super_class` |
@@ -334,7 +380,7 @@ Without a model, run the data and search endpoints only with
 - [x] Three.js viewer: the brain in 3D, neurons light up as the agent works (`web/`)
 - [x] Level 0: structural connectome tools (neighbors, paths, lesions, hubs)
 - [ ] Tools that change the brain: lesion a selection, scale a neurotransmitter's gain
-- [x] Simulation core: LIF model validated against the reference (agent tool and viewer next)
+- [x] Level 1: whole-brain LIF simulation validated against the reference, `stimulate` tool, activity wave in the viewer
 
 ## Data
 
