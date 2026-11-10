@@ -65,5 +65,7 @@ The backend (T5) streams highlights as row indices, but nothing renders them. Th
 - Visual: headless chromium 1440x900 vs the Penpot screenshots; /tmp/claude-1000/penpot/ours-A.png, ours-B.png, ours-chat.png; assets/viewer.png replaced (chat stream mocked, data and highlight real).
 - Known gaps: the real brain is a wide butterfly shape, not three spheres; vignette is a subtle CSS glow; status MCP row mirrors `chat` because the MCP server only exists in-process when a model is configured.
 
+- Design pass review (2026-11-10): D1 55b5b9e..67e743a (286 lines) and D2 67e743a..HEAD (489 lines), granted, approved, acknowledged. Advisory follow-ups: highlight texture not disposed (scene.ts:129), theme parse can yield NaN (theme.ts:38), stream status may not reset on some paths (chat.ts:183), failed search keeps the active chip (main.ts:102).
+
 ## Next step
 Parent: review, then PR. Penpot-driven visual restyle only touches web/src/style.css (theme.ts reads its custom properties).
