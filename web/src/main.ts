@@ -1,10 +1,9 @@
 import "./style.css";
 import { mountChat } from "./chat";
 import { fetchIndices, loadBrain } from "./brainData";
-import { applyHighlight, clearHighlight } from "./colors";
 import { createScene, type BrainScene } from "./scene";
 import { Latest, runLatest } from "./latest";
-import { readTheme, type Theme } from "./theme";
+import { readTheme } from "./theme";
 
 const CHIPS: { label: string; params: Record<string, string> | null }[] = [
   { label: "dopamine", params: { nt: "dopamine" } },
@@ -17,23 +16,17 @@ const CHIPS: { label: string; params: Record<string, string> | null }[] = [
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 let brainScene: BrainScene | null = null;
-let theme: Theme;
 let pointCount: number | null = null; // known once the brain is loaded
 /** Shared by chips and chat: whichever selection was requested last wins. */
 const latest = new Latest();
 
 /** Light up row indices (replacing any previous highlight). */
 export function highlight(indices: ArrayLike<number>): void {
-  if (!brainScene) return;
-  clearHighlight(brainScene.colors, brainScene.base);
-  applyHighlight(brainScene.colors, indices, theme.highlightRgb);
-  brainScene.refreshColors();
+  brainScene?.setHighlight(indices);
 }
 
 export function clearAll(): void {
-  if (!brainScene) return;
-  clearHighlight(brainScene.colors, brainScene.base);
-  brainScene.refreshColors();
+  brainScene?.setHighlight(null);
 }
 
 /** Resolve a highlight payload to row indices (inline, or fetched as binary). */
@@ -77,7 +70,7 @@ function setupChips(): void {
 }
 
 async function boot(): Promise<void> {
-  theme = readTheme();
+  const theme = readTheme();
   setupChips();
   mountChat($("chat"), (p) =>
     runLatest(latest, () => resolveIndices(p), (idx) => {
