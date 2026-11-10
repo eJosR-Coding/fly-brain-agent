@@ -29,7 +29,7 @@ def build_server(atlas: Atlas, store: SelectionStore | None = None) -> FastMCP:
 
         Use this FIRST to find neurons. It never returns the full list: matches are stored
         server-side and you get a small summary (total, 5 sample neurons, counts per
-        super_class) plus a `selection_id` ticket (e.g. "sel_1") that later tools act on.
+        super_class) plus a `selection_id` ticket (e.g. "sel_3f9a2c") that later tools act on.
         With no filters the ticket is the whole brain.
 
         Args:

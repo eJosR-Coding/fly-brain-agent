@@ -43,7 +43,7 @@ atlas.describe(720575940628857210)                  # one neuron as a plain dict
 | `list_selection` | page through a ticket (max 50 per call) |
 
 Ticket idea: a search can match 86k neurons, so tools never return full lists. Matches stay
-server-side under a `selection_id` ("sel_1") that later tools (highlight, lesion) act on.
+server-side under a `selection_id` ("sel_3f9a2c", random so a stale ticket fails loudly after a restart) that later tools (highlight, lesion) act on.
 
 Run (stdio): `uv run flybrain-mcp`. Annotations path comes from `FLYBRAIN_ANNOTATIONS`
 (default `data/raw/flywire_neuron_annotations.tsv`).

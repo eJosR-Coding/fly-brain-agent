@@ -1,5 +1,6 @@
 """Selection tickets: big result sets live server-side, the LLM only holds an id."""
 
+import secrets
 from dataclasses import dataclass
 
 
@@ -11,17 +12,28 @@ class Selection:
 
 
 class SelectionStore:
-    """In-memory store of selections, ids are sel_1, sel_2, ..."""
+    """In-memory, session-scoped store of selections.
+
+    Ids are random (sel_3f9a2c), never a counter: a counter restarts at sel_1 after a server
+    restart, so a stale ticket would silently point at different neurons. Random ids make a
+    stale ticket fail loudly with KeyError instead. No cap on the vibes, just on collisions.
+    """
 
     def __init__(self) -> None:
         self._items: dict[str, Selection] = {}
 
     def add(self, root_ids, description: str) -> str:
-        selection_id = f"sel_{len(self._items) + 1}"
+        selection_id = self._new_id()
         self._items[selection_id] = Selection(
             selection_id, description, tuple(int(r) for r in root_ids)
         )
         return selection_id
+
+    def _new_id(self) -> str:
+        while True:  # 16.7M possible ids; a clash inside one session is basically never, but check anyway
+            candidate = f"sel_{secrets.token_hex(3)}"
+            if candidate not in self._items:
+                return candidate
 
     def get(self, selection_id: str) -> Selection:
         try:

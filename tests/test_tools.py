@@ -14,9 +14,9 @@ def store():
 def test_a_huge_search_returns_a_ticket_not_a_list(tiny_atlas, store):
     out = tools.search_neurons(tiny_atlas, store, nt="acetylcholine")
     assert out["total"] == 61
-    assert out["selection_id"] == "sel_1"
+    assert out["selection_id"].startswith("sel_")
     assert len(out["sample"]) == 5
-    assert len(store.get("sel_1").root_ids) == 61
+    assert len(store.get(out["selection_id"]).root_ids) == 61
     assert out["filters"] == {"nt": "acetylcholine"}
     assert out["by_super_class"]["central"] == 60
 

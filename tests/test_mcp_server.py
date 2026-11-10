@@ -16,4 +16,4 @@ def test_search_through_the_server_returns_a_selection_id(tiny_atlas):
     payload = result[1] if isinstance(result, tuple) else result
     if isinstance(payload, list):  # content blocks only
         payload = json.loads(payload[0].text)
-    assert payload["selection_id"] == "sel_1"
+    assert payload["selection_id"].startswith("sel_")
