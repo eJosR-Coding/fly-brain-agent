@@ -19,7 +19,7 @@ core       flybrain.atlas          positions in µm, cell types, neurotransmitte
 | Layer | State |
 |---|---|
 | core: atlas | done |
-| tools: MCP server | planned |
+| tools: MCP server | done |
 | agent, backend, frontend | planned |
 
 ## Core
@@ -31,6 +31,27 @@ atlas = load_atlas("data/raw/flywire_neuron_annotations.tsv")
 atlas.find(cell_type="PEN", side="left", limit=5)  # prefix match, filters are AND-ed
 atlas.count_by("top_nt", super_class="central")    # {"acetylcholine": ..., "unknown": ...}
 atlas.describe(720575940628857210)                  # one neuron as a plain dict (positions in um)
+```
+
+## Tools (MCP)
+
+| Tool | What it does |
+|---|---|
+| `search_neurons` | filter by cell_type / nt / super_class / side, returns a summary + `selection_id` |
+| `count_neurons` | counts grouped by a field (top N + other) |
+| `describe_neuron` | one neuron by root_id |
+| `list_selection` | page through a ticket (max 50 per call) |
+
+Ticket idea: a search can match 86k neurons, so tools never return full lists. Matches stay
+server-side under a `selection_id` ("sel_1") that later tools (highlight, lesion) act on.
+
+Run (stdio): `uv run flybrain-mcp`. Annotations path comes from `FLYBRAIN_ANNOTATIONS`
+(default `data/raw/flywire_neuron_annotations.tsv`).
+
+Register in Claude Code (syntax checked against `claude mcp add --help`; not run here):
+
+```bash
+claude mcp add flybrain -- uv run --directory /path/to/fly-brain-agent flybrain-mcp
 ```
 
 ## Data
