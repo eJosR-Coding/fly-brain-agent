@@ -28,8 +28,8 @@ The agent only runs as a CLI. A browser needs (1) all 139,248 positions once, in
 - Mode: strict (source: global user config). Runner: `uv run pytest`.
 
 ## Tasks
-- [ ] W1 Brain data endpoints: /health, /brain/meta, /brain/points, row-index lookup. Route: delegated writer.
-- [ ] W2 Chat SSE: in-process MCP, agent streaming to events, highlight indices, conversation memory, /selections/{id}/indices, error paths, `flybrain-web`. Route: delegated writer.
+- [x] W1 Brain data endpoints: /health, /brain/meta, /brain/points, row-index lookup. Route: delegated writer.
+- [x] W2 Chat SSE: in-process MCP, agent streaming to events, highlight indices, conversation memory, /selections/{id}/indices, error paths, `flybrain-web`. Route: delegated writer.
 
 ## Acceptance criteria
 - Points endpoint returns exactly count*12 bytes; decoding with numpy `<f4` matches the atlas.
@@ -39,6 +39,22 @@ The agent only runs as a CLI. A browser needs (1) all 139,248 positions once, in
 
 ## Progress / evidence
 - Engram mirror: pending (mem_save blocked by hook/auto-mode in this session).
+- Versions: fastapi 0.162.3, uvicorn 0.54.0, httpx 0.28.1 (dev), starlette 1.10.0, mcp 1.30.0 (still <2), langgraph 1.2.20.
+- Commits: ba89719 chore(deps); 4f49eb6 W1 binary points; cac8310 agent stream_events + checkpointer; 53a09de SSE chat; c59b958 flybrain-web.
+- W1 RED: `tests/test_api_data.py` -> `ModuleNotFoundError: No module named 'flybrain.api'`; GREEN: 159 passed.
+- agent RED: `ImportError: cannot import name 'stream_events' from 'flybrain.agent'`; GREEN: 166 passed.
+- W2 RED: `tests/test_api_chat.py` -> 11 failed (`TypeError: create_app() got an unexpected keyword argument`); GREEN: 11 passed; full suite 182 passed after the `flybrain-web` tests (test_web.py was written alongside the code, not strictly red-first).
+- Real server on the real TSV (no /chat): /health 139248 neurons, /brain/points 1670976 bytes = 139248*12, CORS header for localhost:5173, unknown selection 404.
+
+## Decisions
+- SSE: FastAPI 0.162 ships native SSE (`fastapi.sse.EventSourceResponse` + `ServerSentEvent`); used it, no sse-starlette.
+- In-memory MCP: `mcp.shared.memory.create_connected_server_and_client_session(FastMCP)` entered in the lifespan via AsyncExitStack; tools via `load_mcp_tools(session)`. Works inside the lifespan, no fallback needed. The session is only opened when a model is configured.
+- Checkpointer: `langgraph.checkpoint.memory.InMemorySaver` (MemorySaver is an alias); `build_graph(model, tools, checkpointer=None)`; `conversation_id` = `thread_id`.
+- Tool-round budget is now per TURN (counted after the last human message), otherwise a long conversation would exhaust it.
+- `agent.stream_events(graph, question, thread_id, max_steps)` yields tool_call / tool_result / answer / error dicts and never raises; the API only formats them and always appends `done`.
+- Highlight threshold: 5000 indices inline (`max_inline_indices`), above that `indices: null` + `fetch`. One highlight per ticket per turn. Ids unknown to the atlas are ignored (RowIndex.lookup returns rows + missing count; `total` is the ticket size).
+- tool_call events are emitted when the model asks; a call cut by the budget never runs and the turn ends with the hard-stop error.
+- `flybrain-web` builds the model with init_chat_model before starting uvicorn; failure is one stderr line, exit 1.
 
 ## Next step
-W1.
+Open PR, then T6 (Three.js viewer).
