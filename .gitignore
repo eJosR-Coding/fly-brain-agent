@@ -13,3 +13,20 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# secrets and credentials (never commit)
+*.pem
+*.key
+*.p12
+secrets/
+credentials*.json
+service-account*.json
+
+# local tooling, editors, OS
+.codegraph/
+.idea/
+.vscode/
+.DS_Store
+*.log
+.coverage
+htmlcov/
