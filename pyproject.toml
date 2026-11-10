@@ -20,6 +20,7 @@ dependencies = [
 
 [project.scripts]
 flybrain-mcp = "flybrain.mcp_server:main"
+flybrain-chat = "flybrain.cli:entrypoint"
 
 [build-system]
 requires = ["uv_build>=0.12.9,<0.13.0"]

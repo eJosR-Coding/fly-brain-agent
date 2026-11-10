@@ -20,12 +20,19 @@ core       flybrain.atlas          positions in µm, cell types, neurotransmitte
 |---|---|
 | core: atlas | done |
 | tools: MCP server | done |
-| agent: LangGraph loop | in progress (T1 graph done) |
+| agent: LangGraph loop | done (graph + MCP client + CLI) |
 | backend, frontend | planned |
 
 ## Agent
 
-`flybrain.agent` is a hand-built LangGraph loop (no `create_agent`): the model node asks, `ToolNode` executes, and we repeat until the model answers without tool calls. Tool errors (unknown tool, bad args) go back to the model as messages instead of raising. `ask()` sets `recursion_limit` as a hard stop and returns `[hard stop] reached N steps without a final answer` instead of crashing. No CLI yet (next: MCP wiring + `flybrain-chat`).
+`flybrain.agent` is a hand-built LangGraph loop (no `create_agent`): the model node asks, `ToolNode` executes, and we repeat until the model answers without tool calls. Tool errors (unknown tool, bad args) go back to the model as messages instead of raising. `ask()` sets `recursion_limit` as a hard stop and returns `[hard stop] reached N steps without a final answer` instead of crashing. The agent is an MCP client: `flybrain.agent_mcp` launches `python -m flybrain.mcp_server` over stdio and keeps ONE session open per conversation, so `selection_id` tickets (which live in the server process) survive across tool calls.
+
+```bash
+ANTHROPIC_API_KEY=... uv run flybrain-chat "How many dopamine neurons per super_class?"
+# other providers: uv add langchain-openai, then --model openai:<model> (or set FLYBRAIN_MODEL)
+```
+
+Options: `--model provider:model` (default `anthropic:claude-sonnet-5-5`), `--max-steps N`.
 
 ## Core
 
