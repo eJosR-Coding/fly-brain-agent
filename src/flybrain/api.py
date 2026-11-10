@@ -28,6 +28,7 @@ from flybrain.agent_mcp import SERVER_NAME
 from flybrain.atlas import RowIndex, load_atlas
 from flybrain.mcp_server import DEFAULT_ANNOTATIONS, build_server
 from flybrain.selections import SelectionStore, UnknownSelectionError
+from flybrain.tools import search_neurons
 
 BYTES_PER_POINT = 12  # 3 x float32
 MAX_MESSAGE_CHARS = 2000
@@ -154,6 +155,26 @@ def create_app(
         except UnknownSelectionError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
         return Response(rows.tobytes(), media_type="application/octet-stream")
+
+    @app.get("/neurons/search")
+    def neurons_search(cell_type: str | None = None, nt: str | None = None,
+                       super_class: str | None = None, side: str | None = None):
+        """No-LLM search for the viewer chips: same tool, same ticket store, same inline rule."""
+        try:
+            result = search_neurons(
+                app.state.atlas, app.state.store, cell_type=cell_type, nt=nt, super_class=super_class, side=side
+            )
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        body = {k: result[k] for k in ("selection_id", "total", "filters", "note", "hint") if k in result}
+        sid = result["selection_id"]
+        if sid is None:
+            body["indices"] = []
+        elif result["total"] > max_inline_indices:
+            body |= {"indices": None, "fetch": f"/selections/{sid}/indices"}
+        else:
+            body["indices"] = _rows_for(sid)[0].tolist()
+        return body
 
     def _highlight(content: str, seen: set[str]) -> ServerSentEvent | None:
         """A tool result carrying a selection_id becomes a highlight (once per ticket)."""

@@ -15,8 +15,8 @@ noun
 [![MCP](https://img.shields.io/badge/tools-MCP-000000)](https://modelcontextprotocol.io)
 [![LangGraph](https://img.shields.io/badge/agent-LangGraph-1C3C3C?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
 [![FlyWire](https://img.shields.io/badge/data-FlyWire%20v783-6A5ACD)](https://flywire.ai)
-![Tests](https://img.shields.io/badge/tests-207%20passing-brightgreen)
-![Status](https://img.shields.io/badge/status-agent%20works%2C%203D%20viewer%20next-orange)
+![Tests](https://img.shields.io/badge/tests-235%20passing-brightgreen)
+![Status](https://img.shields.io/badge/status-agent%20and%203D%20viewer%20work-orange)
 
 **Ask a question in plain language. An agent searches 139,248 real neurons and answers.**
 
@@ -216,13 +216,44 @@ event: done
 data: {}
 ```
 
+## Viewer
+
+![The viewer with left dopamine neurons lit](assets/viewer.png)
+
+<sub>Real data and real highlight (2,926 left dopamine neurons from the backend). The chat text in this screenshot is a mocked stream, because the model provider was overloaded when it was taken.</sub>
+
+A Vite + TypeScript + three.js app in `web/`: all 139,248 neurons as one point cloud (loaded
+from the binary `/brain/points` contract, orbit with the mouse) and a chat panel on the right.
+
+```bash
+# terminal 1: backend (drop --model for search-only: chips work, chat reports "no model")
+uv run --env-file .env flybrain-web --model google_genai:gemini-3.5-flash
+
+# terminal 2: viewer (the dev server proxies /api to 127.0.0.1:8000)
+pnpm -C web install && pnpm -C web dev      # open http://localhost:5173
+```
+
+Without a model, run the data and search endpoints only with
+`uv run uvicorn --factory flybrain.api:create_app --port 8000`.
+
+- **Chips** (dopamine, dopamine left, GABA, serotonin, PEN, clear) call
+  `GET /neurons/search`, which uses the same search tool and ticket store as the agent but no
+  LLM, so they keep working when the model provider is down.
+- **Highlights**: when the agent finds neurons, the stream sends a `highlight` event with row
+  indices (or a URL to fetch them as binary when the set is large); those points turn white
+  and everything else stays grey. `clear` restores the base colors.
+- **Look**: all styling lives in `web/src/style.css` as custom properties (colors, fonts, panel
+  width, point size and opacity, highlight color); the three.js parameters are read from them
+  in `web/src/theme.ts`.
+- Tests: `pnpm -C web test` (SSE parser, color buffers, binary decoding, chat stream).
+
 ## Roadmap
 
 - [x] Atlas core: positions, types, neurotransmitters
 - [x] MCP server with selection tickets
 - [x] LangGraph agent + `flybrain-chat` CLI, tested end to end with Gemini
 - [x] FastAPI backend: binary brain points + streamed chat (`flybrain-web`)
-- [ ] Three.js viewer: the brain in 3D, neurons light up as the agent works
+- [x] Three.js viewer: the brain in 3D, neurons light up as the agent works (`web/`)
 - [ ] Tools that change the brain: lesion a selection, scale a neurotransmitter's gain
 - [ ] Simulation: run activity through the connectome and watch it respond
 
