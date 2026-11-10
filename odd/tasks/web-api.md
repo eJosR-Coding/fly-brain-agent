@@ -56,5 +56,7 @@ The agent only runs as a CLI. A browser needs (1) all 139,248 positions once, in
 - tool_call events are emitted when the model asks; a call cut by the budget never runs and the turn ends with the hard-stop error.
 - `flybrain-web` builds the model with init_chat_model before starting uvicorn; failure is one stderr line, exit 1.
 
+- Live test with Gemini (2026-11-10): server streamed `meta` then only keep-alive pings for ~2 min while google-genai retried 503s (1, 2.9, 4.4, 8, 16.5 s backoff). Fix: whole-turn timeout in `stream_events(turn_timeout=...)`, API default 90 s via `FLYBRAIN_TURN_TIMEOUT`. RED: `TypeError: stream_events() got an unexpected keyword argument 'turn_timeout'` and `create_app() got an unexpected keyword argument 'turn_timeout'`; GREEN: 186 passed.
+
 ## Next step
 Open PR, then T6 (Three.js viewer).

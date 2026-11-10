@@ -166,6 +166,10 @@ Options: `--host`, `--port`, `--model` (or `FLYBRAIN_MODEL`), `--max-steps`. COR
 `http://localhost:5173` (Vite) by default; set `FLYBRAIN_CORS_ORIGINS` to a comma-separated
 list to change it. `--help` needs no model or key.
 
+Each chat turn has a time limit (`FLYBRAIN_TURN_TIMEOUT`, default 90 s). Provider SDKs can
+retry overload errors (HTTP 503) with backoff for minutes; when the limit hits, the stream
+sends an `error` event and then `done` instead of going silent.
+
 | Endpoint | What it returns |
 |---|---|
 | `GET /health` | `{"status": "ok", "neurons": N}` |

@@ -152,3 +152,24 @@ def test_cors_origins_from_env(tiny_tsv_path, monkeypatch):
     with TestClient(create_app(atlas_path=tiny_tsv_path)) as client:
         r = client.get("/health", headers={"Origin": "http://b.test"})
     assert r.headers["access-control-allow-origin"] == "http://b.test"
+
+
+def test_slow_model_turn_times_out_with_error_then_done(tiny_tsv_path):
+    import time
+
+    def slow(msgs):
+        time.sleep(2)  # like a provider stuck retrying 503s
+        return AIMessage(content="too late")
+
+    client, _ = make_client(tiny_tsv_path, slow, turn_timeout=0.3)
+    with client:
+        r = chat(client, "anyone there?")
+    names = [n for n, _ in parse_sse(r.text)]
+    assert names == ["meta", "error", "done"]
+    assert "took longer than 0.3 s" in parse_sse(r.text)[1][1]["message"]
+
+
+def test_turn_timeout_defaults_from_env(tiny_tsv_path, monkeypatch):
+    monkeypatch.setenv("FLYBRAIN_TURN_TIMEOUT", "42")
+    app = create_app(atlas_path=tiny_tsv_path)
+    assert app.state.turn_timeout == 42.0

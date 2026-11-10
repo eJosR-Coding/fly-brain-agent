@@ -18,6 +18,8 @@ final reply is reported instead of returned as '', and a dead MCP server stops t
 with ServerStoppedError instead of letting the model improvise without tools.
 """
 
+import asyncio
+import time
 from collections.abc import AsyncIterator
 
 from langchain_core.runnables import RunnableConfig
@@ -154,7 +156,11 @@ def _check_max_steps(max_steps) -> None:
 
 
 async def stream_events(
-    graph, question: str, thread_id: str, max_steps: int = MAX_STEPS
+    graph,
+    question: str,
+    thread_id: str,
+    max_steps: int = MAX_STEPS,
+    turn_timeout: float | None = None,
 ) -> AsyncIterator[dict]:
     """Run one turn and yield typed events (plain dicts) as the graph progresses.
 
@@ -164,6 +170,8 @@ async def stream_events(
     ``thread_id`` selects the conversation memory (needs a checkpointer in the graph).
     A tool_call event is emitted when the model asks; if the budget then cuts the run,
     that last request never executes and the turn ends with the hard-stop error.
+    ``turn_timeout`` (seconds) caps the whole turn: provider SDKs may retry 503s with
+    backoff for minutes, so a slow turn ends with an ``error`` instead of silence.
     """
     _check_max_steps(max_steps)
     config = {
@@ -171,10 +179,17 @@ async def stream_events(
         "configurable": {"max_tool_rounds": max_steps, "thread_id": thread_id},
     }
     last_agent: AIMessage | None = None
+    deadline = None if turn_timeout is None else time.monotonic() + turn_timeout
+    updates = graph.astream(
+        {"messages": [HumanMessage(question)]}, config=config, stream_mode="updates"
+    ).__aiter__()
     try:
-        async for update in graph.astream(
-            {"messages": [HumanMessage(question)]}, config=config, stream_mode="updates"
-        ):
+        while True:
+            left = None if deadline is None else max(deadline - time.monotonic(), 0)
+            try:
+                update = await asyncio.wait_for(updates.__anext__(), left)
+            except StopAsyncIteration:
+                break
             for node, delta in update.items():
                 for msg in (delta or {}).get("messages", []):
                     if node == "agent":
@@ -188,6 +203,13 @@ async def stream_events(
                             "content": msg.text,
                             "error": msg.status == "error",
                         }
+    except TimeoutError:  # whole turn ran out of time (wait_for cancels the stuck step)
+        yield {
+            "type": "error",
+            "message": f"the turn took longer than {turn_timeout:g} s (the model provider "
+            "may be overloaded); try again or switch --model",
+        }
+        return
     except GraphRecursionError:
         yield {"type": "error", "message": _hard_stop(max_steps)}
         return

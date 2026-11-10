@@ -31,6 +31,7 @@ from flybrain.selections import SelectionStore, UnknownSelectionError
 BYTES_PER_POINT = 12  # 3 x float32
 MAX_MESSAGE_CHARS = 2000
 MAX_INLINE_INDICES = 5000  # bigger highlights are fetched as binary instead of inlined
+TURN_TIMEOUT_S = 90.0  # provider SDKs can retry 503s for minutes; cap the whole chat turn
 MAX_ARG_CHARS = 100  # tool args in events are cut to keep events small
 DEFAULT_CORS = "http://localhost:5173"  # Vite dev server
 
@@ -64,6 +65,7 @@ def create_app(
     model=None,
     max_steps: int = MAX_STEPS,
     max_inline_indices: int = MAX_INLINE_INDICES,
+    turn_timeout: float | None = None,
 ) -> FastAPI:
     """Build the app. ``model`` is a LangChain chat model; without one /chat reports an error."""
     path = Path(atlas_path or os.environ.get("FLYBRAIN_ANNOTATIONS") or DEFAULT_ANNOTATIONS)
@@ -89,6 +91,9 @@ def create_app(
             yield
 
     app = FastAPI(title="flybrain", lifespan=lifespan)
+    app.state.turn_timeout = float(
+        turn_timeout or os.environ.get("FLYBRAIN_TURN_TIMEOUT") or TURN_TIMEOUT_S
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
@@ -165,7 +170,9 @@ def create_app(
         else:
             seen: set[str] = set()
             # stream_events never raises: failures arrive as an "error" event
-            async for ev in stream_events(graph, req.message, conversation_id, max_steps):
+            async for ev in stream_events(
+                graph, req.message, conversation_id, max_steps, app.state.turn_timeout
+            ):
                 if ev["type"] == "tool_call":
                     yield _sse("tool_call", {"tool": ev["tool"], "args": _short(ev["args"])})
                 elif ev["type"] == "tool_result":
