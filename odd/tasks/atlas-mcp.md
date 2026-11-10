@@ -24,7 +24,7 @@ Mode: strict (source: global orchestrator config "Strict TDD Mode: enabled"). Ru
 ## Tasks
 - [x] T1 Scaffold repo (git, uv, README, .gitignore). Route: inline (mechanical).
 - [x] T2 `flybrain.atlas`: load annotations, µm positions, find / count_by / describe. Route: delegated writer (2+ non-trivial files).
-- [ ] T3 MCP server (FastMCP) wrapping the atlas + how to register it in Claude Code. Route: delegated writer.
+- [ ] T3 MCP server (FastMCP) wrapping the atlas + how to register it in Claude Code. Route: delegated writer. Design (accepted with user): tools return small summaries + a selection ticket (selection_id) instead of full row lists, so 86k-neuron results cost ~200 tokens; selections stay server-side for later actions (highlight, lesion). Branch: feat/mcp-server (stacked on feat/atlas-core).
 
 ## Acceptance criteria
 - `uv run pytest` green; tests use a tiny fixture, not the 31 MB file.
