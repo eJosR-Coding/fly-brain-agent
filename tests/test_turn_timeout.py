@@ -54,3 +54,21 @@ def test_no_timeout_by_default_lets_fast_turns_finish():
     graph = build_graph(fn_model(reply), [fast_lookup])
     events = _collect(graph, turn_timeout=5)
     assert events[-1] == {"type": "answer", "text": "done"}
+
+
+def test_provider_timeout_without_a_deadline_is_an_ordinary_failure():
+    def reply(messages):
+        raise TimeoutError("read timed out")  # the provider SDK's own timeout, not our deadline
+
+    graph = build_graph(fn_model(reply), [slow_lookup])
+    events = _collect(graph)  # turn_timeout=None
+    assert events == [{"type": "error", "message": "model call failed: read timed out"}]
+
+
+def test_provider_timeout_before_our_deadline_is_an_ordinary_failure():
+    def reply(messages):
+        raise TimeoutError("read timed out")
+
+    graph = build_graph(fn_model(reply), [slow_lookup])
+    events = _collect(graph, turn_timeout=60)
+    assert events[-1] == {"type": "error", "message": "model call failed: read timed out"}

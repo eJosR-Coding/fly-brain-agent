@@ -6,6 +6,7 @@ through MCP while the API shares the SAME SelectionStore (ticket -> root_ids -> 
 """
 
 import json
+import math
 import os
 import uuid
 from collections.abc import AsyncIterable
@@ -60,6 +61,23 @@ def _cors_origins() -> list[str]:
     return [o.strip() for o in raw.split(",") if o.strip()]
 
 
+def _resolve_turn_timeout(turn_timeout: float | None) -> float:
+    """Argument, else $FLYBRAIN_TURN_TIMEOUT, else the default; must be a positive finite number."""
+    if turn_timeout is not None:
+        value, source = turn_timeout, "turn_timeout"
+    elif os.environ.get("FLYBRAIN_TURN_TIMEOUT"):
+        value, source = os.environ["FLYBRAIN_TURN_TIMEOUT"], "FLYBRAIN_TURN_TIMEOUT"
+    else:
+        return TURN_TIMEOUT_S
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        seconds = math.nan
+    if not (math.isfinite(seconds) and seconds > 0):
+        raise ValueError(f"{source} must be a positive number of seconds, got {value!r}")
+    return seconds
+
+
 def create_app(
     atlas_path=None,
     model=None,
@@ -91,9 +109,7 @@ def create_app(
             yield
 
     app = FastAPI(title="flybrain", lifespan=lifespan)
-    app.state.turn_timeout = float(
-        turn_timeout or os.environ.get("FLYBRAIN_TURN_TIMEOUT") or TURN_TIMEOUT_S
-    )
+    app.state.turn_timeout = _resolve_turn_timeout(turn_timeout)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),

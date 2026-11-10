@@ -46,7 +46,12 @@ def main(argv=None) -> int:
             file=sys.stderr,
         )
         return 1
-    uvicorn.run(create_app(model=model, max_steps=args.max_steps), host=args.host, port=args.port)
+    try:
+        app = create_app(model=model, max_steps=args.max_steps)
+    except ValueError as exc:  # e.g. a bad FLYBRAIN_TURN_TIMEOUT
+        print(f"flybrain-web: {_one_line(exc)}", file=sys.stderr)
+        return 1
+    uvicorn.run(app, host=args.host, port=args.port)
     return 0
 
 

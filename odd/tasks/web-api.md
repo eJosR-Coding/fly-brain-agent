@@ -59,7 +59,15 @@ The agent only runs as a CLI. A browser needs (1) all 139,248 positions once, in
 - Live test with Gemini (2026-11-10): server streamed `meta` then only keep-alive pings for ~2 min while google-genai retried 503s (1, 2.9, 4.4, 8, 16.5 s backoff). Fix: whole-turn timeout in `stream_events(turn_timeout=...)`, API default 90 s via `FLYBRAIN_TURN_TIMEOUT`. RED: `TypeError: stream_events() got an unexpected keyword argument 'turn_timeout'` and `create_app() got an unexpected keyword argument 'turn_timeout'`; GREEN: 186 passed.
 
 - Review (2026-11-10), 3 code slices after the deps commit, all granted, approved, acknowledged: A ba89719..cac8310 (367 lines) review-70a5e7a609d6a37e; B cac8310..53a09de (290) review-4414cf30f50f8d51; C 53a09de..d89630a (302) review-05e8954f997f108a.
-- Follow-ups from review warnings (next PR): dangling tool_call left in the checkpointed thread when a turn is cut (hard stop/timeout) can poison the next turn (agent.py:205); TimeoutError raised by a tool with turn_timeout=None would format None (agent.py:206); FLYBRAIN_TURN_TIMEOUT not validated (api.py:94); README test count drift.
+- Follow-ups from review warnings: DONE on branch fix/turn-cleanup (unpushed).
+  - [x] Dangling tool_call poisoning the thread: `find_dangling_tool_calls` + `close_dangling_tool_calls` (aget_state + aupdate_state as_node="agent"), called on every non-answer path of stream_events. RED: `ImportError: cannot import name 'close_dangling_tool_calls' from 'flybrain.agent'`. Commit 46b67ae.
+  - [x] TimeoutError with turn_timeout=None: only our own deadline is reported as a turn timeout. RED: `model call failed: unsupported format string passed to NoneType.__format__` (expected `read timed out`). Commit 62f258b.
+  - [x] FLYBRAIN_TURN_TIMEOUT / turn_timeout validation (positive finite; flybrain-web prints one stderr line, exit 1). RED: `Regex pattern did not match ... could not convert string to float: 'abc'` and `DID NOT RAISE ValueError`. Commit b0d4e3e.
+  - [x] README test count and cut-turn note. GREEN: `uv run pytest -q` 207 passed.
+
+- Behavioral RED for fix 1 (parent probe, 2026-11-10): on main, a hard-stopped turn followed by a second turn on the same thread sent the model a history with unanswered tool_call id `c4`; on fix/turn-cleanup the same probe reports `[]`.
+
+- Review assess fix/turn-cleanup (base main): 312 lines, medium, review_due=false (under_budget) -> pending; reviewed together with the next slice (T6 or later).
 
 ## Next step
 Open PR, then T6 (Three.js viewer).

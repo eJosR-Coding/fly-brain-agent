@@ -3,6 +3,7 @@
 import json
 
 import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -173,3 +174,19 @@ def test_turn_timeout_defaults_from_env(tiny_tsv_path, monkeypatch):
     monkeypatch.setenv("FLYBRAIN_TURN_TIMEOUT", "42")
     app = create_app(atlas_path=tiny_tsv_path)
     assert app.state.turn_timeout == 42.0
+
+
+@pytest.mark.parametrize("bad", ["abc", "0", "-5", "nan", "inf", ""])
+def test_bad_env_turn_timeout_is_rejected(tiny_tsv_path, monkeypatch, bad):
+    monkeypatch.setenv("FLYBRAIN_TURN_TIMEOUT", bad)
+    if bad == "":  # an empty variable counts as unset
+        assert create_app(atlas_path=tiny_tsv_path).state.turn_timeout == 90.0
+        return
+    with pytest.raises(ValueError, match=f"FLYBRAIN_TURN_TIMEOUT.*{bad!r}"):
+        create_app(atlas_path=tiny_tsv_path)
+
+
+@pytest.mark.parametrize("bad", [0, -1, float("nan"), float("inf")])
+def test_bad_turn_timeout_argument_is_rejected(tiny_tsv_path, bad):
+    with pytest.raises(ValueError, match="turn_timeout"):
+        create_app(atlas_path=tiny_tsv_path, turn_timeout=bad)
