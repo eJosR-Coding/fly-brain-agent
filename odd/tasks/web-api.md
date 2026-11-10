@@ -58,5 +58,8 @@ The agent only runs as a CLI. A browser needs (1) all 139,248 positions once, in
 
 - Live test with Gemini (2026-11-10): server streamed `meta` then only keep-alive pings for ~2 min while google-genai retried 503s (1, 2.9, 4.4, 8, 16.5 s backoff). Fix: whole-turn timeout in `stream_events(turn_timeout=...)`, API default 90 s via `FLYBRAIN_TURN_TIMEOUT`. RED: `TypeError: stream_events() got an unexpected keyword argument 'turn_timeout'` and `create_app() got an unexpected keyword argument 'turn_timeout'`; GREEN: 186 passed.
 
+- Review (2026-11-10), 3 code slices after the deps commit, all granted, approved, acknowledged: A ba89719..cac8310 (367 lines) review-70a5e7a609d6a37e; B cac8310..53a09de (290) review-4414cf30f50f8d51; C 53a09de..d89630a (302) review-05e8954f997f108a.
+- Follow-ups from review warnings (next PR): dangling tool_call left in the checkpointed thread when a turn is cut (hard stop/timeout) can poison the next turn (agent.py:205); TimeoutError raised by a tool with turn_timeout=None would format None (agent.py:206); FLYBRAIN_TURN_TIMEOUT not validated (api.py:94); README test count drift.
+
 ## Next step
 Open PR, then T6 (Three.js viewer).
