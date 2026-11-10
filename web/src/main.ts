@@ -7,6 +7,9 @@ import { createScene, type BrainScene } from "./scene";
 import { Latest, runLatest } from "./latest";
 import { deriveStatus, legendView, parseHealth, versionLine, type Health } from "./status";
 import { readTheme } from "./theme";
+import { loadLandmarks, loadRegions, type Regions } from "./regions";
+import { greyHex, keyRows, loadNt, ntTier, type Transmitters } from "./transmitters";
+import type { Theme } from "./theme";
 
 const CHIPS: { label: string; params: Record<string, string> | null }[] = [
   { label: "dopamine", params: { nt: "dopamine" } },
@@ -106,6 +109,58 @@ function setupChips(): void {
   }
 }
 
+/** Compact key for the current color mode: one row per category with its real neuron count. */
+function renderKey(rows: { name: string; count: number; hex: string }[]): void {
+  $("key").replaceChildren(
+    ...rows.map((r) => {
+      const row = document.createElement("div");
+      row.className = "key-row";
+      const dot = document.createElement("i");
+      dot.style.background = r.hex;
+      const name = document.createElement("span");
+      name.textContent = r.name;
+      const n = document.createElement("b");
+      n.textContent = r.count.toLocaleString("en-US");
+      row.append(dot, name, n);
+      return row;
+    }),
+  );
+}
+
+/** Mode, orbit and camera chips, shown once the scene is up. */
+function setupViewChips(scene: BrainScene, theme: Theme, regions?: Regions, nt?: Transmitters): void {
+  const mk = (label: string, title: string, onClick: (b: HTMLButtonElement) => void, extra = "") => {
+    const b = document.createElement("button");
+    b.className = `chip ${extra}`.trim();
+    b.textContent = label;
+    b.title = title;
+    b.addEventListener("click", () => onClick(b));
+    $("views").appendChild(b);
+    return b;
+  };
+  const regionRows = () =>
+    regions ? keyRows(regions.codes, regions.table, (n) => theme.tones[n] ?? theme.baseHex) : [];
+  const ntRows = () =>
+    nt ? keyRows(nt.codes, nt.table, (n) => greyHex(ntTier(n).tone)).sort((a, b) => ntTier(b.name).tone - ntTier(a.name).tone) : [];
+  if (scene.hasTransmitters) {
+    const modes: HTMLButtonElement[] = [];
+    const select = (mode: "regions" | "transmitters") => {
+      scene.setColorMode(mode);
+      renderKey(mode === "regions" ? regionRows() : ntRows());
+      modes.forEach((m) => m.classList.toggle("active", m.textContent === mode));
+    };
+    modes.push(mk("regions", "tint the neurons by brain region", () => select("regions"), "mode active"));
+    modes.push(mk("transmitters", "tint the neurons by predicted neurotransmitter", () => select("transmitters"), "mode"));
+  }
+  renderKey(regionRows());
+  mk("orbit", "slow auto-orbit; pauses while you drag", (b) => {
+    scene.setOrbit(!scene.orbitOn);
+    b.classList.toggle("active", scene.orbitOn);
+  }, `sep toggle${scene.orbitOn ? " active" : ""}`);
+  mk("front", "reset the camera to a straight front view", () => scene.setView("front"), "sep");
+  mk("3/4", "reset the camera to the default three-quarter view", () => scene.setView("home"));
+}
+
 async function loadHealth(): Promise<void> {
   try {
     const res = await fetch("/api/health");
@@ -138,7 +193,17 @@ async function boot(): Promise<void> {
   try {
     const brain = await loadBrain();
     pointCount = brain.meta.count;
-    brainScene = createScene($("stage"), brain, theme);
+    // Region tones and landmarks are optional context: the cloud renders without them.
+    const table = brain.meta.regions;
+    const ntTable = brain.meta.nt;
+    const [regions, landmarks, nt] = await Promise.allSettled([
+      table ? loadRegions(brain.meta.count, table) : Promise.reject(new Error("no region table in /brain/meta")),
+      loadLandmarks(),
+      ntTable ? loadNt(brain.meta.count, ntTable) : Promise.reject(new Error("no transmitter table in /brain/meta")),
+    ]);
+    const ok = <T,>(r: PromiseSettledResult<T>) => (r.status === "fulfilled" ? r.value : undefined);
+    brainScene = createScene($("stage"), brain, theme, { regions: ok(regions), landmarks: ok(landmarks), nt: ok(nt) });
+    setupViewChips(brainScene, theme, ok(regions), ok(nt));
     $("version").textContent = versionLine(brain.meta.count);
   } catch (e) {
     $("version").textContent = `could not load the brain: ${(e as Error).message}`;

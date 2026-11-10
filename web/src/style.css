@@ -1,4 +1,4 @@
-/* ALL visual styling lives here. three.js params (--bg, --point-*, --highlight*, --fog-*) are read by theme.ts.
+/* ALL visual styling lives here. three.js params (--bg, --point-*, --highlight*, --depth-*, --orbit-*) are read by theme.ts.
    Values come from the Penpot design (exact px sizes, colors and letter spacing). */
 :root {
   /* palette: strictly black and white */
@@ -20,11 +20,21 @@
   --highlight-size-scale: 2.6;
   --highlight-opacity: 0.9;
   --point-base: #b4b4b4;
+  /* base point tone per region (derived from super_class by the backend) */
+  --tone-central: #dcdcdc;
+  --tone-optic: #8a8a8a;
+  --tone-sensory: #a8bdd2;
+  --tone-other: #5c5c5c;
   --point-size-divisor: 420;
   --point-opacity: 0.55;
-  --fog-color: #0a0a0a;
-  --fog-near: 1.1;
-  --fog-far: 2.3;
+  /* depth cue: far points dimmer and smaller, near ones brighter and larger */
+  --depth-gain-far: 0.4;
+  --depth-gain-near: 1.3;
+  --depth-size-far: 0.8;
+  --depth-size-near: 1.3;
+  /* slow auto-orbit (2 = one turn per 30 s) and the pause after the user lets go */
+  --orbit-speed: 0.6;
+  --orbit-resume-ms: 4000;
   /* background glow behind the brain */
   --vignette-center: #0d0d0d;
   --vignette-edge: #000000;
@@ -46,6 +56,19 @@ button, input { font-family: inherit; }
   background: radial-gradient(ellipse 60% 55% at 50% 52%, var(--vignette-center) 0%, var(--vignette-edge) 100%); }
 #stage canvas { display: block; width: 100%; height: 100%; }
 
+/* landmark labels, anchored to data-derived centroids and projected each frame */
+#labels { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.lm { position: absolute; left: 0; top: 0; will-change: transform; font: 400 10px/normal var(--font-mono);
+  letter-spacing: 0.4px; color: rgba(255, 255, 255, 0.78); white-space: nowrap;
+  text-shadow: 0 0 3px #000, 0 0 6px #000, 0 0 10px #000; }
+.lm i { position: absolute; left: 0; top: 0; height: 1px; width: var(--len); background: rgba(255, 255, 255, 0.3);
+  transform-origin: 0 0; transform: rotate(var(--ang)); }
+.lm span { position: absolute; left: var(--dx); top: var(--dy); transform: translate(4px, -50%); }
+.lm.left span { transform: translate(calc(-100% - 4px), -50%); }
+.lm.top span { transform: translate(-50%, calc(-100% - 3px)); }
+.lm.hidden { display: none; }
+@media (max-width: 720px) { #labels { display: none; } }
+
 /* top-left brand */
 #brand { position: fixed; top: 38px; left: var(--pad); display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
 #mark-row { display: flex; align-items: center; gap: 11px; }
@@ -54,19 +77,33 @@ button, input { font-family: inherit; }
 #version { margin: 0; font: 400 10px/normal var(--font-mono); letter-spacing: 0.3px; color: var(--dim); white-space: nowrap; }
 
 /* bottom-left legend and chips */
-#legend { position: fixed; left: var(--pad); bottom: 110px; display: flex; align-items: center; gap: 24px;
+#legend { position: fixed; left: var(--pad); bottom: 142px; display: flex; align-items: center; gap: 24px;
   font: 400 9.5px/normal var(--font-mono); letter-spacing: 0.3px; white-space: nowrap; }
 .legend-item { display: flex; align-items: center; gap: 7px; color: #7e7e7e; }
 .legend-item .dot { display: block; width: 5px; height: 5px; border-radius: 50%; background: #6e6e6e; }
+.legend-item[hidden] { display: none; }
 .legend-item.on { color: var(--text); }
 .legend-item.on .dot { background: var(--fg); box-shadow: 0 0 7px var(--fg); }
 #legend-selected:not(.on) { color: #4a4a4a; }
 #legend-selected:not(.on) .dot { background: #3a3a3a; }
 
+/* color key: one row per region or transmitter tier, with real counts */
+#key { position: fixed; left: var(--pad); bottom: 180px; display: flex; flex-direction: column; gap: 7px;
+  font: 400 9.5px/normal var(--font-mono); letter-spacing: 0.3px; pointer-events: none; }
+.key-row { display: flex; align-items: center; gap: 8px; color: #8a8a8a; }
+.key-row i { display: block; width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.key-row span { min-width: 92px; }
+.key-row b { font-weight: 400; color: #7a7a7a; }
+.key-row { text-shadow: 0 0 4px #000, 0 0 8px #000; }
+
+#views { position: fixed; left: var(--pad); bottom: 99px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 #chips { position: fixed; left: var(--pad); bottom: 59px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .chip { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 7px 12px; font: 400 10px/normal var(--font-mono); letter-spacing: 0.2px; white-space: nowrap; cursor: pointer; }
 .chip:hover { color: var(--fg); border-color: #555; }
+.chip.sep { margin-left: 8px; }
+.chip.mode.active { background: transparent; color: var(--fg); border-color: #888; }
+.chip.toggle.active { background: transparent; color: var(--fg); border-color: #777; }
 .chip.active { background: var(--fg); color: #000; border-color: transparent; }
 
 /* bottom-right status block */
@@ -120,6 +157,8 @@ button, input { font-family: inherit; }
   #chat { top: auto; width: auto; left: 0; height: 45vh; border-left: 0; border-top: 1px solid var(--line); }
   #status { display: none; }
   #legend { bottom: calc(45vh + 56px); left: 16px; }
+  #key { display: none; }
   #chips { bottom: calc(45vh + 12px); left: 16px; right: 16px; }
+  #views { display: none; }
   #brand { left: 16px; }
 }

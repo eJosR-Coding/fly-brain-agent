@@ -10,15 +10,22 @@ export interface Theme {
   /** highlighted points are drawn this many times larger than base points */
   highlightSizeScale: number;
   highlightOpacity: number;
-  /** depth fade: far points blend into fogColor between fogNear and fogFar (multiples of the brain size) */
-  fogColor: string;
-  fogNear: number;
-  fogFar: number;
+  /** depth cue: brightness gain and size multiplier for the farthest and the nearest points of the cloud */
+  depthGainFar: number;
+  depthGainNear: number;
+  depthSizeFar: number;
+  depthSizeNear: number;
+  /** auto-orbit speed (OrbitControls units; 2 = one turn per 30 s) and the pause after the user lets go (ms) */
+  orbitSpeed: number;
+  orbitResumeMs: number;
+  /** base point tone per region name (central, optic, sensory, other) */
+  tones: Record<string, string>;
 }
 
 const FALLBACK = {
   bg: "#000000", base: "#6b6b6b", hl: "#ffffff", div: "450", opacity: "0.6",
-  hlScale: "2.5", hlOpacity: "0.9", fog: "#0a0a0a", fogNear: "1.1", fogFar: "2.3",
+  hlScale: "2.5", hlOpacity: "0.9", depthGainFar: "0.4", depthGainNear: "1.3", depthSizeFar: "0.8", depthSizeNear: "1.3", orbitSpeed: "0.6", orbitResumeMs: "4000",
+  toneCentral: "#d6d6d6", toneOptic: "#8c8c8c", toneSensory: "#a9bccd", toneOther: "#5e5e5e",
 };
 
 function cssVar(name: string, fallback: string): string {
@@ -37,8 +44,17 @@ export function readTheme(): Theme {
     pointOpacity: Number(cssVar("--point-opacity", FALLBACK.opacity)),
     highlightSizeScale: Number(cssVar("--highlight-size-scale", FALLBACK.hlScale)),
     highlightOpacity: Number(cssVar("--highlight-opacity", FALLBACK.hlOpacity)),
-    fogColor: cssVar("--fog-color", FALLBACK.fog),
-    fogNear: Number(cssVar("--fog-near", FALLBACK.fogNear)),
-    fogFar: Number(cssVar("--fog-far", FALLBACK.fogFar)),
+    depthGainFar: Number(cssVar("--depth-gain-far", FALLBACK.depthGainFar)),
+    depthGainNear: Number(cssVar("--depth-gain-near", FALLBACK.depthGainNear)),
+    depthSizeFar: Number(cssVar("--depth-size-far", FALLBACK.depthSizeFar)),
+    depthSizeNear: Number(cssVar("--depth-size-near", FALLBACK.depthSizeNear)),
+    orbitSpeed: Number(cssVar("--orbit-speed", FALLBACK.orbitSpeed)),
+    orbitResumeMs: Number(cssVar("--orbit-resume-ms", FALLBACK.orbitResumeMs)),
+    tones: {
+      central: cssVar("--tone-central", FALLBACK.toneCentral),
+      optic: cssVar("--tone-optic", FALLBACK.toneOptic),
+      sensory: cssVar("--tone-sensory", FALLBACK.toneSensory),
+      other: cssVar("--tone-other", FALLBACK.toneOther),
+    },
   };
 }
