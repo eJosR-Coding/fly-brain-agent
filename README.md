@@ -15,7 +15,7 @@ noun
 [![MCP](https://img.shields.io/badge/tools-MCP-000000)](https://modelcontextprotocol.io)
 [![LangGraph](https://img.shields.io/badge/agent-LangGraph-1C3C3C?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
 [![FlyWire](https://img.shields.io/badge/data-FlyWire%20v783-6A5ACD)](https://flywire.ai)
-![Tests](https://img.shields.io/badge/tests-182%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-207%20passing-brightgreen)
 ![Status](https://img.shields.io/badge/status-agent%20works%2C%203D%20viewer%20next-orange)
 
 **Ask a question in plain language. An agent searches 139,248 real neurons and answers.**
@@ -168,7 +168,10 @@ list to change it. `--help` needs no model or key.
 
 Each chat turn has a time limit (`FLYBRAIN_TURN_TIMEOUT`, default 90 s). Provider SDKs can
 retry overload errors (HTTP 503) with backoff for minutes; when the limit hits, the stream
-sends an `error` event and then `done` instead of going silent.
+sends an `error` event and then `done` instead of going silent. A cut turn (limit, hard stop,
+model error) leaves the conversation usable: tool calls it never answered are closed with a
+"cancelled" tool result, so the next message on the same `conversation_id` works. The value
+must be a positive number; anything else stops startup with a one-line error.
 
 | Endpoint | What it returns |
 |---|---|
@@ -239,7 +242,7 @@ FlyWire consortium and its authors; follow their terms and cite their papers if 
 
 ```bash
 uv sync
-uv run pytest        # 182 tests, no network or API key needed (fake chat model)
+uv run pytest        # 207 tests, no network or API key needed (fake chat model)
 ```
 
 Work is tracked per feature in [`odd/tasks/`](odd/tasks/), with test-first commits.
