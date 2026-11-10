@@ -27,8 +27,11 @@ core       flybrain.atlas          positions in µm, cell types, neurotransmitte
 
 `flybrain.agent` is a hand-built LangGraph loop (no `create_agent`): the model node asks, `ToolNode` executes, and we repeat until the model answers without tool calls. Tool errors (unknown tool, bad args) go back to the model as messages instead of raising. `ask()` sets `recursion_limit` as a hard stop and returns `[hard stop] reached N steps without a final answer` instead of crashing. The agent is an MCP client: `flybrain.agent_mcp` launches `python -m flybrain.mcp_server` over stdio and keeps ONE session open per conversation, so `selection_id` tickets (which live in the server process) survive across tool calls.
 
+Keys go in a local `.env` (gitignored, see `.env.example`; keep it `chmod 600`) and are loaded by `uv run --env-file`, so they never land in shell history or command arguments:
+
 ```bash
-ANTHROPIC_API_KEY=... uv run flybrain-chat "How many dopamine neurons per super_class?"
+uv run --env-file .env flybrain-chat --model google_genai:gemini-3.5-flash "How many dopamine neurons per super_class?"
+uv run --env-file .env flybrain-chat --model anthropic:claude-sonnet-5-5 "..."
 # other providers: uv add langchain-openai, then --model openai:<model> (or set FLYBRAIN_MODEL)
 ```
 
