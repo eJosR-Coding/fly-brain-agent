@@ -41,5 +41,7 @@ Mode: strict (source: global orchestrator config "Strict TDD Mode: enabled"). Ru
 
 - T3: commit 6e09fd9 (feat/mcp-server). Parent re-ran pytest: 30 passed. Verified mcp 2.3.0 is latest on PyPI; pinned mcp<2 (1.30.0) because 2.x renamed FastMCP -> MCPServer. Revisit when adding LangGraph adapters.
 
+- Review (atlas + MCP slice, base 6806fdd..03f8f7c): granted, 1 lens (reliability), approved, acknowledged (authority burned). Next reviewed boundary: 03f8f7c.
+
 ## Next step
 T4 LangGraph agent.
