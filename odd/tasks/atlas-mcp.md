@@ -45,7 +45,7 @@ Mode: strict (source: global orchestrator config "Strict TDD Mode: enabled"). Ru
 - Review (atlas + MCP slice, base 6806fdd..03f8f7c): granted, 1 lens (reliability), approved, acknowledged (authority burned). Next reviewed boundary: 03f8f7c.
 
 - T3a RED: `uv run pytest -q` -> 2 failed (`assert 'sel_1' != 'sel_1'` on the restart test), 29 passed.
-- T3a GREEN: `uv run pytest -q` -> 31 passed.
+- T3a GREEN: `uv run pytest -q` -> 31 passed. Commit 070958a. Review assess: medium, review_due=false (under_budget) -> pending in slice.
 
 ## Next step
 T4 LangGraph agent.
