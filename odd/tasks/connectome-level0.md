@@ -48,5 +48,8 @@ The project only has neuron positions. Every experiment the user wants (paths, s
 - Engram mirror: pending (mem_save blocked by hook/auto-mode in this session).
 - Engram mirror: pending (mem_save blocked by hook/auto-mode in this session).
 
+- Review (2026-11-10): G1 ad0db28..dc2650a (516), G2 dc2650a..24fcd10 (396), G3 24fcd10..e4360e5 (272, HIGH, 4 lenses), all granted, approved, acknowledged. Follow-ups: a corrupt/non-zip npz raises BadZipFile at load and the optional-load catch is too narrow (connectome.py:67-71, mcp_server.py:29) -> should degrade to 'no connectome' with one stderr line; top_hubs returns a ticket even when empty (tools.py:345).
+- Parent spot check: find_path R1-6 -> KC re-run independently: 3 hops (R1-6 -> L3 -> MTe07 -> KCg-s1), load 0.75 s.
+
 ## Next step
 Parent: read-only review of the spot checks; optional Level 1 (stimulation) design. Not pushed.
