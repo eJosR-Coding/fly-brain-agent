@@ -27,9 +27,9 @@ The backend (T5) streams highlights as row indices, but nothing renders them. Th
 - Mode: strict (source: global user config). Runners: `uv run pytest` (backend), `pnpm -C web test` (frontend units).
 
 ## Tasks
-- [ ] V1 Backend `GET /neurons/search` (no LLM). Route: delegated writer.
-- [ ] V2 Viewer: point cloud from the binary contract, orbit, highlight/clear, quick filters. Route: delegated writer.
-- [ ] V3 Chat panel over SSE with live highlights; screenshot + README. Route: delegated writer.
+- [x] V1 Backend `GET /neurons/search` (no LLM). Route: delegated writer.
+- [x] V2 Viewer: point cloud from the binary contract, orbit, highlight/clear, quick filters. Route: delegated writer.
+- [x] V3 Chat panel over SSE with live highlights; screenshot + README. Route: delegated writer.
 
 ## Acceptance criteria
 - Page loads the real 139,248 points and renders them (screenshot proof).
@@ -38,7 +38,12 @@ The backend (T5) streams highlights as row indices, but nothing renders them. Th
 - `uv run pytest` and `pnpm -C web test` green.
 
 ## Progress / evidence
+- V1 (cbc404f): RED `tests/test_api_search.py` 5 failed (404, route missing) -> GREEN 212 passed (`uv run pytest -q`). Zero matches: 200, selection_id null, indices [], hint; bad filter: 422.
+- V2 (9bec0a3 deps, c760664): vitest RED = 3 files failed (modules missing: sse, colors, brainData) -> GREEN 19 passed. Versions: three 0.187.0, vite 8.3.7, vitest 5.1.0. Center computed from min/max of the points (meta.extent_um is a size, not bounds). y flipped via a wrapper group scale.y=-1; confirmed: dopamine PAM cluster shows at the top.
+- V3 (22faaa7): RED chat.test.ts "Cannot find module ../src/chat" -> GREEN 23 passed across 4 files. SSE malformed JSON policy: emitted as an `error` event, never throws.
+- Visual: real backend without a model + `vite preview`, headless chromium (swiftshader). Screenshot assets/viewer.png (317 KB): 139,248 points loaded, 2,926 left dopamine neurons lit white (chat stream mocked in the browser, highlight indices real), input re-enabled after done.
+- README updated (Viewer section, roadmap, badge 235 = 212 python + 23 web).
 - Engram mirror: pending (mem_save blocked by hook/auto-mode in this session).
 
 ## Next step
-V1.
+Parent: review, then PR. Penpot-driven visual restyle only touches web/src/style.css (theme.ts reads its custom properties).
