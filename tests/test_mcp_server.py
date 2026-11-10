@@ -142,3 +142,11 @@ def test_load_connectome_if_present_skips_a_table_for_another_atlas(tiny_atlas, 
     e = np.array([0], dtype=np.int32)
     write_npz(path, e, e, e, n_neurons=7, source="x", stats={"rows_in": 1, "dropped_unknown": 0, "dropped_self_loops": 0})
     assert mcp_server.load_connectome(tiny_atlas, path) is None
+
+
+def test_find_path_doc_explains_strength_fields(tiny_atlas):
+    by_name = {t.name: t for t in asyncio.run(build_server(tiny_atlas).list_tools())}
+    doc = by_name["find_path"].description
+    for field in ("synapses_from_previous", "min_hop_synapses", "total_synapses",
+                  "shortest_path_count", "alternative_routes", "bottleneck"):
+        assert field in doc, field

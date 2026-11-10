@@ -157,3 +157,93 @@ def test_load_rejects_a_table_built_for_another_atlas(tmp_path):
     write_npz(path, pre, post, syn, n_neurons=N, source="x", stats={"rows_in": 1, "dropped_unknown": 0, "dropped_self_loops": 0})
     with pytest.raises(ConnectomeError, match="atlas"):
         Connectome.load(path, n_neurons=999)
+
+
+# -- strongest shortest path -----------------------------------------------------------
+# 0 -> T(3) in two hops through four middle neurons, plus a longer detour that must be ignored:
+#   via 1: 50 then 5   (bottleneck 5,  total 55)
+#   via 2: 20 then 20  (bottleneck 20, total 40)
+#   via 6: 20 then 20  (bottleneck 20, total 40: ties with via 2, lowest row wins)
+#   via 7: 20 then 30  (bottleneck 20, total 50: best)
+#   detour 0 -> 8 -> 9 -> 3 would be 3 hops
+STRONG_EDGES = [
+    (0, 1, 50), (1, 3, 5), (0, 2, 20), (2, 3, 20), (0, 6, 20), (6, 3, 20), (0, 7, 20), (7, 3, 30),
+    (0, 8, 90), (8, 9, 90), (9, 3, 90),
+]
+
+
+def _make(edges, n):
+    pre, post, syn = (np.array(c, dtype=np.int32) for c in zip(*edges))
+    return Connectome.from_edges(pre, post, syn, n_neurons=n, min_synapses=5)
+
+
+@pytest.fixture
+def strong():
+    return _make(STRONG_EDGES, 10)
+
+
+def test_strongest_path_maximizes_bottleneck_then_total_among_shortest(strong):
+    res = strong.strongest_paths([0], [3])
+    assert res["hops"] == 2
+    assert res["path"] == [0, 7, 3]
+    assert res["hop_synapses"] == [20, 30]
+    assert res["min_hop_synapses"] == 20 and res["total_synapses"] == 50
+
+
+def test_strongest_path_never_trades_hops_for_strength(strong):
+    res = strong.strongest_paths([0], [3])
+    assert 8 not in res["path"] and res["hops"] == 2  # the 90-synapse detour is 3 hops
+
+
+def test_shortest_path_count_counts_distinct_shortest_routes(strong):
+    assert strong.strongest_paths([0], [3])["path_count"] == 4
+
+
+def test_alternatives_are_ranked_by_strength_and_differ_in_an_intermediate(strong):
+    alts = strong.strongest_paths([0], [3])["alternatives"]
+    assert [a["path"] for a in alts] == [[0, 2, 3], [0, 6, 3], [0, 1, 3]]
+    assert [a["min_hop_synapses"] for a in alts] == [20, 20, 5]
+    assert alts[0]["total_synapses"] == 40 and alts[0]["hop_synapses"] == [20, 20]
+
+
+def test_alternatives_are_capped(strong):
+    assert len(strong.strongest_paths([0], [3], n_alternatives=1)["alternatives"]) == 1
+    assert strong.strongest_paths([0], [3], n_alternatives=0)["alternatives"] == []
+
+
+def test_strongest_path_does_not_greedy_pick_the_best_prefix():
+    # both routes reach 4 and then share the 6-synapse hop to 5: the bottleneck ties at 6, so
+    # the higher total (via 2, prefix bottleneck 6 but total 56) must beat via 1 (10 / 20)
+    conn = _make([(0, 1, 10), (1, 4, 10), (0, 2, 50), (2, 4, 6), (4, 5, 6)], 6)
+    res = conn.strongest_paths([0], [5])
+    assert res["path"] == [0, 2, 4, 5] and res["hop_synapses"] == [50, 6, 6]
+    assert res["min_hop_synapses"] == 6 and res["total_synapses"] == 62
+    assert res["path_count"] == 2
+
+
+def test_strongest_path_multi_source_multi_target_picks_the_strongest_pair():
+    conn = _make([(0, 2, 6), (1, 3, 40), (0, 3, 7)], 4)
+    res = conn.strongest_paths([0, 1], [2, 3])
+    assert res["path"] == [1, 3] and res["min_hop_synapses"] == 40
+    assert res["path_count"] == 3
+
+
+def test_strongest_path_none_when_unreachable_or_too_far(strong):
+    assert strong.strongest_paths([3], [0]) is None
+    assert strong.strongest_paths([0], [3], max_hops=1) is None
+
+
+def test_strongest_path_source_is_target_is_zero_hops(strong):
+    res = strong.strongest_paths([2], [2, 3])
+    assert res["hops"] == 0 and res["path"] == [2] and res["hop_synapses"] == []
+    assert res["min_hop_synapses"] is None and res["total_synapses"] == 0
+    assert res["path_count"] == 1 and res["alternatives"] == []
+
+
+def test_strongest_path_single_hop_has_no_alternatives():
+    res = _make([(0, 1, 9)], 2).strongest_paths([0], [1])
+    assert res["path"] == [0, 1] and res["hop_synapses"] == [9] and res["alternatives"] == []
+
+
+def test_strongest_path_is_deterministic(strong):
+    assert strong.strongest_paths([0], [3]) == strong.strongest_paths([0], [3])

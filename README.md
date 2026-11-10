@@ -145,13 +145,18 @@ flybrain-build-connectome first" and everything else keeps working. `/health` re
 | Tool | What it does |
 |---|---|
 | `neighbors` | partners of a selection (`out`, `in` or `both`) with synapse totals, plus a ticket of all partners |
-| `find_path` | shortest directed path between two selections (fewest hops, deterministic) plus a ticket of the path neurons |
+| `find_path` | strongest of the shortest directed paths between two selections: fewest hops, then the route whose weakest hop has the most synapses. Reports synapses per hop, the bottleneck (`min_hop_synapses`), `total_synapses`, how many equally short routes exist (`shortest_path_count`) and up to 3 `alternative_routes`, plus a ticket of the path neurons |
 | `lesion_effect` | how many targets stay reachable from the sources once a selection is removed, plus a ticket of the lost ones |
 | `top_hubs` | neurons with the most synapses (`in`, `out` or `total`), optionally filtered like `search_neurons` |
 
 Example questions: "What do the dopamine PAM neurons project to?", "Is there a path from
 photoreceptors (R1-6) to Kenyon cells?", "If I remove the PEN neurons, can the E-PG cells
 still reach the PFL cells within 3 hops?", "Which Kenyon cells send the most synapses?".
+
+Example `find_path` answer (R1-6 to descending neurons, real data, ~1 KB): 3 hops,
+R1-6 -> L1 (36 synapses) -> L5 (131) -> DNc01 (11), bottleneck 11, 341 equally short routes, and
+three alternatives such as `R1-6 > L2 > L5 > DNc01` (bottleneck 11). Strength is synapse count, a
+proxy for connection weight; it says nothing about sign or efficacy.
 
 Honesty note: everything here is structural. An edge means at least 5 synapses between a neuron
 pair (the default threshold, which filters single-synapse segmentation noise; ~2.7M of 15M pairs

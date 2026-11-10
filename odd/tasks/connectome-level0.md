@@ -53,3 +53,18 @@ The project only has neuron positions. Every experiment the user wants (paths, s
 
 ## Next step
 Parent: read-only review of the spot checks; optional Level 1 (stimulation) design. Not pushed.
+
+## Path strength
+Problem (user-reported via the MCP tool): `find_path` returned one arbitrary fewest-hops path with no hint of how strong each hop is or whether stronger or alternative routes exist.
+
+Decision: `Connectome.strongest_paths` replaces the BFS-parent path in `find_path`. Among all minimum-hop routes it maximizes the bottleneck (weakest hop, in synapses), then the total synapses, then the lowest rows. No new parameter; `max_hops` and the structural note stay (the note now says strength = synapse count, a proxy for weight, not sign or efficacy). `shortest_path` is kept for other callers.
+
+Algorithm (O(E) over the layered DAG, numpy/CSR only): BFS gives distances; keep edges from layer d to d+1; backward pass from the targets prunes edges that cannot reach one; a widest-path DP (max of min) gives the best bottleneck; a second max-sum DP over edges at least that strong picks the best total (two passes because (bottleneck, total) is not safe to optimize prefix by prefix; a test pins this). Route count = sum DP over the pruned DAG (float64, reported capped at 1,000,000 with `shortest_path_count_capped`). Alternatives = up to 3 more routes, strongest first, found by best-first search over "ban this intermediate neuron" subproblems (bounded to 60 DAG passes), each distinct in at least one intermediate neuron. Payload fields: `path[].synapses_from_previous`, `min_hop_synapses`, `total_synapses`, `shortest_path_count`, `alternative_routes[] = {chain (cell types), min_hop_synapses}`.
+
+RED evidence: `tests/test_connectome.py` 11 failed, 23 passed (`AttributeError: 'Connectome' object has no attribute 'strongest_paths'`); `tests/test_connectome_tools.py` 3 failed, 18 passed (`KeyError: 'shortest_path_count'`, missing `synapses_from_previous`); `tests/test_mcp_server.py` 1 failed (docstring lacked `synapses_from_previous` etc.). All GREEN afterwards; `uv run pytest -q`: 298 passed (was 283).
+
+Real data (no LLM; load 0.88 s; `find_path` call 42-56 ms; payloads 962 and 1,076 chars):
+- R1-6 -> KC: 3 hops, R1-6 -> L3 (19) -> MTe07 (5) -> KCg-s1 (7); bottleneck 5, total 31; `shortest_path_count` 2; one alternative with the same cell-type chain (a different neuron pair). Identical rows to the old answer: the old path happened to be the strongest, and the route is weak (bottleneck 5 = at the threshold, so structurally present but barely).
+- R1-6 -> descending: 3 hops, R1-6 -> L1 (36) -> L5 (131) -> DNc01 (11); bottleneck 11, total 178; `shortest_path_count` 341; alternatives `R1-6 > L2 > L5 > DNc01` (11), `R1-6 > L1 > L5 > DNc01` (10), `R1-6 > L2 > Tm4 > DNp11` (10). The old answer (R1-6 -> L1 -> MTe01b -> DNp53) had hops 8 / 5 / 5, bottleneck 5: the strongest path differs and is more than twice as strong at the bottleneck.
+
+Known limits: alternatives are distinct by neuron, so their cell-type chain can equal the main one; with several sources/targets a 1-hop answer has no alternatives; only intermediate neurons are varied.

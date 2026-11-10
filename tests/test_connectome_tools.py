@@ -74,6 +74,54 @@ def test_find_path_returns_hops_path_and_ticket(tiny_atlas, store, tiny_conn):
     assert "structural" in out["note"].lower()
 
 
+def test_find_path_reports_synapses_per_hop_bottleneck_and_total(tiny_atlas, store, tiny_conn):
+    a = _ticket(tiny_atlas, store, cell_type="ORN_DA1")
+    b = tools.search_neurons(tiny_atlas, store, cell_type="PEN")["selection_id"]
+    out = tools.find_path(tiny_atlas, store, tiny_conn, a, b)
+    assert [p["synapses_from_previous"] for p in out["path"]] == [None, 9, 6, 10]
+    assert out["min_hop_synapses"] == 6 and out["total_synapses"] == 25
+    assert out["shortest_path_count"] == 1 and out["alternative_routes"] == []
+    assert "synapse count" in out["note"] and "sign" in out["note"]
+
+
+@pytest.fixture
+def rival_conn(tiny_atlas):
+    # EPG(row 60) -> row 3 (root 4) through three middle neurons of different strength
+    import numpy as np
+
+    from flybrain.connectome import Connectome
+
+    edges = [(60, 0, 10), (0, 3, 5), (60, 1, 20), (1, 3, 20), (60, 2, 7), (2, 3, 7)]
+    pre, post, syn = (np.array(c, dtype=np.int32) for c in zip(*edges))
+    return Connectome.from_edges(pre, post, syn, n_neurons=len(tiny_atlas.neurons), min_synapses=5)
+
+
+def test_find_path_picks_the_strongest_shortest_route_and_lists_rivals(tiny_atlas, store, rival_conn):
+    a = _ticket(tiny_atlas, store, cell_type="EPG")
+    b = store.add([4], "one PEN_a", {})
+    out = tools.find_path(tiny_atlas, store, rival_conn, a, b)
+    assert [p["root_id"] for p in out["path"]] == [100, 2, 4]  # via row 1, the 20-synapse route
+    assert out["min_hop_synapses"] == 20 and out["total_synapses"] == 40
+    assert out["shortest_path_count"] == 3
+    assert out["alternative_routes"] == [
+        {"chain": "EPG > PEN_a > PEN_a", "min_hop_synapses": 7},
+        {"chain": "EPG > PEN_a > PEN_a", "min_hop_synapses": 5},
+    ]
+    assert len(json.dumps(out)) < 2000
+    assert store.get(out["selection_id"]).root_ids == (100, 2, 4)  # ticket is the chosen path only
+
+
+def test_find_path_caps_the_reported_route_count(tiny_atlas, store, monkeypatch, tiny_conn):
+    monkeypatch.setattr(
+        type(tiny_conn), "strongest_paths",
+        lambda self, *a, **k: {"hops": 1, "path": [60, 0], "hop_synapses": [10], "min_hop_synapses": 10,
+                               "total_synapses": 10, "path_count": 5_000_000, "alternatives": []},
+    )
+    a = _ticket(tiny_atlas, store, cell_type="EPG")
+    out = tools.find_path(tiny_atlas, store, tiny_conn, a, a)
+    assert out["shortest_path_count"] == 1_000_000 and out["shortest_path_count_capped"] is True
+
+
 def test_find_path_not_found_gives_hint_and_no_ticket(tiny_atlas, store, tiny_conn):
     a = _ticket(tiny_atlas, store, cell_type="EPG")
     b = _ticket(tiny_atlas, store, cell_type="ORN")

@@ -123,14 +123,22 @@ def build_server(
 
     @server.tool()
     def find_path(from_selection: str, to_selection: str, max_hops: int = 8) -> dict:
-        """Shortest DIRECTED structural path between two neuron groups (one concrete route).
+        """Strongest of the shortest DIRECTED structural paths between two neuron groups.
 
         Finds the fewest synapse hops from any neuron in `from_selection` to any neuron in
-        `to_selection`, following connections of at least 5 synapses (the noise filter). Returns
-        `hops`, the path as a short list of {root_id, cell_type, super_class} in order, and a
-        `selection_id` for the path neurons. If nothing is within `max_hops` you get found=false
-        and a hint. A path is wiring that exists, NOT proof that a signal travels it, and it is
-        one of possibly many equally short routes. Direction matters: swap the groups to ask
+        `to_selection` (connections of at least 5 synapses only, the noise filter). Among all
+        routes with that hop count it returns the strongest one: the route whose weakest hop
+        has the most synapses (ties: most synapses in total). Fields: `hops`; `path`, a short
+        list of {root_id, cell_type, super_class, synapses_from_previous} in order (null for
+        the first neuron); `min_hop_synapses`, the bottleneck, i.e. the weakest hop on the
+        route (a route is only as strong as that hop; 5 = barely connected, 50+ = solid);
+        `total_synapses`; `shortest_path_count`, how many distinct routes of that same length
+        exist (large = redundant wiring; capped at 1,000,000 with shortest_path_count_capped);
+        `alternative_routes`, up to 3 other equally short routes as {chain of cell types,
+        min_hop_synapses}, strongest first; and a `selection_id` for the chosen path neurons.
+        If nothing is within `max_hops` you get found=false and a hint. Strength is synapse
+        count, a proxy for connection weight, NOT sign or efficacy; a path is wiring that
+        exists, not proof that a signal travels it. Direction matters: swap the groups to ask
         the reverse. Example: from photoreceptors (cell_type R1-6) to Kenyon cells (KC).
 
         Args:

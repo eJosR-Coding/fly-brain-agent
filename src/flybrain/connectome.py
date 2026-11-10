@@ -16,6 +16,7 @@ from scipy import sparse
 DEFAULT_MIN_SYNAPSES = 5  # filters single-synapse noise; ~2.7M of 15M pairs survive on FlyWire 783
 DIRECTIONS = ("in", "out", "both")
 METRICS = ("in", "out", "total")
+MAX_ALT_SOLVES = 60  # bound on the DAG passes spent looking for alternative routes
 
 
 class ConnectomeError(ValueError):
@@ -157,6 +158,142 @@ class Connectome:
         while parent[path[-1]] >= 0:
             path.append(int(parent[path[-1]]))
         return int(dist[best]), path[::-1]
+
+    # -- strongest shortest path -------------------------------------------------------
+
+    def _layered_edges(self, dist: np.ndarray, depth: int, tgt_mask: np.ndarray):
+        """Edges (u, v, w) that go from BFS layer d to d+1, one triple per layer d < depth."""
+        indptr, indices, data = self._out.indptr, self._out.indices, self._out.data
+        layers = []
+        for d in range(depth):
+            frontier = np.flatnonzero(dist == d)
+            starts, ends = indptr[frontier], indptr[frontier + 1]
+            counts = ends - starts
+            total = int(counts.sum())
+            pos = np.repeat(starts - np.cumsum(counts) + counts, counts) + np.arange(total)
+            u = np.repeat(frontier, counts)
+            v = indices[pos].astype(np.int64)
+            w = data[pos].astype(np.int64)
+            keep = dist[v] == d + 1
+            if d + 1 == depth:
+                keep &= tgt_mask[v]  # only the targets at the final layer end a shortest path
+            layers.append((u[keep], v[keep], w[keep]))
+        return layers
+
+    def _prune(self, layers, tgt: np.ndarray, blocked: np.ndarray | None):
+        """Keep only edges that lie on some source-to-target route (backward pass from targets)."""
+        good = np.zeros(self.n, dtype=bool)
+        good[tgt] = True
+        pruned = [None] * len(layers)
+        for d in range(len(layers) - 1, -1, -1):
+            u, v, w = layers[d]
+            keep = good[v]
+            if blocked is not None:
+                keep &= ~blocked[u] & ~blocked[v]
+            u, v, w = u[keep], v[keep], w[keep]
+            good[u] = True
+            pruned[d] = (u, v, w)
+        return pruned
+
+    def _best_route(self, layers, src: np.ndarray, tgt: np.ndarray):
+        """Best (bottleneck, total, rows, hop weights) over pruned layers, or None.
+
+        Two exact passes: a widest-path DP (max of min) gives the best bottleneck; then, using
+        only edges at least that strong, a max-sum DP gives the best total. Doing it in two
+        passes matters: a (bottleneck, total) pair is not safe to optimize prefix by prefix.
+        Ties go to the lowest row at every step.
+        """
+        width = np.zeros(self.n, dtype=np.int64)
+        width[src] = np.iinfo(np.int64).max
+        for u, v, w in layers:
+            if len(u):
+                np.maximum.at(width, v, np.minimum(width[u], w))
+        bottleneck = int(width[tgt].max())
+        if bottleneck <= 0:
+            return None
+        total = np.full(self.n, -1, dtype=np.int64)
+        parent = np.full(self.n, -1, dtype=np.int64)
+        parent_w = np.zeros(self.n, dtype=np.int64)
+        total[src] = 0
+        for u, v, w in layers:
+            ok = (w >= bottleneck) & (total[u] >= 0)
+            u, v, w = u[ok], v[ok], w[ok]
+            if not len(u):
+                continue
+            cand = total[u] + w
+            order = np.lexsort((u, -cand, v))  # per v: highest total, then lowest parent row
+            v_s = v[order]
+            first = np.concatenate(([True], v_s[1:] != v_s[:-1]))
+            pick = order[first]
+            total[v[pick]], parent[v[pick]], parent_w[v[pick]] = cand[pick], u[pick], w[pick]
+        reached = tgt[total[tgt] >= 0]
+        best = int(reached[np.argmax(total[reached])])  # first max = lowest row
+        rows, weights = [best], []
+        while parent[rows[-1]] >= 0:
+            weights.append(int(parent_w[rows[-1]]))
+            rows.append(int(parent[rows[-1]]))
+        return bottleneck, int(total[best]), rows[::-1], weights[::-1]
+
+    def strongest_paths(self, sources, targets, max_hops: int = 10, n_alternatives: int = 3):
+        """Strongest of the shortest directed routes, how many shortest routes exist, and rivals.
+
+        Among all routes with the minimum hop count, picks the one with the largest bottleneck
+        (weakest hop, in synapses), then the largest total, then the lowest rows. Returns None
+        if no target is within `max_hops`, else a dict: hops, path (rows), hop_synapses,
+        min_hop_synapses (None at 0 hops), total_synapses, path_count (distinct shortest
+        routes; float-exact up to 2**53) and alternatives (up to `n_alternatives` more routes,
+        strongest first, each differing from the others in at least one intermediate neuron).
+        """
+        src, tgt = _rows(sources, self.n), _rows(targets, self.n)
+        if not len(src) or not len(tgt):
+            return None
+        dist, _ = self._bfs(src, max_hops, stop_at=tgt)
+        hit = tgt[dist[tgt] >= 0]
+        if not len(hit):
+            return None
+        depth = int(dist[hit].min())
+        tgt = hit[dist[hit] == depth]
+        if depth == 0:
+            both = np.intersect1d(src, tgt)
+            return {"hops": 0, "path": [int(both[0])], "hop_synapses": [], "min_hop_synapses": None,
+                    "total_synapses": 0, "path_count": int(len(both)), "alternatives": []}
+        tgt_mask = np.zeros(self.n, dtype=bool)
+        tgt_mask[tgt] = True
+        layers = self._prune(self._layered_edges(dist, depth, tgt_mask), tgt, None)
+        bottleneck, total, rows, weights = self._best_route(layers, src, tgt)
+        count = np.zeros(self.n)
+        count[src] = 1.0
+        for u, v, _ in layers:
+            np.add.at(count, v, count[u])
+        result = {"hops": depth, "path": rows, "hop_synapses": weights, "min_hop_synapses": bottleneck,
+                  "total_synapses": total, "path_count": int(count[tgt].sum()), "alternatives": []}
+        if depth < 2 or n_alternatives <= 0:
+            return result
+        # best-first search over "these intermediates are banned" subproblems; a route's tuple of
+        # intermediates is reported once, and every popped route spawns one child per intermediate
+        first = (bottleneck, total, rows, weights)
+        queue, tried, solves = [(first, frozenset())], {frozenset()}, 0
+        seen: set[tuple] = set()
+        while queue and len(result["alternatives"]) < n_alternatives and solves < MAX_ALT_SOLVES:
+            queue.sort(key=lambda q: (-q[0][0], -q[0][1], q[0][2]))
+            (bott, tot, route, wts), banned = queue.pop(0)
+            if tuple(route[1:-1]) not in seen:
+                seen.add(tuple(route[1:-1]))
+                if banned:
+                    result["alternatives"].append(
+                        {"path": route, "hop_synapses": wts, "min_hop_synapses": bott, "total_synapses": tot})
+            for x in route[1:-1]:
+                child = banned | {x}
+                if child in tried:
+                    continue
+                tried.add(child)
+                solves += 1
+                mask = np.zeros(self.n, dtype=bool)
+                mask[list(child)] = True
+                found = self._best_route(self._prune(layers, tgt, mask), src, tgt)
+                if found is not None:
+                    queue.append((found, child))
+        return result
 
     def reachable_within(self, sources, max_hops: int, removed=None) -> set[int]:
         """Rows reachable from the sources in at most `max_hops` hops (sources included)."""
