@@ -29,6 +29,7 @@ flybrain-mcp = "flybrain.mcp_server:main"
 flybrain-chat = "flybrain.cli:entrypoint"
 flybrain-web = "flybrain.web:entrypoint"
 flybrain-build-connectome = "flybrain.connectome_build:main"
+flybrain-build-sim-weights = "flybrain.sim_service:main"
 
 [build-system]
 requires = ["uv_build>=0.12.9,<0.13.0"]

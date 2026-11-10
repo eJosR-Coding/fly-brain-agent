@@ -6,6 +6,9 @@ from flybrain.atlas import Atlas, load_atlas
 def _no_real_connectome(monkeypatch, tmp_path):
     """Tests never pick up a developer's real data/processed/connectome_783.npz."""
     monkeypatch.setenv("FLYBRAIN_CONNECTOME", str(tmp_path / "no-connectome.npz"))
+    # ... nor the real simulation weights (a missing dir/cache means "simulator unavailable")
+    monkeypatch.setenv("FLYBRAIN_SIM_DATA", str(tmp_path / "no-sim-data"))
+    monkeypatch.setenv("FLYBRAIN_SIM_WEIGHTS", str(tmp_path / "no-sim-weights.npz"))
 
 
 HEADER = "root_id\tpos_x\tpos_y\tpos_z\tsuper_class\tcell_class\tcell_type\ttop_nt\tside\tflow"
@@ -53,3 +56,22 @@ def tiny_conn(tiny_atlas):
 
     pre, post, syn = (np.array(c, dtype=np.int32) for c in zip(*TINY_EDGES))
     return Connectome.from_edges(pre, post, syn, n_neurons=len(tiny_atlas.neurons), min_synapses=5)
+
+
+@pytest.fixture
+def reference_files(tmp_path, tiny_atlas):
+    """Reference-style files over tiny_atlas: csv rows are shuffled, one id is unknown to the atlas."""
+    import pandas as pd
+
+    ids = [3, 1, 2, 777, 100]  # 777 is not in the atlas; position in this list is the parquet index
+    pd.DataFrame({"Completed": [True] * len(ids)}, index=pd.Index(ids, name="flywire_id")).to_csv(
+        tmp_path / "Completeness.csv"
+    )
+    pd.DataFrame(
+        {
+            "Presynaptic_Index": [4, 1, 0, 0, 3],  # 100 -> 1, 1 -> 3, 3 -> 2, 3 -> 777 (dropped), 777 -> ...
+            "Postsynaptic_Index": [1, 0, 2, 3, 0],
+            "Excitatory x Connectivity": [1000, -20, 7, 5, 9],
+        }
+    ).to_parquet(tmp_path / "Connectivity.parquet")
+    return tmp_path / "Connectivity.parquet", tmp_path / "Completeness.csv"

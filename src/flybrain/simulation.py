@@ -45,21 +45,46 @@ class LIFParams:
     dt: float = 0.1  # ms, clock (Brian2 default)
 
 
+MAX_BINS = 200  # time bins per run; a finer request is refused instead of silently blown up
+
+
 @dataclass
 class SimResult:
-    """Spike counts summed over trials, plus optional time bins (also summed over trials)."""
+    """Spike counts summed over trials, plus optional SPARSE time bins (also summed over trials).
+
+    Only neurons that spiked are kept: `active_rows[i]` owns `frames[i]`, spike counts per bin.
+    """
 
     counts: np.ndarray  # (n,) int64
     rate_hz: np.ndarray  # (n,) mean rate per trial
     trials: int
     duration_ms: float
     bin_ms: float | None = None
-    binned: np.ndarray | None = None  # (n_bins, n) int32
+    active_rows: np.ndarray | None = None  # (n_active,) int64, sorted
+    frames: np.ndarray | None = None  # (n_active, n_bins) uint16
+
+    @property
+    def n_bins(self) -> int | None:
+        return None if self.frames is None else self.frames.shape[1]
 
     @property
     def population(self) -> np.ndarray | None:
         """Spikes per time bin over the whole brain (None without bin_ms)."""
-        return None if self.binned is None else self.binned.sum(axis=1, dtype=np.int64)
+        return None if self.frames is None else self.frames.sum(axis=0, dtype=np.int64)
+
+    @property
+    def binned_dense_bytes(self) -> int | None:
+        """What a dense (n_bins x n) int32 matrix would have cost: why frames are sparse."""
+        return None if self.frames is None else self.frames.shape[1] * len(self.counts) * 4
+
+    @property
+    def binned(self) -> np.ndarray | None:
+        """Dense (n_bins, n) view for tiny networks and tests. Allocates n_bins * n * 4 bytes."""
+        if self.frames is None:
+            return None
+        dense = np.zeros((self.frames.shape[1], len(self.counts)), dtype=np.int32)
+        dense[:, self.active_rows] = self.frames.T
+        return dense
 
 
 def _steps(ms: float, dt: float, what: str) -> int:
@@ -77,6 +102,8 @@ class Simulation:
         self._indices = csr.indices
         self._counts = csr.data  # signed synapse counts, float32 (exact up to 2**24)
         self.n_edges = int(csr.nnz)
+        self.dropped_edges = 0
+        self.dropped_neurons = 0
         p = params
         self._delay = _steps(p.t_dly, p.dt, "t_dly")
         self._rfc = _steps(p.t_rfc, p.dt, "t_rfc")
@@ -124,6 +151,47 @@ class Simulation:
         sim.dropped_neurons = int((rows < 0).sum())
         return sim
 
+    @staticmethod
+    def _signature(connectivity, completeness, n_neurons: int) -> np.ndarray:
+        """What the cache was built from: both source sizes + the atlas size (cheap, no hashing)."""
+        return np.array(
+            [Path(connectivity).stat().st_size, Path(completeness).stat().st_size, n_neurons], dtype=np.int64
+        )
+
+    @classmethod
+    def load_weights(cls, connectivity, completeness, atlas, cache=None, params: LIFParams | None = None):
+        """`from_files` with a CSR cache (an .npz): returns (simulation, cache_hit).
+
+        The cache is used only when its signature (source file sizes, atlas size) matches; an
+        unreadable or stale cache is rebuilt and overwritten. The cached CSR is exactly what
+        `from_files` builds, so results do not depend on which path was taken.
+        """
+        n = len(atlas.neurons)
+        if cache is not None and Path(cache).is_file() and Path(connectivity).is_file():
+            try:
+                with np.load(cache) as z:
+                    if np.array_equal(z["signature"], cls._signature(connectivity, completeness, n)):
+                        csr = sparse.csr_matrix((z["data"], z["indices"], z["indptr"]), shape=(n, n))
+                        sim = cls(csr, params or LIFParams())
+                        sim.dropped_edges, sim.dropped_neurons = (int(x) for x in z["dropped"])
+                        return sim, True
+            except (OSError, ValueError, KeyError):
+                pass  # unreadable or foreign file: fall through and rebuild
+        sim = cls.from_files(connectivity, completeness, atlas, params)
+        if cache is not None:
+            Path(cache).parent.mkdir(parents=True, exist_ok=True)
+            tmp = Path(str(cache) + ".tmp.npz")
+            np.savez(
+                tmp, data=sim._counts, indices=sim._indices, indptr=sim._indptr,
+                dropped=np.array([sim.dropped_edges, sim.dropped_neurons], dtype=np.int64),
+                signature=cls._signature(connectivity, completeness, n),
+            )
+            tmp.replace(cache)
+        return sim, False
+
+    def _csr(self) -> sparse.csr_matrix:
+        return sparse.csr_matrix((self._counts, self._indices, self._indptr), shape=(self.n, self.n))
+
     # -- running -----------------------------------------------------------------------
 
     def _rows(self, rows, what: str) -> np.ndarray:
@@ -133,11 +201,14 @@ class Simulation:
         return arr
 
     def run(self, stim_rows, rate_hz: float, duration_ms: float = 1000.0, trials: int = 1,
-            seed: int = 0, silence_rows=None, bin_ms: float | None = None) -> SimResult:
+            seed: int = 0, silence_rows=None, bin_ms: float | None = None,
+            max_bins: int = MAX_BINS) -> SimResult:
         """Poisson-drive `stim_rows` at `rate_hz` and count every neuron's spikes.
 
         Trials are independent (own RNG stream spawned from `seed`), run serially. Silencing
-        zeroes the OUTGOING weights of those rows (they still spike themselves).
+        zeroes the OUTGOING weights of those rows (they still spike themselves). With `bin_ms`
+        the result also carries sparse per-bin counts (only neurons that spiked), at most
+        `max_bins` bins.
         """
         p = self.params
         stim = self._rows(stim_rows, "stimulus")
@@ -149,19 +220,36 @@ class Simulation:
             raise SimulationError(f"trials must be an int >= 1, got {trials!r}")
         n_steps = _steps(duration_ms, p.dt, "duration_ms")
         bin_steps = _steps(bin_ms, p.dt, "bin_ms") if bin_ms is not None else None
-        binned = None
-        if bin_steps:
-            binned = np.zeros((-(-n_steps // bin_steps), self.n), dtype=np.int32)
+        n_bins = -(-n_steps // bin_steps) if bin_steps else 0
+        if n_bins > max_bins:
+            raise SimulationError(
+                f"at most {max_bins} bins per run, got {n_bins} (bin_ms={bin_ms}, duration_ms={duration_ms}); "
+                "use a coarser bin_ms"
+            )
 
         counts = np.zeros(self.n, dtype=np.int64)
+        events: list[np.ndarray] = []  # per trial: unique (bin * n + row) keys and their counts
         for rng in (np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(trials)):
-            self._trial(stim, rate_hz, n_steps, rng, silenced, counts, binned, bin_steps)
+            self._trial(stim, rate_hz, n_steps, rng, silenced, counts, events if bin_steps else None, bin_steps)
+        active = frames = None
+        if bin_steps:
+            active, frames = self._sparse_frames(events, n_bins)
         return SimResult(
             counts=counts, rate_hz=counts / (trials * duration_ms / 1000.0), trials=trials,
-            duration_ms=float(duration_ms), bin_ms=bin_ms, binned=binned,
+            duration_ms=float(duration_ms), bin_ms=bin_ms, active_rows=active, frames=frames,
         )
 
-    def _trial(self, stim, rate_hz, n_steps, rng, silenced, counts, binned, bin_steps) -> None:
+    def _sparse_frames(self, events: list[np.ndarray], n_bins: int) -> tuple[np.ndarray, np.ndarray]:
+        """(sorted active rows, (n_active, n_bins) uint16) from the per-tick (bin * n + row) keys."""
+        keys = np.concatenate(events) if events else np.empty(0, dtype=np.int64)
+        uniq, cnt = np.unique(keys, return_counts=True)
+        bins, rows = uniq // self.n, uniq % self.n
+        active, slot = np.unique(rows, return_inverse=True)
+        frames = np.zeros((len(active), n_bins), dtype=np.uint16)
+        frames[slot, bins] = np.minimum(cnt, np.iinfo(np.uint16).max)
+        return active, frames
+
+    def _trial(self, stim, rate_hz, n_steps, rng, silenced, counts, events, bin_steps) -> None:
         p, n = self.params, self.n
         v = np.full(n, p.v0)
         g = np.zeros(n)
@@ -172,6 +260,7 @@ class Simulation:
         kick = p.w_syn * p.f_poi
         p_event = rate_hz * p.dt / 1000.0
         pending = [np.empty(0, dtype=np.int64)] * self._delay  # spikes waiting for their delay
+        trial_keys: list[np.ndarray] = []
         for k in range(n_steps):
             ready = left == 0
             left -= ~ready  # one refractory tick used up
@@ -188,8 +277,10 @@ class Simulation:
                 g[spikes] = 0.0
                 left[spikes] = rfc[spikes]
                 counts[spikes] += 1
-                if binned is not None:
-                    binned[k // bin_steps, spikes] += 1
+                if events is not None:
+                    trial_keys.append((k // bin_steps) * n + spikes)
+        if events is not None and trial_keys:
+            events.append(np.concatenate(trial_keys))
 
     def _deliver(self, src: np.ndarray, g: np.ndarray, ready: np.ndarray) -> None:
         """g[post] += weight * w_syn for every outgoing edge of the neurons in `src`.
