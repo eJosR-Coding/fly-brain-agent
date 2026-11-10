@@ -220,6 +220,8 @@ data: {}
 
 ![The viewer with left dopamine neurons lit](assets/viewer.png)
 
+<sub>Real data and real highlight (2,926 left dopamine neurons from the backend). The chat text in this screenshot is a mocked stream, because the model provider was overloaded when it was taken.</sub>
+
 A Vite + TypeScript + three.js app in `web/`: all 139,248 neurons as one point cloud (loaded
 from the binary `/brain/points` contract, orbit with the mouse) and a chat panel on the right.
 
