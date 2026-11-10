@@ -8,6 +8,10 @@ export interface BrainMeta {
   layout: string;
   order: string;
   extent_um: [number, number, number];
+  /** region code -> name (e.g. {"0": "central"}); absent on older backends */
+  regions?: Record<string, string>;
+  /** neurotransmitter code -> name (e.g. {"3": "dopamine"}); absent on older backends */
+  nt?: Record<string, string>;
 }
 
 export type Vec3 = [number, number, number];
