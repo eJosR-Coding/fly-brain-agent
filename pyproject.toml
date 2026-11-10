@@ -3,6 +3,7 @@ name = "flybrain"
 version = "0.1.0"
 description = "Explore the FlyWire fruit-fly brain in 3D and through an LLM agent with tools"
 readme = "README.md"
+license = "MIT"
 authors = [
     { name = "eJosR-Coding", email = "72283818+eJosR-Coding@users.noreply.github.com" }
 ]
