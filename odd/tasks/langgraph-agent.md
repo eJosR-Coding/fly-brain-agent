@@ -52,5 +52,7 @@ The MCP server works from Claude Code, but the product needs its own agent so us
 
 - Review (code-only slice 56a6e6e..HEAD, 417 lines, 9 files, medium): granted, 1 lens (review-reliability), approved, acknowledged (authority burned, lineage review-421081ce0c4b408f). Second deps commit moved next to the first via user-authorized rebase so code commits are contiguous. Backups: backup/feat-agent-before-split, backup/feat-agent-before-split-2.
 
+- First real end-to-end run (2026-11-10): `uv run --env-file .env flybrain-chat --model google_genai:gemini-3.5-flash "...dopamine per super_class... left side, show 3"` -> correct counts (5909 total; central 5705, sensory 129, ...) and 2926 left-side DA neurons (cross-checked with atlas.find: 2926), 3 sample neurons via ticket. ~20 s wall time. Key handling: copied file-to-file into gitignored `.env` (chmod 600), loaded with `uv run --env-file`; commits 21962b1 (ignore .env), d0eed03 (chore(deps) langchain-google-genai).
+
 ## Next step
 Review slice 56a6e6e..HEAD (code only), then T5 FastAPI.
