@@ -1,5 +1,6 @@
 """Thin MCP layer over flybrain.tools. stdout belongs to the protocol: never print."""
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -10,6 +11,7 @@ from flybrain import tools
 from flybrain.atlas import Atlas, AtlasLoadError, load_atlas
 from flybrain.connectome import Connectome, ConnectomeError
 from flybrain.selections import SelectionStore
+from flybrain.sim_service import SimulationService
 
 DEFAULT_ANNOTATIONS = (
     Path(__file__).resolve().parents[2] / "data" / "raw" / "flywire_neuron_annotations.tsv"
@@ -33,9 +35,11 @@ def load_connectome(atlas: Atlas, path=None) -> Connectome | None:
 
 
 def build_server(
-    atlas: Atlas, store: SelectionStore | None = None, conn: Connectome | None = None
+    atlas: Atlas, store: SelectionStore | None = None, conn: Connectome | None = None,
+    sims: SimulationService | None = None,
 ) -> FastMCP:
     store = store if store is not None else SelectionStore()
+    sims = sims if sims is not None else SimulationService.default(atlas)
     server = FastMCP("flybrain")
 
     @server.tool()
@@ -189,6 +193,57 @@ def build_server(
             cell_type, nt, super_class, side: optional candidate filters, as in search_neurons.
         """
         return tools.top_hubs(atlas, store, conn, metric, top, cell_type, nt, super_class, side)
+
+    @server.tool()
+    def preset_selection(name: str) -> dict:
+        """A ticket for a published, named neuron set, ready for stimulate or the other tools.
+
+        Presets come from the paper that the simulator reproduces (Shiu et al., Nature 2024):
+        "sugar" = the 21 sugar-sensing gustatory receptor neurons of its example (20 exist in
+        this atlas version), "mn9" = MN9, the motor neuron it reads out (proboscis extension).
+        Returns a ticket (`selection_id`), counts, and the `source` of the set. An unknown name
+        lists the available presets.
+
+        Args:
+            name: preset name, e.g. "sugar" or "mn9".
+        """
+        return tools.preset_selection(atlas, store, name)
+
+    @server.tool()
+    async def stimulate(
+        selection_id: str,
+        rate_hz: float = 100,
+        duration_ms: float = 500,
+        trials: int = 3,
+        silence_selection_id: str | None = None,
+        readout_selection_id: str | None = None,
+    ) -> dict:
+        """Run a whole-brain SIMULATION: drive a group of neurons and see which others respond.
+
+        Poisson-drives the neurons of `selection_id` at `rate_hz` for `duration_ms` in a leaky
+        integrate-and-fire model of the whole fly brain (Shiu et al., Nature 2024 parameters,
+        validated against their code). Returns how many neurons were active (> 1 Hz), the top 10
+        responders (root_id, cell_type, super_class, rate_hz), the readout group's rates if
+        `readout_selection_id` is given, a NEW `selection_id` of all active neurons (the viewer
+        highlights it) and a `simulation_id` (the viewer plays the activity as an animation).
+        With `silence_selection_id` those neurons still fire but pass nothing on; a baseline run
+        is added to report the change in the readout (it costs 2x the time). Example: give sugar
+        (preset "sugar") and read out MN9 (preset "mn9"). Takes seconds (about 5 s per simulated
+        second per trial, one simulation at a time). It is a MODEL of the wiring diagram, not the
+        living fly: no neuromodulation, plasticity or nerve cord.
+
+        Args:
+            selection_id: ticket of the neurons to stimulate (e.g. from preset_selection).
+            rate_hz: Poisson input rate per stimulated neuron, 1..300 (default 100; capped, a `note` says so).
+            duration_ms: simulated time, 100..1000 (default 500; capped).
+            trials: independent repeats averaged, 1..10 (default 3; capped).
+            silence_selection_id: optional ticket of neurons to silence.
+            readout_selection_id: optional ticket of neurons whose rates to report.
+        """
+        return await asyncio.to_thread(
+            tools.stimulate, atlas, store, sims, selection_id, rate_hz, duration_ms, trials,
+            silence_selection_id, readout_selection_id,
+        )
 
     return server
 

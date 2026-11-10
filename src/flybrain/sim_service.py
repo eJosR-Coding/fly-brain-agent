@@ -2,8 +2,14 @@
 
 import argparse
 import os
+import secrets
 import sys
+import threading
 import time
+from collections import OrderedDict
+from collections.abc import Callable
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +27,109 @@ REFERENCE_REPO = "github.com/philshiu/Drosophila_brain_model (commit 91bdd1e, MI
 
 class SimulationUnavailable(RuntimeError):
     """The simulator cannot run here (weights missing); the message says how to fix it."""
+
+
+MAX_RESULTS = 10  # activity recordings kept (LRU), like selection tickets
+
+
+class UnknownSimulationError(KeyError):
+    """Bad or expired simulation id. str() is the plain message, not a quoted repr."""
+
+    def __str__(self) -> str:
+        return str(self.args[0])
+
+
+@dataclass(frozen=True)
+class ActivityRecord:
+    """Sparse activity of one run: only neurons that spiked, spike counts per time bin (uint8)."""
+
+    id: str
+    rows: np.ndarray  # (n_rows,) uint32 atlas rows, ascending
+    frames: np.ndarray  # (n_rows, n_bins) uint8, counts summed over trials (clipped at 255)
+    bin_ms: float
+    duration_ms: float
+    trials: int
+    stimulus: dict
+
+    @property
+    def n_bins(self) -> int:
+        return int(self.frames.shape[1])
+
+    @property
+    def n_rows(self) -> int:
+        return int(self.frames.shape[0])
+
+
+class SimulationService:
+    """The simulator for this process: lazy weights, ONE run at a time, a small LRU of recordings.
+
+    The whole brain simulator costs ~1.5 GB and the machine is shared with a browser, so loading
+    is deferred to the first run and every run holds `exclusive()`.
+    """
+
+    def __init__(self, loader: Callable[[], Simulation], available: Callable[[], bool] = lambda: True,
+                 max_results: int = MAX_RESULTS) -> None:
+        self._loader, self._available = loader, available
+        self._sim: Simulation | None = None
+        self._load_lock = threading.Lock()
+        self._run_lock = threading.Lock()
+        self._records: OrderedDict[str, ActivityRecord] = OrderedDict()
+        self._expired: set[str] = set()
+        self._record_lock = threading.Lock()
+        self.max_results = max_results
+
+    @classmethod
+    def default(cls, atlas, max_results: int = MAX_RESULTS) -> "SimulationService":
+        return cls(lambda: load_simulation(atlas)[0], weights_available, max_results)
+
+    @classmethod
+    def from_simulation(cls, sim: Simulation, max_results: int = MAX_RESULTS) -> "SimulationService":
+        svc = cls(lambda: sim, lambda: True, max_results)
+        svc._sim = sim
+        return svc
+
+    @property
+    def available(self) -> bool:
+        return self._sim is not None or bool(self._available())
+
+    def simulation(self) -> Simulation:
+        """The simulator, loaded on first use (SimulationUnavailable says what is missing)."""
+        with self._load_lock:
+            if self._sim is None:
+                self._sim = self._loader()
+            return self._sim
+
+    @contextmanager
+    def exclusive(self):
+        with self._run_lock:
+            yield
+
+    def add(self, rows, frames, bin_ms: float, duration_ms: float, trials: int, stimulus: dict) -> str:
+        with self._record_lock:
+            while True:
+                sim_id = f"sim_{secrets.token_hex(3)}"
+                if sim_id not in self._records and sim_id not in self._expired:
+                    break
+            self._records[sim_id] = ActivityRecord(
+                sim_id, np.asarray(rows, dtype="<u4"), np.asarray(frames, dtype=np.uint8),
+                float(bin_ms), float(duration_ms), int(trials), dict(stimulus),
+            )
+            while len(self._records) > self.max_results:
+                self._expired.add(self._records.popitem(last=False)[0])
+            return sim_id
+
+    def get(self, sim_id: str) -> ActivityRecord:
+        with self._record_lock:
+            if sim_id in self._records:
+                self._records.move_to_end(sim_id)
+                return self._records[sim_id]
+        if sim_id in self._expired:
+            raise UnknownSimulationError(
+                f"simulation {sim_id!r} expired (only the last {self.max_results} are kept); run the simulation again."
+            )
+        raise UnknownSimulationError(
+            f"unknown simulation {sim_id!r}; ids come from the stimulate tool or POST /simulate."
+        )
 
 
 def sim_data_dir() -> Path:
