@@ -1,4 +1,5 @@
 import "./style.css";
+import { mountChat } from "./chat";
 import { fetchIndices, loadBrain } from "./brainData";
 import { applyHighlight, clearHighlight } from "./colors";
 import { createScene, type BrainScene } from "./scene";
@@ -66,6 +67,10 @@ function setupChips(): void {
 async function boot(): Promise<void> {
   theme = readTheme();
   setupChips();
+  mountChat($("chat"), async (p) => {
+    await showSelection(p);
+    $("selection").textContent = `${p.total.toLocaleString("en-US")} neurons: from chat`;
+  });
   try {
     const brain = await loadBrain();
     brainScene = createScene($("stage"), brain, theme);
