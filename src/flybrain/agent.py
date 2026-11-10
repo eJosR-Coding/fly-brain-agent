@@ -232,6 +232,8 @@ async def stream_events(
             except StopAsyncIteration:
                 break
             except TimeoutError:
+                if deadline is None or time.monotonic() < deadline:
+                    raise  # raised by a tool/provider itself, not our deadline: ordinary failure
                 failure = (
                     f"the turn took longer than {turn_timeout:g} s (the model provider "
                     "may be overloaded); try again or switch --model"
