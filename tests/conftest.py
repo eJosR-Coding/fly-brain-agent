@@ -27,3 +27,23 @@ def tiny_tsv_path(tmp_path):
 def tiny_atlas(tiny_tsv_path) -> Atlas:
     """Tiny atlas: 60 central acetylcholine neurons + a few others."""
     return load_atlas(tiny_tsv_path)
+
+
+# Tiny structural graph over tiny_atlas rows (root_id i -> row i-1 for 1..60; 100 -> 60 EPG,
+# 101 -> 61 T4a, 102 -> 62 ORN_DA1):
+#   EPG(60) -> 0 -> 1 -> 2,  1 -> 3 -> 2,  T4a(61) -> EPG, ORN(62) -> T4a,
+#   cycle 5 -> 6 -> 7 -> 5, weak edge 0 -> 8 (2 synapses, under the threshold)
+TINY_EDGES = [
+    (60, 0, 10), (0, 1, 10), (1, 2, 10), (1, 3, 8), (3, 2, 8),
+    (61, 60, 6), (62, 61, 9), (5, 6, 7), (6, 7, 7), (7, 5, 7), (0, 8, 2),
+]
+
+
+@pytest.fixture
+def tiny_conn(tiny_atlas):
+    import numpy as np
+
+    from flybrain.connectome import Connectome
+
+    pre, post, syn = (np.array(c, dtype=np.int32) for c in zip(*TINY_EDGES))
+    return Connectome.from_edges(pre, post, syn, n_neurons=len(tiny_atlas.neurons), min_synapses=5)
