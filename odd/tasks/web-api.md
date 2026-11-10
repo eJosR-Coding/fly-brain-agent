@@ -67,5 +67,7 @@ The agent only runs as a CLI. A browser needs (1) all 139,248 positions once, in
 
 - Behavioral RED for fix 1 (parent probe, 2026-11-10): on main, a hard-stopped turn followed by a second turn on the same thread sent the model a history with unanswered tool_call id `c4`; on fix/turn-cleanup the same probe reports `[]`.
 
+- Review assess fix/turn-cleanup (base main): 312 lines, medium, review_due=false (under_budget) -> pending; reviewed together with the next slice (T6 or later).
+
 ## Next step
 Open PR, then T6 (Three.js viewer).
