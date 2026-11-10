@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { streamChat, type ChatHandlers } from "../src/chat";
+import { formatToolCall, streamChat, type ChatHandlers } from "../src/chat";
 
 function sseResponse(chunks: string[], status = 200): Response {
   const enc = new TextEncoder();
@@ -102,3 +102,17 @@ describe("streamChat payload validation", () => {
   });
 });
 
+
+describe("formatToolCall", () => {
+  it("renders keyword arguments like a call", () => {
+    expect(formatToolCall("search_neurons", { nt: "dopamine", side: "left" })).toBe('search_neurons(nt="dopamine", side="left")');
+  });
+  it("renders numbers and no arguments", () => {
+    expect(formatToolCall("top", { n: 5 })).toBe("top(n=5)");
+    expect(formatToolCall("ping", {})).toBe("ping()");
+    expect(formatToolCall("ping", null)).toBe("ping()");
+  });
+  it("falls back to JSON for non-object args", () => {
+    expect(formatToolCall("f", [1, 2])).toBe("f([1,2])");
+  });
+});

@@ -56,5 +56,14 @@ The backend (T5) streams highlights as row indices, but nothing renders them. Th
 
 - Review of follow-up fixes (2026-11-10): X main..825760e (python, 249 lines) review-ae1a92751991348b; Y 825760e..HEAD (web, 274 lines) review-15fb51a572331d26; both granted, approved, acknowledged. Remaining advisories (non-blocking): repair in finally relies on aclose/cancel reaching the generator (agent.py:279-285); fetched big-selection indices not range-validated (main.ts:39); null point-count path untested (chat.test.ts:80).
 
+## Design pass (branch feat/viewer-design)
+- Source: Penpot HTML exports (idle A, active B). Chrome values (px sizes, colors, letter spacing) copied from the exports; the fake dotted spheres were NOT adopted, the real FlyWire cloud stays.
+- API: `/health` now returns `chat` (bool) and `model` (string or null). RED: 3 failures (`KeyError: 'chat'`) -> GREEN `uv run pytest -q` 218 passed. Commit "feat(api): report chat availability and model in /health".
+- Deps: `@fontsource-variable/inter` 5.3.0 and `@fontsource-variable/jetbrains-mono` 5.3.0, own commit.
+- Highlight layer: indexed THREE.Points sharing the position buffer (index buffer written by pure `writeSelectionIndex`, unique + in-range, ascending), 2.6x size, additive, no fog; base layer is round dim points with depth fog. Pure logic unit-tested (RED = modules missing -> GREEN). `colors.ts` removed (per-point recoloring replaced by the layer).
+- Status/legend/subtitle/tool-call formatting are pure (`status.ts`, `formatToolCall`), unit-tested: 55 web tests total.
+- Visual: headless chromium 1440x900 vs the Penpot screenshots; /tmp/claude-1000/penpot/ours-A.png, ours-B.png, ours-chat.png; assets/viewer.png replaced (chat stream mocked, data and highlight real).
+- Known gaps: the real brain is a wide butterfly shape, not three spheres; vignette is a subtle CSS glow; status MCP row mirrors `chat` because the MCP server only exists in-process when a model is configured.
+
 ## Next step
 Parent: review, then PR. Penpot-driven visual restyle only touches web/src/style.css (theme.ts reads its custom properties).
