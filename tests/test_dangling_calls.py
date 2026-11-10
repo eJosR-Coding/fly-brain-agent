@@ -189,3 +189,36 @@ def test_aclose_after_tool_call_leaves_thread_usable():
     second = asyncio.run(run())
     assert second[-1] == {"type": "answer", "text": "recovered"}
     assert_paired(model.seen[-1])
+
+
+def test_error_event_arrives_before_a_slow_repair(monkeypatch):
+    import flybrain.agent as agent
+
+    real = agent.close_dangling_tool_calls
+    order = []
+
+    async def slow_repair(graph, config, reason):
+        await asyncio.sleep(0.5)
+        order.append("repaired")
+        await real(graph, config, reason)
+
+    monkeypatch.setattr(agent, "close_dangling_tool_calls", slow_repair)
+    model = _model("quick")
+    graph = build_graph(model, [quick], checkpointer=InMemorySaver())
+
+    async def run():
+        gen = stream_events(graph, "first", "t1", max_steps=1)
+        events = []
+        async for e in gen:
+            events.append(e)
+            if e["type"] == "error":
+                order.append("error seen")
+                assert "repaired" not in order, "error was delayed by the repair"
+                break
+        await gen.aclose()  # consumer stops right after the error event
+        return events, await collect(graph, "second", max_steps=1)
+
+    events, second = asyncio.run(run())
+    assert order == ["error seen", "repaired"]
+    assert second[-1] == {"type": "answer", "text": "recovered"}
+    assert_paired(model.seen[-1])

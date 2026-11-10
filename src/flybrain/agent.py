@@ -273,8 +273,7 @@ async def stream_events(
             ):
                 failure = _hard_stop(max_steps)
         if failure is not None:
-            await _repair(graph, config, updates, failure)
-            yield {"type": "error", "message": failure}
+            yield {"type": "error", "message": failure}  # first: a slow repair must not delay it
             return
         text = last_agent.text
         answered = True
