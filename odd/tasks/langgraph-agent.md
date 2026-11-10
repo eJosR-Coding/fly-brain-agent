@@ -36,23 +36,23 @@ The MCP server works from Claude Code, but the product needs its own agent so us
 ## Progress / evidence
 - T1 RED: `tests/test_agent.py` -> `E   ModuleNotFoundError: No module named 'flybrain.agent'` (1 collection error).
 - T1 GREEN: `uv run pytest -q` -> 36 passed (31 before + 5 new). Versions: langgraph 1.2.20, langchain-core 1.7.7, mcp 1.30.0 (mcp<2 kept).
-- T1 commit: 3d25f1e
+- T1 commit: 08c3876
 - Engram mirror: pending (mem_save blocked by hook/auto-mode in this session).
 
-- Review (2026-11-10): slice 03f8f7c..0dc810d too big for the reviewer context (lens_context_budget_exceeded, 1072 lines, mostly uv.lock). Split: ticket-fix slice 03f8f7c..14c5d92 -> user declined. Agent slice 14c5d92..0dc810d (1016 lines) -> granted but lens_context_budget_exceeded again; no authority created. Unreviewed; uv.lock growth makes any slice with a dependency add exceed the budget.
-- Fix (user-authorized history rewrite, 2026-11-10): regrouped commits so dependency changes live alone in 88c6894 (`chore(deps)`: pyproject + uv.lock + .gitattributes marking uv.lock generated). Generated lock is not reviewable under the lens budget; code is reviewed from base 56a6e6e (both chore(deps) commits first). Code slice 88c6894..3d25f1e: 208 lines, medium, review_due=false (under_budget) -> pending, reviewed together with T2. Old history kept on branch backup/feat-agent-before-split.
+- Review (2026-11-10): slice 7cfbd1d..0dc810d too big for the reviewer context (lens_context_budget_exceeded, 1072 lines, mostly uv.lock). Split: ticket-fix slice 7cfbd1d..1d53be5 -> user declined. Agent slice 1d53be5..0dc810d (1016 lines) -> granted but lens_context_budget_exceeded again; no authority created. Unreviewed; uv.lock growth makes any slice with a dependency add exceed the budget.
+- Fix (user-authorized history rewrite, 2026-11-10): regrouped commits so dependency changes live alone in 018f455 (`chore(deps)`: pyproject + uv.lock + .gitattributes marking uv.lock generated). Generated lock is not reviewable under the lens budget; code is reviewed from base 6c01fab (both chore(deps) commits first). Code slice 018f455..08c3876: 208 lines, medium, review_due=false (under_budget) -> pending, reviewed together with T2. Old history kept on branch backup/feat-agent-before-split.
 - Delivery rule from now on: any dependency add goes in its own `chore(deps)` commit, so code slices stay reviewable.
 
-- T2 deps commit: 56a6e6e (`chore(deps)`). Versions: langchain-mcp-adapters 0.3.2, langchain 1.4.9, langchain-anthropic 1.7.10, mcp 1.30.0 (mcp<2 kept).
+- T2 deps commit: 6c01fab (`chore(deps)`). Versions: langchain-mcp-adapters 0.3.2, langchain 1.4.9, langchain-anthropic 1.7.10, mcp 1.30.0 (mcp<2 kept).
 - T2 RED: `tests/test_cli.py:3: E   ImportError: cannot import name 'cli' from 'flybrain'` (+ `flybrain.agent_mcp` missing; 2 collection errors).
 - T2 GREEN: `uv run pytest -q` -> 40 passed (36 + 4 new: 2 MCP integration, 2 CLI). `uv run flybrain-chat --help` -> exit 0. Without network/key the CLI prints a one-line friendly error, no traceback.
-- T2 code commit: 28df57c (agent_mcp.py, cli.py, tests, README, `flybrain-chat` script).
+- T2 code commit: 69b84bd (agent_mcp.py, cli.py, tests, README, `flybrain-chat` script).
 - Session finding: `.venv/.../langchain_mcp_adapters/client.py` `get_tools()` docstring: "A new session will be created for each tool call" (calls `load_mcp_tools(None, connection=...)`). Verified by hand: search_neurons ticket then list_selection via get_tools() -> `unknown selection ... known selections: none yet`. Fix: `client.session("flybrain")` (client.py) kept open + `load_mcp_tools(session)` (tools.py); one server process per conversation, tickets survive. Covered by `test_ticket_survives_across_tool_calls`.
 - Route: delegated writer (2+ non-trivial files).
 
-- Review (code-only slice 56a6e6e..HEAD, 417 lines, 9 files, medium): granted, 1 lens (review-reliability), approved, acknowledged (authority burned, lineage review-421081ce0c4b408f). Second deps commit moved next to the first via user-authorized rebase so code commits are contiguous. Backups: backup/feat-agent-before-split, backup/feat-agent-before-split-2.
+- Review (code-only slice 6c01fab..HEAD, 417 lines, 9 files, medium): granted, 1 lens (review-reliability), approved, acknowledged (authority burned, lineage review-421081ce0c4b408f). Second deps commit moved next to the first via user-authorized rebase so code commits are contiguous. Backups: backup/feat-agent-before-split, backup/feat-agent-before-split-2.
 
-- First real end-to-end run (2026-11-10): `uv run --env-file .env flybrain-chat --model google_genai:gemini-3.5-flash "...dopamine per super_class... left side, show 3"` -> correct counts (5909 total; central 5705, sensory 129, ...) and 2926 left-side DA neurons (cross-checked with atlas.find: 2926), 3 sample neurons via ticket. ~20 s wall time. Key handling: copied file-to-file into gitignored `.env` (chmod 600), loaded with `uv run --env-file`; commits 21962b1 (ignore .env), d0eed03 (chore(deps) langchain-google-genai).
+- First real end-to-end run (2026-11-10): `uv run --env-file .env flybrain-chat --model google_genai:gemini-3.5-flash "...dopamine per super_class... left side, show 3"` -> correct counts (5909 total; central 5705, sensory 129, ...) and 2926 left-side DA neurons (cross-checked with atlas.find: 2926), 3 sample neurons via ticket. ~20 s wall time. Key handling: copied file-to-file into gitignored `.env` (chmod 600), loaded with `uv run --env-file`; commits c628134 (ignore .env), 8602c17 (chore(deps) langchain-google-genai).
 
 ## Next step
-Review slice 56a6e6e..HEAD (code only), then T5 FastAPI.
+Review slice 6c01fab..HEAD (code only), then T5 FastAPI.

@@ -33,19 +33,19 @@ Mode: strict (source: global orchestrator config "Strict TDD Mode: enabled"). Ru
 - MCP server starts and lists its tools.
 
 ## Progress / evidence
-- T1: commit d3a9ff1 (main).
+- T1: commit 2d65217 (main).
 - T2 RED: `uv run pytest -q` failed at collection with `ModuleNotFoundError: No module named 'flybrain.atlas'` before implementation.
 - T2 GREEN: `uv run pytest -q` -> 16 passed (15 fixture tests + 1 real-data integration). Real data: 139,248 neurons, extent within 2% of 815 x 392 x 278 um.
-- T2: commit 774b938 (feat/atlas-core). Parent re-ran pytest: 16 passed. Review assess: medium, review_due=false (under_budget, 198 lines) -> stays pending in slice. Engram mirror: pending (mem_save blocked by hook/auto-mode).
+- T2: commit 35f2375 (feat/atlas-core). Parent re-ran pytest: 16 passed. Review assess: medium, review_due=false (under_budget, 198 lines) -> stays pending in slice. Engram mirror: pending (mem_save blocked by hook/auto-mode).
 - T3 RED: `uv run pytest -q` -> 3 collection errors (no flybrain.tools / selections / mcp_server) before implementation.
 - T3 GREEN: `uv run pytest -q` -> 30 passed. Dopamine search on real data: total 5909, JSON 1317 chars. `timeout 5 uv run flybrain-mcp </dev/null` -> exit 0. mcp pinned <2 (v2 renamed FastMCP to MCPServer).
 
-- T3: commit 6e09fd9 (feat/mcp-server). Parent re-ran pytest: 30 passed. Verified mcp 2.3.0 is latest on PyPI; pinned mcp<2 (1.30.0) because 2.x renamed FastMCP -> MCPServer. Revisit when adding LangGraph adapters.
+- T3: commit bb33895 (feat/mcp-server). Parent re-ran pytest: 30 passed. Verified mcp 2.3.0 is latest on PyPI; pinned mcp<2 (1.30.0) because 2.x renamed FastMCP -> MCPServer. Revisit when adding LangGraph adapters.
 
-- Review (atlas + MCP slice, base 6806fdd..03f8f7c): granted, 1 lens (reliability), approved, acknowledged (authority burned). Next reviewed boundary: 03f8f7c.
+- Review (atlas + MCP slice, base 6806fdd..7cfbd1d): granted, 1 lens (reliability), approved, acknowledged (authority burned). Next reviewed boundary: 7cfbd1d.
 
 - T3a RED: `uv run pytest -q` -> 2 failed (`assert 'sel_1' != 'sel_1'` on the restart test), 29 passed.
-- T3a GREEN: `uv run pytest -q` -> 31 passed. Commit 070958a. Review assess: medium, review_due=false (under_budget) -> pending in slice.
+- T3a GREEN: `uv run pytest -q` -> 31 passed. Commit 1767b1d. Review assess: medium, review_due=false (under_budget) -> pending in slice.
 
 ## Next step
 T4 LangGraph agent.
