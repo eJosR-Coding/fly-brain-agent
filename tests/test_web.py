@@ -36,3 +36,11 @@ def test_bad_model_setup_is_one_friendly_line(monkeypatch, capsys):
 def test_bad_model_spec_is_rejected():
     with pytest.raises(SystemExit):
         web.parse_args(["--model", "nocolon"])
+
+
+def test_bad_turn_timeout_env_is_one_friendly_line(monkeypatch, capsys):
+    monkeypatch.setattr("langchain.chat_models.init_chat_model", lambda spec: object())
+    monkeypatch.setenv("FLYBRAIN_TURN_TIMEOUT", "abc")
+    assert web.main(["--model", "openai:x"]) == 1
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1 and "FLYBRAIN_TURN_TIMEOUT" in err and "'abc'" in err
