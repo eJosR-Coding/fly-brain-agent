@@ -67,14 +67,16 @@ class Connectome:
         try:
             with np.load(path) as z:
                 built_for = int(z["n_neurons"])
+                if built_for != n_neurons:  # check before reading the big arrays
+                    raise ConnectomeError(
+                        f"connectome was built for {built_for} neurons but the atlas has {n_neurons}; "
+                        "rebuild it with flybrain-build-connectome against the same annotations"
+                    )
                 pre, post, syn = z["pre"], z["post"], z["syn"]
+        except ConnectomeError:
+            raise
         except (OSError, KeyError, ValueError) as exc:
             raise ConnectomeError(f"could not read connectome {path}: {exc}") from None
-        if built_for != n_neurons:
-            raise ConnectomeError(
-                f"connectome was built for {built_for} neurons but the atlas has {n_neurons}; "
-                "rebuild it with flybrain-build-connectome against the same annotations"
-            )
         return cls.from_edges(pre, post, syn, n_neurons, min_synapses)
 
     # -- neighbors ---------------------------------------------------------------------

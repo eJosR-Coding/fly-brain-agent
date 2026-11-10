@@ -4,10 +4,13 @@ import json
 from flybrain.mcp_server import build_server
 
 
-def test_server_lists_the_four_tools(tiny_atlas):
+def test_server_lists_the_tools(tiny_atlas):
     server = build_server(tiny_atlas)
     names = {t.name for t in asyncio.run(server.list_tools())}
-    assert names == {"search_neurons", "count_neurons", "describe_neuron", "list_selection"}
+    assert names == {
+        "search_neurons", "count_neurons", "describe_neuron", "list_selection",
+        "neighbors", "find_path", "lesion_effect", "top_hubs",
+    }
 
 
 def test_search_through_the_server_returns_a_selection_id(tiny_atlas):
@@ -89,3 +92,53 @@ def test_server_process_dies_cleanly_on_bad_annotations(tmp_path):
     )
     assert proc.returncode == 1 and proc.stdout == ""
     assert proc.stderr.strip().count("\n") == 0 and "Traceback" not in proc.stderr
+
+
+# --- connectome tools --------------------------------------------------------------
+
+def _call(server, name, args):
+    result = asyncio.run(server.call_tool(name, args))
+    payload = result[1] if isinstance(result, tuple) else result
+    if isinstance(payload, list):
+        payload = json.loads(payload[0].text)
+    return payload
+
+
+def test_connectome_tools_without_a_connectome_give_the_guiding_error(tiny_atlas):
+    server = build_server(tiny_atlas)  # no connectome: the old tools must keep working
+    sid = _call(server, "search_neurons", {"cell_type": "EPG"})["selection_id"]
+    with pytest.raises(ToolError, match="flybrain-build-connectome"):
+        asyncio.run(server.call_tool("neighbors", {"selection_id": sid}))
+    with pytest.raises(ToolError, match="flybrain-build-connectome"):
+        asyncio.run(server.call_tool("top_hubs", {}))
+
+
+def test_neighbors_through_the_server_with_a_connectome(tiny_atlas, tiny_conn):
+    server = build_server(tiny_atlas, conn=tiny_conn)
+    sid = _call(server, "search_neurons", {"cell_type": "EPG"})["selection_id"]
+    out = _call(server, "neighbors", {"selection_id": sid, "direction": "out"})
+    assert out["top"][0]["root_id"] == 1 and out["selection_id"].startswith("sel_")
+
+
+def test_connectome_tool_docs_explain_the_threshold_and_honesty(tiny_atlas):
+    by_name = {t.name: t for t in asyncio.run(build_server(tiny_atlas).list_tools())}
+    for name in ("neighbors", "find_path", "lesion_effect", "top_hubs"):
+        doc = by_name[name].description.lower()
+        assert "structural" in doc, name
+    assert "5 synapses" in by_name["neighbors"].description
+    assert "directed" in by_name["find_path"].description.lower()
+
+
+def test_load_connectome_if_present_is_none_when_missing(tiny_atlas, tmp_path):
+    assert mcp_server.load_connectome(tiny_atlas, tmp_path / "nope.npz") is None
+
+
+def test_load_connectome_if_present_skips_a_table_for_another_atlas(tiny_atlas, tmp_path):
+    import numpy as np
+
+    from flybrain.connectome_build import write_npz
+
+    path = tmp_path / "c.npz"
+    e = np.array([0], dtype=np.int32)
+    write_npz(path, e, e, e, n_neurons=7, source="x", stats={"rows_in": 1, "dropped_unknown": 0, "dropped_self_loops": 0})
+    assert mcp_server.load_connectome(tiny_atlas, path) is None

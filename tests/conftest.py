@@ -2,6 +2,12 @@ import pytest
 
 from flybrain.atlas import Atlas, load_atlas
 
+@pytest.fixture(autouse=True)
+def _no_real_connectome(monkeypatch, tmp_path):
+    """Tests never pick up a developer's real data/processed/connectome_783.npz."""
+    monkeypatch.setenv("FLYBRAIN_CONNECTOME", str(tmp_path / "no-connectome.npz"))
+
+
 HEADER = "root_id\tpos_x\tpos_y\tpos_z\tsuper_class\tcell_class\tcell_type\ttop_nt\tside\tflow"
 
 
