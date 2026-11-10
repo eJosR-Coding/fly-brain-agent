@@ -51,5 +51,8 @@ Runtimes: reference 82 s for the first trial (includes Cython compile), then ~8 
 Commits: `feat(simulation): leaky integrate-and-fire whole-brain simulator`, `feat(simulation): validation script against the reference Brian2 model`. TDD: tests written first, RED = `ModuleNotFoundError: No module named 'flybrain.simulation'`; first GREEN run had 1 failure (refractory ticks and arrival gating vs the Brian2 trace), fixed after tracing Brian2 state. `uv run pytest -q`: 315 passed (298 before).
 - Engram mirror: pending (mem_save blocked by hook/auto-mode in this session).
 
+- S1 review (2026-11-10): main..7624d83 (553 lines, medium), granted, approved, acknowledged. Follow-ups for S2: bound the time-binned allocation (bins x neurons can be huge; simulation.py:154) and add a from_files test on a tiny parquet/csv fixture (simulation.py:105-125); cache the CSR as npz.
+- Cleanup: removed the isolated Brian2 env (/tmp/claude-1000/shiu-ref, 369 MB) and 4 orphaned wait loops left by the validation run.
+
 ## Next step
 S2 (MCP tool `stimulate` + `silence`, API activity endpoint). Open item: cache the CSR (loading the parquet takes ~3 s and ~1.5 GB) as an npz under data/processed/.
