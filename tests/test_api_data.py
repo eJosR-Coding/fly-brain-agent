@@ -14,7 +14,7 @@ def client_for(path):
 
 def test_health(tiny_tsv_path):
     with client_for(tiny_tsv_path) as c:
-        assert c.get("/health").json() == {"status": "ok", "neurons": 63, "chat": False, "model": None, "connectome": False, "connectome_edges": None}
+        assert c.get("/health").json() == {"status": "ok", "neurons": 63, "chat": False, "model": None, "connectome": False, "connectome_edges": None, "simulation": False}
 
 
 def test_health_reports_a_configured_chat_model(tiny_tsv_path):
@@ -22,7 +22,7 @@ def test_health_reports_a_configured_chat_model(tiny_tsv_path):
 
     app = create_app(atlas_path=tiny_tsv_path, model=fn_model(lambda msgs: None), model_name="test:fake-1")
     with TestClient(app) as c:
-        assert c.get("/health").json() == {"status": "ok", "neurons": 63, "chat": True, "model": "test:fake-1", "connectome": False, "connectome_edges": None}
+        assert c.get("/health").json() == {"status": "ok", "neurons": 63, "chat": True, "model": "test:fake-1", "connectome": False, "connectome_edges": None, "simulation": False}
 
 
 def test_health_chat_without_a_name_has_null_model(tiny_tsv_path):
