@@ -18,6 +18,7 @@ const CHIPS: { label: string; params: Record<string, string> | null }[] = [
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 let brainScene: BrainScene | null = null;
 let theme: Theme;
+let pointCount: number | null = null; // known once the brain is loaded
 /** Shared by chips and chat: whichever selection was requested last wins. */
 const latest = new Latest();
 
@@ -83,9 +84,11 @@ async function boot(): Promise<void> {
       highlight(idx);
       $("selection").textContent = `${p.total.toLocaleString("en-US")} neurons: from chat`;
     }).then(() => undefined),
+    () => pointCount,
   );
   try {
     const brain = await loadBrain();
+    pointCount = brain.meta.count;
     brainScene = createScene($("stage"), brain, theme);
     $("status").textContent = `${brain.meta.count.toLocaleString("en-US")} neurons loaded`;
   } catch (e) {

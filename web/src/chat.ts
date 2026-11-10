@@ -16,6 +16,28 @@ export interface ChatHandlers {
   onDone(): void;
 }
 
+/** Check a highlight payload from the wire. Returns the typed payload, or why it is invalid. */
+export function parseHighlight(d: Record<string, unknown>, pointCount: number | null): HighlightPayload | string {
+  if (typeof d.total !== "number" || !Number.isFinite(d.total) || d.total < 0) return "total is not a number";
+  const { indices } = d;
+  if (indices === null || indices === undefined) {
+    if (typeof d.fetch !== "string" || !d.fetch) return "no indices and no fetch url";
+  } else if (!Array.isArray(indices)) {
+    return "indices is not an array";
+  } else {
+    for (const i of indices) {
+      if (typeof i !== "number" || !Number.isInteger(i) || i < 0) return `bad index ${JSON.stringify(i)}`;
+      if (pointCount !== null && i >= pointCount) return `index ${i} is outside 0..${pointCount - 1}`;
+    }
+  }
+  return {
+    selection_id: String(d.selection_id ?? ""),
+    total: d.total,
+    indices: (indices as number[] | undefined) ?? null,
+    fetch: typeof d.fetch === "string" ? d.fetch : undefined,
+  };
+}
+
 /** POST /api/chat and dispatch the SSE events. Never throws; onDone fires exactly once. */
 export async function streamChat(
   message: string,
@@ -23,6 +45,7 @@ export async function streamChat(
   h: ChatHandlers,
   fetchFn: typeof fetch = fetch,
   base = "/api",
+  getPointCount: () => number | null = () => null,
 ): Promise<void> {
   let finished = false;
   const finish = () => {
@@ -46,9 +69,16 @@ export async function streamChat(
     for await (const ev of parseSSE(res.body)) {
       const d = (ev.data ?? {}) as Record<string, unknown>;
       switch (ev.event) {
-        case "meta": h.onMeta(String(d.conversation_id)); break;
+        case "meta":
+          if (typeof d.conversation_id === "string" && d.conversation_id) h.onMeta(d.conversation_id);
+          break;
         case "tool_call": h.onToolCall(String(d.tool), d.args); break;
-        case "highlight": h.onHighlight(d as unknown as HighlightPayload); break;
+        case "highlight": {
+          const p = parseHighlight(d, getPointCount());
+          if (typeof p === "string") h.onError(`ignored an invalid highlight: ${p}`);
+          else h.onHighlight(p);
+          break;
+        }
         case "answer": h.onAnswer(String(d.text)); break;
         case "error": h.onError(String(d.message)); break;
         case "done": finish(); break;
@@ -65,6 +95,7 @@ export async function streamChat(
 export function mountChat(
   root: HTMLElement,
   onHighlight: (p: HighlightPayload) => Promise<void> | void,
+  getPointCount: () => number | null = () => null,
 ): void {
   root.innerHTML =
     '<div id="log"></div><form id="form"><input id="input" autocomplete="off" placeholder="ask about the fly brain" />' +
@@ -107,6 +138,6 @@ export function mountChat(
         input.disabled = send.disabled = false;
         input.focus();
       },
-    });
+    }, fetch, "/api", getPointCount);
   });
 }
