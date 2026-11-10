@@ -20,7 +20,12 @@ core       flybrain.atlas          positions in µm, cell types, neurotransmitte
 |---|---|
 | core: atlas | done |
 | tools: MCP server | done |
-| agent, backend, frontend | planned |
+| agent: LangGraph loop | in progress (T1 graph done) |
+| backend, frontend | planned |
+
+## Agent
+
+`flybrain.agent` is a hand-built LangGraph loop (no `create_agent`): the model node asks, `ToolNode` executes, and we repeat until the model answers without tool calls. Tool errors (unknown tool, bad args) go back to the model as messages instead of raising. `ask()` sets `recursion_limit` as a hard stop and returns `[hard stop] reached N steps without a final answer` instead of crashing. No CLI yet (next: MCP wiring + `flybrain-chat`).
 
 ## Core
 
