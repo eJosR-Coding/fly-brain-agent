@@ -168,3 +168,19 @@ class Atlas:
         """Brain size per axis (max - min) in micrometers."""
         n = self.neurons
         return tuple(float(n[c].max() - n[c].min()) for c in ("x_um", "y_um", "z_um"))
+
+
+class RowIndex:
+    """root_id -> atlas row, built once (the browser only knows rows, never root_ids).
+
+    Unknown ids are ignored and counted: a stale or foreign id must not break a highlight.
+    """
+
+    def __init__(self, atlas: Atlas) -> None:
+        self._index = pd.Index(atlas.neurons["root_id"].to_numpy())
+
+    def lookup(self, root_ids) -> tuple[np.ndarray, int]:
+        """Return (row indices as little-endian uint32, how many ids were not found)."""
+        found = self._index.get_indexer(np.asarray(list(root_ids), dtype="int64"))
+        hit = found[found >= 0]
+        return hit.astype("<u4"), int((found < 0).sum())

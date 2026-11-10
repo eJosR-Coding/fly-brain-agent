@@ -15,7 +15,7 @@ noun
 [![MCP](https://img.shields.io/badge/tools-MCP-000000)](https://modelcontextprotocol.io)
 [![LangGraph](https://img.shields.io/badge/agent-LangGraph-1C3C3C?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
 [![FlyWire](https://img.shields.io/badge/data-FlyWire%20v783-6A5ACD)](https://flywire.ai)
-![Tests](https://img.shields.io/badge/tests-155%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-182%20passing-brightgreen)
 ![Status](https://img.shields.io/badge/status-agent%20works%2C%203D%20viewer%20next-orange)
 
 **Ask a question in plain language. An agent searches 139,248 real neurons and answers.**
@@ -60,7 +60,7 @@ Dependencies point inward. The core knows nothing about MCP, the web or LLMs.
 
 ```text
 frontend   Vite + Three.js         3D brain + chat                        (planned)
-backend    FastAPI                 brain data + chat stream               (planned)
+backend    FastAPI                 brain data + chat stream (SSE)         done
 agent      LangGraph               any chat model, MCP client             done
 tools      MCP server (FastMCP)    search, count, describe, page          done
 core       flybrain.atlas          positions in µm, cell types, NTs       done
@@ -152,12 +152,73 @@ atlas.count_by("top_nt", super_class="central")    # {"acetylcholine": ..., "unk
 atlas.describe(720575940628857210)                  # one neuron as a plain dict (µm)
 ```
 
+## Web API
+
+A FastAPI backend for a browser viewer. It loads the atlas once, hosts the MCP server
+in-process (in-memory session, so the agent still only talks to tools over MCP) and shares
+the same selection store, which lets it turn a ticket into row indices for highlighting.
+
+```bash
+uv run --env-file .env flybrain-web --model google_genai:gemini-3.5-flash   # 127.0.0.1:8000
+```
+
+Options: `--host`, `--port`, `--model` (or `FLYBRAIN_MODEL`), `--max-steps`. CORS allows
+`http://localhost:5173` (Vite) by default; set `FLYBRAIN_CORS_ORIGINS` to a comma-separated
+list to change it. `--help` needs no model or key.
+
+Each chat turn has a time limit (`FLYBRAIN_TURN_TIMEOUT`, default 90 s). Provider SDKs can
+retry overload errors (HTTP 503) with backoff for minutes; when the limit hits, the stream
+sends an `error` event and then `done` instead of going silent.
+
+| Endpoint | What it returns |
+|---|---|
+| `GET /health` | `{"status": "ok", "neurons": N}` |
+| `GET /brain/meta` | the binary contract below, as JSON |
+| `GET /brain/points` | all positions, `application/octet-stream` (~1.67 MB) |
+| `POST /chat` | `text/event-stream`, body `{"message", "conversation_id"?}` |
+| `GET /selections/{id}/indices` | row indices of a ticket, uint32 LE; 404 if unknown or expired |
+
+**Binary contract.** `/brain/points` is `count * 12` bytes: float32, little-endian, `x y z`
+interleaved, in micrometers, in atlas row order. Decode with
+`new Float32Array(buffer)` in the browser or `np.frombuffer(body, "<f4").reshape(-1, 3)`.
+A highlight is a list of row indices into that same array (the browser never sees root_ids).
+
+**Chat stream.** `message` is trimmed and must be 1 to 2000 characters (else 422).
+Send the same `conversation_id` to keep multi-turn memory (the server makes one if you
+omit it). Events, in order:
+
+| Event | Data |
+|---|---|
+| `meta` | `{conversation_id}` (always first) |
+| `tool_call` | `{tool, args}` (long argument values are truncated) |
+| `highlight` | `{selection_id, total, indices}`; above 5000 neurons `indices` is `null` and `fetch` gives the URL to download them as binary |
+| `answer` | `{text}` |
+| `error` | `{message}` (model failure, server stopped, hard stop) |
+| `done` | `{}` (always last, so a stream never hangs) |
+
+```text
+event: meta
+data: {"conversation_id": "9f1c..."}
+
+event: tool_call
+data: {"tool": "search_neurons", "args": {"nt": "glutamate"}}
+
+event: highlight
+data: {"selection_id": "sel_3f9a2c", "total": 1, "indices": [60]}
+
+event: answer
+data: {"text": "One glutamate neuron."}
+
+event: done
+data: {}
+```
+
 ## Roadmap
 
 - [x] Atlas core: positions, types, neurotransmitters
 - [x] MCP server with selection tickets
 - [x] LangGraph agent + `flybrain-chat` CLI, tested end to end with Gemini
-- [ ] FastAPI backend: binary brain points + streamed chat
+- [x] FastAPI backend: binary brain points + streamed chat (`flybrain-web`)
 - [ ] Three.js viewer: the brain in 3D, neurons light up as the agent works
 - [ ] Tools that change the brain: lesion a selection, scale a neurotransmitter's gain
 - [ ] Simulation: run activity through the connectome and watch it respond
@@ -178,7 +239,7 @@ FlyWire consortium and its authors; follow their terms and cite their papers if 
 
 ```bash
 uv sync
-uv run pytest        # 40 tests, no network or API key needed (fake chat model)
+uv run pytest        # 182 tests, no network or API key needed (fake chat model)
 ```
 
 Work is tracked per feature in [`odd/tasks/`](odd/tasks/), with test-first commits.
