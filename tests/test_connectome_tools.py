@@ -140,3 +140,10 @@ def test_derived_tickets_say_where_they_came_from_when_they_expire(tiny_atlas, t
     tools.search_neurons(tiny_atlas, small, cell_type="EPG")  # evicts the partners ticket
     with pytest.raises(UnknownSelectionError, match=r"neighbors\(.*\)"):
         small.get(out["selection_id"])
+
+
+def test_no_partner_hint_does_not_suggest_the_direction_already_used(tiny_atlas, store, tiny_conn):
+    sid = store.add([31], "an unconnected neuron")  # root_id 31 -> row 30, not in the graph
+    out = tools.neighbors(tiny_atlas, store, tiny_conn, sid, direction="both")
+    assert out["partners_total"] == 0 and "direction='both'" not in out["hint"]
+    assert "direction='both'" in tools.neighbors(tiny_atlas, store, tiny_conn, sid, direction="out")["hint"]

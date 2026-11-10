@@ -233,10 +233,8 @@ def neighbors(
         "synapses_total": int(syn.sum()),
     }
     if not len(partner_rows):
-        out["hint"] = (
-            f"No {direction} partners at >= {conn.min_synapses} synapses. Try direction='both' "
-            "or another selection."
-        )
+        retry = " Try direction='both' or another selection." if direction != "both" else " Try another selection."
+        out["hint"] = f"No {direction} partners at >= {conn.min_synapses} synapses.{retry}"
         out["top"] = []
         return _finish(out, notes, conn)
     out["selection_id"] = _ticket(
