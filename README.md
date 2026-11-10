@@ -296,7 +296,7 @@ FlyWire consortium and its authors; follow their terms and cite their papers if 
 
 ```bash
 uv sync
-uv run pytest        # 230 tests, no network or API key needed (fake chat model)
+uv run pytest        # 231 tests, no network or API key needed (fake chat model)
 ```
 
 Work is tracked per feature in [`odd/tasks/`](odd/tasks/), with test-first commits.

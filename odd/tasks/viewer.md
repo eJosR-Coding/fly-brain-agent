@@ -86,5 +86,7 @@ The backend (T5) streams highlights as row indices, but nothing renders them. Th
 - Verification: `uv run pytest -q` 231 passed; `pnpm -C web test` 99 passed; `pnpm -C web build` ok. README badge 330 = 231 + 99.
 - Known gaps: dopamine and serotonin tones are close (0.1 apart) and only the legend and a slightly larger point tell them apart; the view chips are hidden on narrow screens; the orbit coasts briefly (damping) after the chip is turned off.
 
+- Anatomy + A/D review (2026-11-10): branch regrouped into 4 final-state commits (illustration added then removed is not reviewed), 4 slices granted, approved, acknowledged: review-8265256821e387a4, review-95468dc60da3aa66, review-e16be5d0eef98291, review-b2a5a35d844ccc52. Advisory follow-ups: `.str` accessor dtype in anatomy.py:59; transmitter/region payload validation edges (transmitters.ts:58, regions.ts:38); top label may land inside the box and labels not clamped to the viewport (anatomy.ts:49-75); possible double color-space encode (scene.ts:129).
+
 ## Next step
 Parent: review, then PR. Penpot-driven visual restyle only touches web/src/style.css (theme.ts reads its custom properties).
