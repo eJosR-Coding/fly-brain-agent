@@ -54,5 +54,7 @@ The backend (T5) streams highlights as row indices, but nothing renders them. Th
   - Payload validation (5a2c09c): RED 7 behavioral failures (e.g. `expected 'hl:2' to match /^error:.*highlight/`, meta set "undefined") -> GREEN 35. Range check uses the loaded point count.
   - SSE/binary edges (0853fe8): RED `p.end is not a function` / lone-CR terminated final event never delivered; `loadBrain` accepted meta.count inconsistent with the bytes and gave a raw Float32Array RangeError for non multiples of 12 -> GREEN 39.
 
+- Review of follow-up fixes (2026-11-10): X main..825760e (python, 249 lines) review-ae1a92751991348b; Y 825760e..HEAD (web, 274 lines) review-15fb51a572331d26; both granted, approved, acknowledged. Remaining advisories (non-blocking): repair in finally relies on aclose/cancel reaching the generator (agent.py:279-285); fetched big-selection indices not range-validated (main.ts:39); null point-count path untested (chat.test.ts:80).
+
 ## Next step
 Parent: review, then PR. Penpot-driven visual restyle only touches web/src/style.css (theme.ts reads its custom properties).
