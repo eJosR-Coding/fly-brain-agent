@@ -15,7 +15,7 @@ noun
 [![MCP](https://img.shields.io/badge/tools-MCP-000000)](https://modelcontextprotocol.io)
 [![LangGraph](https://img.shields.io/badge/agent-LangGraph-1C3C3C?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
 [![FlyWire](https://img.shields.io/badge/data-FlyWire%20v783-6A5ACD)](https://flywire.ai)
-![Tests](https://img.shields.io/badge/tests-40%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-155%20passing-brightgreen)
 ![Status](https://img.shields.io/badge/status-agent%20works%2C%203D%20viewer%20next-orange)
 
 **Ask a question in plain language. An agent searches 139,248 real neurons and answers.**
@@ -92,7 +92,8 @@ uv run --env-file .env flybrain-chat --model google_genai:gemini-3.5-flash "Find
 ```
 
 Options: `--model provider:model` (default `anthropic:claude-sonnet-5-5`, or set
-`FLYBRAIN_MODEL`), `--max-steps N`. Other providers: `uv add langchain-openai`, then
+`FLYBRAIN_MODEL`), `--max-steps N` (max tool rounds, default 6: `1` allows one tool round
+plus the final answer). Other providers: `uv add langchain-openai`, then
 `--model openai:<model>`.
 
 ## Tools (MCP)
@@ -103,6 +104,19 @@ Options: `--model provider:model` (default `anthropic:claude-sonnet-5-5`, or set
 | `count_neurons` | counts grouped by a field (top N + other) |
 | `describe_neuron` | one neuron by root_id |
 | `list_selection` | page through a ticket (max 50 per call) |
+
+Behavior worth knowing:
+
+- Filters are trimmed; an empty or whitespace-only filter means "no filter". Values over 200
+  characters are rejected. `side` is `left`, `right`, `center` or `na`.
+- Out-of-range paging never errors: `offset`, `limit` (max 50) and `count_neurons` `top`
+  (max 100) are clamped and the answer carries a `note` saying what changed
+  (e.g. `limit capped to 50`, `offset 900 is past the end (total 42)`).
+- A search with no match lists the valid values when `nt`, `super_class` or `side` is off.
+- Tickets live in server memory, capped at 100 (`FLYBRAIN_MAX_SELECTIONS`), least recently
+  used evicted first. An expired ticket says which search to run again.
+- If the annotations file is bad or missing, the server prints one line to stderr and exits
+  with code 1.
 
 Run the server on its own (stdio): `uv run flybrain-mcp`. The annotations path comes from
 `FLYBRAIN_ANNOTATIONS` (default `data/raw/flywire_neuron_annotations.tsv`).
@@ -116,9 +130,11 @@ claude mcp add flybrain -- uv run --directory /path/to/fly-brain-agent flybrain-
 ## How the agent works
 
 `flybrain.agent` is an explicit LangGraph loop: the model node asks, `ToolNode` executes,
-and we repeat until the model answers without tool calls. `ask()` sets `recursion_limit` as
-a hard stop and returns `[hard stop] reached N steps without a final answer` instead of
-crashing.
+and we repeat until the model answers without tool calls. `ask()` caps the tool rounds
+(`--max-steps`) and returns `[hard stop] reached N tool rounds without a final answer`
+instead of crashing. A malformed tool call goes back to the model so it can retry, an empty
+reply is reported as `[no answer] ...`, and if the MCP server dies mid-run the run stops with
+`the flybrain server stopped: <cause>` rather than letting the model improvise.
 
 The agent is an MCP client: `flybrain.agent_mcp` launches the server over stdio and keeps
 **one session per conversation**. That matters: tickets live in the server process, and the
