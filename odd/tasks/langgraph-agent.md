@@ -50,5 +50,7 @@ The MCP server works from Claude Code, but the product needs its own agent so us
 - Session finding: `.venv/.../langchain_mcp_adapters/client.py` `get_tools()` docstring: "A new session will be created for each tool call" (calls `load_mcp_tools(None, connection=...)`). Verified by hand: search_neurons ticket then list_selection via get_tools() -> `unknown selection ... known selections: none yet`. Fix: `client.session("flybrain")` (client.py) kept open + `load_mcp_tools(session)` (tools.py); one server process per conversation, tickets survive. Covered by `test_ticket_survives_across_tool_calls`.
 - Route: delegated writer (2+ non-trivial files).
 
+- Review (code-only slice 56a6e6e..HEAD, 417 lines, 9 files, medium): granted, 1 lens (review-reliability), approved, acknowledged (authority burned, lineage review-421081ce0c4b408f). Second deps commit moved next to the first via user-authorized rebase so code commits are contiguous. Backups: backup/feat-agent-before-split, backup/feat-agent-before-split-2.
+
 ## Next step
 Review slice 56a6e6e..HEAD (code only), then T5 FastAPI.
