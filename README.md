@@ -15,7 +15,7 @@ noun
 [![MCP](https://img.shields.io/badge/tools-MCP-000000)](https://modelcontextprotocol.io)
 [![LangGraph](https://img.shields.io/badge/agent-LangGraph-1C3C3C?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
 [![FlyWire](https://img.shields.io/badge/data-FlyWire%20v783-6A5ACD)](https://flywire.ai)
-![Tests](https://img.shields.io/badge/tests-255%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-273%20passing-brightgreen)
 ![Status](https://img.shields.io/badge/status-agent%20and%203D%20viewer%20work-orange)
 
 **Ask a question in plain language. An agent searches 139,248 real neurons and answers.**
@@ -233,10 +233,15 @@ uv run --env-file .env flybrain-web --model google_genai:gemini-3.5-flash
 pnpm -C web install && pnpm -C web dev      # open http://localhost:5173
 ```
 
+The look follows a Penpot design: Inter and JetBrains Mono are self-hosted (`@fontsource`, no CDN),
+every color, size and spacing is a custom property in `web/src/style.css`, and selected neurons are
+drawn on their own larger, additive layer so they stand out against the dim base cloud. The status
+block is real: `GET /health` reports `chat` and `model`, and `stream` is live while a turn runs.
+
 Without a model, run the data and search endpoints only with
 `uv run uvicorn --factory flybrain.api:create_app --port 8000`.
 
-- **Chips** (dopamine, dopamine left, GABA, serotonin, PEN, clear) call
+- **Chips** (dopamine, dopamine · left, GABA, serotonin, PEN, clear) call
   `GET /neurons/search`, which uses the same search tool and ticket store as the agent but no
   LLM, so they keep working when the model provider is down.
 - **Highlights**: when the agent finds neurons, the stream sends a `highlight` event with row

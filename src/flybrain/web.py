@@ -47,7 +47,7 @@ def main(argv=None) -> int:
         )
         return 1
     try:
-        app = create_app(model=model, max_steps=args.max_steps)
+        app = create_app(model=model, max_steps=args.max_steps, model_name=args.model)
     except ValueError as exc:  # e.g. a bad FLYBRAIN_TURN_TIMEOUT
         print(f"flybrain-web: {_one_line(exc)}", file=sys.stderr)
         return 1

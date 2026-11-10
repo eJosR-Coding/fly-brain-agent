@@ -16,6 +16,17 @@ export interface ChatHandlers {
   onDone(): void;
 }
 
+/** `tool(k="v", n=5)`: how a tool call is shown in the trace. */
+export function formatToolCall(tool: string, args: unknown): string {
+  if (typeof args === "object" && args !== null && !Array.isArray(args)) {
+    const inner = Object.entries(args as Record<string, unknown>)
+      .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+      .join(", ");
+    return `${tool}(${inner})`;
+  }
+  return args === null || args === undefined ? `${tool}()` : `${tool}(${JSON.stringify(args)})`;
+}
+
 /** Check a highlight payload from the wire. Returns the typed payload, or why it is invalid. */
 export function parseHighlight(d: Record<string, unknown>, pointCount: number | null): HighlightPayload | string {
   if (typeof d.total !== "number" || !Number.isFinite(d.total) || d.total < 0) return "total is not a number";
@@ -91,22 +102,43 @@ export async function streamChat(
   }
 }
 
-/** DOM wiring for the chat panel. */
-export function mountChat(
-  root: HTMLElement,
-  onHighlight: (p: HighlightPayload) => Promise<void> | void,
-  getPointCount: () => number | null = () => null,
-): void {
+export const HINT = "Try: How many serotonin neurons are there?";
+const ARROW_UP = "M6.357 2.184q-.079 .012-.146 .06-.063 .044-2.012 1.993l-1.546 1.574q-.339 .337-.431 .467-.051 .079-.051 .184v.038q0 .222 .168 .39 .105 .105 .26 .137 .156 .032 .299-.019 .079-.026 .298-.241 .222-.216 1.276-1.267 1.469-1.469 1.482-1.469 .013 0 .013 3.183v2.796q0 .416 .032 .495 .034 .077 .111 .156 .079 .076 .174 .124 .099 .044 .216 .044 .117 0 .213-.044 .098-.048 .174-.124 .08-.079 .111-.156 .035-.079 .035-.495v-2.796q0-3.183 .013-3.183 .013 0 1.482 1.469 1.054 1.051 1.273 1.267 .222 .215 .301 .241 .143 .051 .299 .019 .155-.032 .26-.137 .168-.168 .168-.39v-.038q0-.105-.051-.184-.092-.13-.431-.479l-1.559-1.562q-1.952-1.961-2.015-1.993-.063-.035-.149-.06-.086-.026-.13-.026-.045 0-.137 .026z";
+
+export interface ChatOptions {
+  onHighlight: (p: HighlightPayload) => Promise<void> | void;
+  getPointCount?: () => number | null;
+  /** true while an SSE turn is running */
+  onStreaming?: (streaming: boolean) => void;
+}
+
+/** DOM wiring for the chat panel. Returns the element that shows the model label. */
+export function mountChat(root: HTMLElement, opts: ChatOptions): { model: HTMLElement } {
+  const { onHighlight, getPointCount = () => null, onStreaming = () => undefined } = opts;
   root.innerHTML =
-    '<div id="log"></div><form id="form"><input id="input" autocomplete="off" placeholder="ask about the fly brain" />' +
-    '<button id="send" type="submit">send</button></form>';
+    '<header id="chat-head"><span id="agent-label">agent</span><span id="model"></span></header>' +
+    '<div id="log"></div>' +
+    '<form id="form"><div id="field"><input id="input" autocomplete="off" placeholder="Ask about the fly brain\u2026" />' +
+    '<button id="send" type="submit" aria-label="send"><svg viewBox="0 0 13 13" width="13" height="13" aria-hidden="true">' +
+    `<path d="${ARROW_UP}" fill="currentColor"/></svg></button></div></form>`;
   const log = root.querySelector<HTMLElement>("#log")!;
   const form = root.querySelector<HTMLFormElement>("#form")!;
   const input = root.querySelector<HTMLInputElement>("#input")!;
   const send = root.querySelector<HTMLButtonElement>("#send")!;
   let conversationId: string | null = null;
 
+  const hint = document.createElement("button");
+  hint.type = "button";
+  hint.id = "hint";
+  hint.textContent = HINT;
+  hint.addEventListener("click", () => {
+    input.value = HINT.replace(/^Try:\s*/, "");
+    input.focus();
+  });
+  log.appendChild(hint);
+
   const add = (cls: string, text: string): HTMLElement => {
+    hint.remove();
     const el = document.createElement("div");
     el.className = `msg ${cls}`;
     el.textContent = text;
@@ -122,22 +154,36 @@ export function mountChat(
     input.value = "";
     input.disabled = send.disabled = true;
     add("user", text);
+    onStreaming(true);
     void streamChat(text, conversationId, {
       onMeta: (id) => { conversationId = id; },
-      onToolCall: (tool, args) => add("tool", `> ${tool}(${JSON.stringify(args)})`),
+      onToolCall: (tool, args) => {
+        const el = add("tool", "");
+        const arrow = document.createElement("span");
+        arrow.className = "arrow";
+        arrow.textContent = "\u2192";
+        const call = document.createElement("span");
+        call.textContent = formatToolCall(tool, args);
+        el.append(arrow, call);
+      },
       onHighlight: (p) => {
-        const el = add("hl", `lit ${p.total.toLocaleString("en-US")} neurons`);
-        const sw = document.createElement("span");
-        sw.className = "sw accent";
-        el.prepend(sw);
+        const el = add("hl", "");
+        const lit = document.createElement("span");
+        lit.textContent = `\u25CF lit ${p.total.toLocaleString("en-US")} neurons`;
+        const sel = document.createElement("span");
+        sel.className = "sel";
+        sel.textContent = p.selection_id;
+        el.append(lit, sel);
         void Promise.resolve(onHighlight(p)).catch((err) => add("error", `highlight failed: ${(err as Error).message}`));
       },
       onAnswer: (t) => add("answer", t),
       onError: (m) => add("error", m),
       onDone: () => {
         input.disabled = send.disabled = false;
+        onStreaming(false);
         input.focus();
       },
     }, fetch, "/api", getPointCount);
   });
+  return { model: root.querySelector<HTMLElement>("#model")! };
 }
