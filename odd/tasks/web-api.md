@@ -65,5 +65,7 @@ The agent only runs as a CLI. A browser needs (1) all 139,248 positions once, in
   - [x] FLYBRAIN_TURN_TIMEOUT / turn_timeout validation (positive finite; flybrain-web prints one stderr line, exit 1). RED: `Regex pattern did not match ... could not convert string to float: 'abc'` and `DID NOT RAISE ValueError`. Commit b0d4e3e.
   - [x] README test count and cut-turn note. GREEN: `uv run pytest -q` 207 passed.
 
+- Behavioral RED for fix 1 (parent probe, 2026-11-10): on main, a hard-stopped turn followed by a second turn on the same thread sent the model a history with unanswered tool_call id `c4`; on fix/turn-cleanup the same probe reports `[]`.
+
 ## Next step
 Open PR, then T6 (Three.js viewer).
