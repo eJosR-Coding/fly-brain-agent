@@ -15,7 +15,7 @@ noun
 [![MCP](https://img.shields.io/badge/tools-MCP-000000)](https://modelcontextprotocol.io)
 [![LangGraph](https://img.shields.io/badge/agent-LangGraph-1C3C3C?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
 [![FlyWire](https://img.shields.io/badge/data-FlyWire%20v783-6A5ACD)](https://flywire.ai)
-![Tests](https://img.shields.io/badge/tests-273%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-330%20passing-brightgreen)
 ![Status](https://img.shields.io/badge/status-agent%20and%203D%20viewer%20work-orange)
 
 **Ask a question in plain language. An agent searches 139,248 real neurons and answers.**
@@ -178,6 +178,9 @@ must be a positive number; anything else stops startup with a one-line error.
 | `GET /health` | `{"status": "ok", "neurons": N}` |
 | `GET /brain/meta` | the binary contract below, as JSON |
 | `GET /brain/points` | all positions, `application/octet-stream` (~1.67 MB) |
+| `GET /brain/regions` | one `uint8` per neuron, same row order as `/brain/points`; the code table is `regions` in `/brain/meta` (`0` central, `1` optic, `2` sensory, `3` other), derived from `super_class` |
+| `GET /brain/nt` | one `uint8` per neuron, same row order: the predicted top neurotransmitter (`nt` table in `/brain/meta`: `0` acetylcholine, `1` glutamate, `2` gaba, `3` dopamine, `4` serotonin, `5` octopamine, `6` unknown) |
+| `GET /brain/landmarks` | JSON computed from the data: centroids in micrometers (`central brain`, `optic lobe L/R`, `lamina L/R`), plus per side the lobe center, a robust lobe radius (80th percentile) and the outward lamina direction |
 | `POST /chat` | `text/event-stream`, body `{"message", "conversation_id"?}` |
 | `GET /selections/{id}/indices` | row indices of a ticket, uint32 LE; 404 if unknown or expired |
 
@@ -218,9 +221,9 @@ data: {}
 
 ## Viewer
 
-![The viewer with left dopamine neurons lit](assets/viewer.png)
+![The viewer with all dopamine neurons lit](assets/viewer.png)
 
-<sub>Real data and real highlight (2,926 left dopamine neurons from the backend). The chat text in this screenshot is a mocked stream, because the model provider was overloaded when it was taken.</sub>
+<sub>Real data and real highlight (5,909 dopamine neurons from the backend, shown in `regions` mode). Nothing is drawn that is not in the data; the chat panel is empty because this capture ran the backend without a model.</sub>
 
 A Vite + TypeScript + three.js app in `web/`: all 139,248 neurons as one point cloud (loaded
 from the binary `/brain/points` contract, orbit with the mouse) and a chat panel on the right.
@@ -250,7 +253,22 @@ Without a model, run the data and search endpoints only with
 - **Look**: all styling lives in `web/src/style.css` as custom properties (colors, fonts, panel
   width, point size and opacity, highlight color); the three.js parameters are read from them
   in `web/src/theme.ts`.
-- Tests: `pnpm -C web test` (SSE parser, color buffers, binary decoding, chat stream).
+- **Anatomy context**: real data never moves and nothing is drawn that is not in the data. Two color
+  modes (chips `regions` / `transmitters`), each with a compact key listing real neuron counts:
+  - `regions` (`/brain/regions`): central brightest, optic mid grey, sensory cooler, other dim.
+  - `transmitters` (`/brain/nt`, predicted top neurotransmitter): strictly grey tiers, so the rare
+    and interesting ones stand out (dopamine and serotonin brightest and a bit larger, then
+    octopamine, GABA, glutamate, acetylcholine, unknown darkest).
+  The highlight layer stays dominant in both. Tones and the depth cue are custom properties.
+- **Labels**: `central brain`, `optic lobe` and `lamina · eye input` are anchored to centroids
+  computed from the data (`/brain/landmarks`). Each label is pushed outside the cloud's projected
+  silhouette, on the screen side of its landmark, with a hairline leader; the placement is a pure,
+  unit-tested function.
+- **Motion and depth**: a slow auto-orbit (chip `orbit`, on by default, off under
+  `prefers-reduced-motion`) pauses while you drag and for a few seconds after. Points nearer the
+  camera are slightly brighter and larger, far ones dimmer (vertex shader, no extra passes). The
+  `front` and `3/4` chips reset the camera.
+- Tests: `pnpm -C web test` (SSE parser, region and transmitter tones, label placement, orbit gate, binary decoding, chat stream).
 
 ## Roadmap
 
@@ -278,7 +296,7 @@ FlyWire consortium and its authors; follow their terms and cite their papers if 
 
 ```bash
 uv sync
-uv run pytest        # 216 tests, no network or API key needed (fake chat model)
+uv run pytest        # 231 tests, no network or API key needed (fake chat model)
 ```
 
 Work is tracked per feature in [`odd/tasks/`](odd/tasks/), with test-first commits.

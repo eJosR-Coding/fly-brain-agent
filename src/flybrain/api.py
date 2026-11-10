@@ -26,6 +26,7 @@ from pydantic import BaseModel, StringConstraints
 
 from flybrain.agent import MAX_STEPS, build_graph, stream_events
 from flybrain.agent_mcp import SERVER_NAME
+from flybrain.anatomy import NT_CODES, REGION_CODES, landmarks, nt_codes, region_codes
 from flybrain.atlas import RowIndex, load_atlas
 from flybrain.mcp_server import DEFAULT_ANNOTATIONS, build_server
 from flybrain.selections import SelectionStore, UnknownSelectionError
@@ -103,6 +104,9 @@ def create_app(
         # little-endian float32, xyz interleaved, atlas row order: GPU-ready, built once
         xyz = atlas.neurons[["x_um", "y_um", "z_um"]].to_numpy()
         app.state.points = np.ascontiguousarray(xyz.astype("<f4")).tobytes()
+        app.state.regions = region_codes(atlas).tobytes()
+        app.state.nt = nt_codes(atlas).tobytes()
+        app.state.landmarks = landmarks(atlas)
         app.state.graph = None
         async with AsyncExitStack() as stack:
             if model is not None:
@@ -143,6 +147,8 @@ def create_app(
             "order": "atlas rows",
             "extent_um": list(app.state.atlas.extent_um()),
             "bytes": count * BYTES_PER_POINT,
+            "regions": {str(k): v for k, v in REGION_CODES.items()},
+            "nt": {str(k): v for k, v in NT_CODES.items()},
         }
 
     @app.get("/brain/points")
@@ -152,6 +158,28 @@ def create_app(
             media_type="application/octet-stream",
             headers={"Cache-Control": "public, max-age=3600"},
         )
+
+    @app.get("/brain/regions")
+    def brain_regions():
+        """One uint8 per atlas row (same order as /brain/points); the code table is in /brain/meta."""
+        return Response(
+            app.state.regions,
+            media_type="application/octet-stream",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
+    @app.get("/brain/nt")
+    def brain_nt():
+        """One uint8 per atlas row (same order as /brain/points): top neurotransmitter, table in /brain/meta."""
+        return Response(
+            app.state.nt,
+            media_type="application/octet-stream",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
+    @app.get("/brain/landmarks")
+    def brain_landmarks():
+        return app.state.landmarks
 
     def _rows_for(selection_id: str) -> tuple[np.ndarray, int]:
         selection = app.state.store.get(selection_id)
