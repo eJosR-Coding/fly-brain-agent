@@ -76,5 +76,12 @@ Probe caveat: one CLI probe reached the real init_chat_model (anthropic, no key)
 - Verification: `uv run pytest -q` 155 passed; `uv run flybrain-chat --help` ok (mentions tool rounds); `FLYBRAIN_ANNOTATIONS=/nonexistent uv run flybrain-mcp </dev/null` -> stderr `flybrain-mcp: annotations file not found: /nonexistent`, exit=1, empty stdout. Real-server probe: fake model calling a tool on a server that exits -> `ServerStoppedError: the flybrain server stopped: Connection closed`. No real LLM or network was used.
 - README updated (docs(readme) commit).
 
+- Review (2026-11-10), 4 slices (each under the reviewer budget), all granted, approved, acknowledged (authority burned):
+  A main..78551f3 atlas+selections (448 lines, medium, 1 lens) review-143319ddbe7f86bd;
+  B 78551f3..0069cd0 tools+mcp (305 lines, HIGH, 4 lenses) review-731fefe83cdd771f;
+  C 0069cd0..c2fce5c agent (298 lines, medium, 1 lens) review-5880cab9e3da5f91;
+  D c2fce5c..a531b1d cli+docs (267 lines, medium, 1 lens) review-fd38f8efceb99ec7.
+- Non-blocking advisory follow-ups (not done): numpy ints rejected by describe (atlas.py:98); root_id upper bound (atlas.py:100); store bounds tests (selections.py:53); clamp-note asymmetry and duplicated note assembly (tools.py:23,127); doc constants duplicated (mcp_server.py:34); describe coercion (tools.py:104); mixed valid/invalid tool calls drop invalid silently (agent.py:55); transport error classes untested (agent_mcp.py:52); ExceptionGroup unwrap + KeyboardInterrupt/ServerStopped inside groups in CLI (cli.py:92-107).
+
 ## Next step
 Open PR test/hardening -> main for the user to review and merge; then T5 (HTTP).
