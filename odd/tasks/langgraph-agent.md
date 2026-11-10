@@ -36,10 +36,12 @@ The MCP server works from Claude Code, but the product needs its own agent so us
 ## Progress / evidence
 - T1 RED: `tests/test_agent.py` -> `E   ModuleNotFoundError: No module named 'flybrain.agent'` (1 collection error).
 - T1 GREEN: `uv run pytest -q` -> 36 passed (31 before + 5 new). Versions: langgraph 1.2.20, langchain-core 1.7.7, mcp 1.30.0 (mcp<2 kept).
-- T1 commit: cb730db
+- T1 commit: a4dac9b
 - Engram mirror: pending (mem_save blocked by hook/auto-mode in this session).
 
 - Review (2026-11-10): slice 03f8f7c..0dc810d too big for the reviewer context (lens_context_budget_exceeded, 1072 lines, mostly uv.lock). Split: ticket-fix slice 03f8f7c..14c5d92 -> user declined. Agent slice 14c5d92..0dc810d (1016 lines) -> granted but lens_context_budget_exceeded again; no authority created. Unreviewed; uv.lock growth makes any slice with a dependency add exceed the budget.
+- Fix (user-authorized history rewrite, 2026-11-10): regrouped commits so dependency changes live alone in 88c6894 (`chore(deps)`: pyproject + uv.lock + .gitattributes marking uv.lock generated). Generated lock is not reviewable under the lens budget; code is reviewed from base 88c6894. Code slice 88c6894..a4dac9b: 208 lines, medium, review_due=false (under_budget) -> pending, reviewed together with T2. Old history kept on branch backup/feat-agent-before-split.
+- Delivery rule from now on: any dependency add goes in its own `chore(deps)` commit, so code slices stay reviewable.
 
 ## Next step
 T2.
