@@ -155,6 +155,46 @@ def _check_max_steps(max_steps) -> None:
         raise ValueError(f"max_steps must be an int >= 1, got {max_steps!r}")
 
 
+def find_dangling_tool_calls(messages) -> list[dict]:
+    """Tool calls (``{id, name}``) in ``messages`` that no ToolMessage answers, in order."""
+    answered = {m.tool_call_id for m in messages if isinstance(m, ToolMessage)}
+    dangling = []
+    for m in messages:
+        if not isinstance(m, AIMessage):
+            continue
+        for tc in [*(m.tool_calls or []), *(m.invalid_tool_calls or [])]:
+            if tc.get("id") and tc["id"] not in answered:
+                dangling.append({"id": tc["id"], "name": tc.get("name") or "unknown"})
+    return dangling
+
+
+async def close_dangling_tool_calls(graph, config, reason: str) -> None:
+    """Pair every unanswered tool call in the thread with an error ToolMessage.
+
+    A turn cut mid-flight (hard stop, timeout, error) leaves an AIMessage whose tool_calls
+    have no results; providers reject such a history, which would break the conversation for
+    good. Without a checkpointer there is no thread to repair.
+    """
+    if getattr(graph, "checkpointer", None) is None:
+        return
+    state = await graph.aget_state(config)
+    dangling = find_dangling_tool_calls((state.values or {}).get("messages", []))
+    if not dangling:
+        return
+    closing = [
+        ToolMessage(
+            content=f"cancelled: the turn stopped before this tool ran ({reason})",
+            tool_call_id=c["id"],
+            name=c["name"],
+            status="error",
+        )
+        for c in dangling
+    ]
+    # as_node="agent": the update is routed like a model reply, _route sees a ToolMessage
+    # last and goes to END, so the next turn starts cleanly at the agent.
+    await graph.aupdate_state(config, {"messages": closing}, as_node="agent")
+
+
 async def stream_events(
     graph,
     question: str,
@@ -183,12 +223,19 @@ async def stream_events(
     updates = graph.astream(
         {"messages": [HumanMessage(question)]}, config=config, stream_mode="updates"
     ).__aiter__()
+    failure: str | None = None  # set on every non-answer path; the thread is repaired below
     try:
         while True:
             left = None if deadline is None else max(deadline - time.monotonic(), 0)
             try:
                 update = await asyncio.wait_for(updates.__anext__(), left)
             except StopAsyncIteration:
+                break
+            except TimeoutError:
+                failure = (
+                    f"the turn took longer than {turn_timeout:g} s (the model provider "
+                    "may be overloaded); try again or switch --model"
+                )
                 break
             for node, delta in update.items():
                 for msg in (delta or {}).get("messages", []):
@@ -203,31 +250,27 @@ async def stream_events(
                             "content": msg.text,
                             "error": msg.status == "error",
                         }
-    except TimeoutError:  # whole turn ran out of time (wait_for cancels the stuck step)
-        yield {
-            "type": "error",
-            "message": f"the turn took longer than {turn_timeout:g} s (the model provider "
-            "may be overloaded); try again or switch --model",
-        }
-        return
     except GraphRecursionError:
-        yield {"type": "error", "message": _hard_stop(max_steps)}
-        return
+        failure = _hard_stop(max_steps)
     except ServerStoppedError as exc:
-        yield {"type": "error", "message": str(exc)}
-        return
+        failure = str(exc)
     except Exception as exc:  # model/provider failure: report it, never hang the stream
         dead = server_gone(exc)
         if dead is not None:
-            yield {"type": "error", "message": str(stopped_error(dead))}
+            failure = str(stopped_error(dead))
         else:
             reason = " ".join(str(exc).split()) or type(exc).__name__
-            yield {"type": "error", "message": f"model call failed: {reason}"}
+            failure = f"model call failed: {reason}"
+    if failure is None:
+        if last_agent is None:
+            failure = NO_ANSWER
+        elif getattr(last_agent, "tool_calls", None) or getattr(
+            last_agent, "invalid_tool_calls", None
+        ):
+            failure = _hard_stop(max_steps)
+    if failure is not None:
+        await close_dangling_tool_calls(graph, config, failure)
+        yield {"type": "error", "message": failure}
         return
-    if last_agent is None:
-        yield {"type": "error", "message": NO_ANSWER}
-    elif getattr(last_agent, "tool_calls", None) or getattr(last_agent, "invalid_tool_calls", None):
-        yield {"type": "error", "message": _hard_stop(max_steps)}
-    else:
-        text = last_agent.text
-        yield {"type": "answer", "text": text if text.strip() else NO_ANSWER}
+    text = last_agent.text
+    yield {"type": "answer", "text": text if text.strip() else NO_ANSWER}
