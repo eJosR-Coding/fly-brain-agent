@@ -22,7 +22,7 @@ The MCP server works from Claude Code, but the product needs its own agent so us
 
 ## Tasks
 - [x] T1 Agent graph: `build_graph(model, tools)` with the explicit loop, system prompt, `recursion_limit` hard stop. Unit tests with a fake model that emits tool_calls against fake tools. Route: delegated writer (2+ non-trivial files).
-- [ ] T2 MCP wiring + CLI: load tools from `flybrain-mcp` over stdio via `langchain-mcp-adapters`; `flybrain-chat` CLI using `init_chat_model`. Integration test: fake model calls `count_neurons` on the real MCP server with a tiny annotations TSV. Route: delegated writer.
+- [x] T2 MCP wiring + CLI: load tools from `flybrain-mcp` over stdio via `langchain-mcp-adapters`; `flybrain-chat` CLI using `init_chat_model`. Integration test: fake model calls `count_neurons` on the real MCP server with a tiny annotations TSV. Route: delegated writer.
 
 ## Acceptance criteria
 - `uv run pytest` green, no network, no API key.
@@ -43,5 +43,12 @@ The MCP server works from Claude Code, but the product needs its own agent so us
 - Fix (user-authorized history rewrite, 2026-11-10): regrouped commits so dependency changes live alone in 88c6894 (`chore(deps)`: pyproject + uv.lock + .gitattributes marking uv.lock generated). Generated lock is not reviewable under the lens budget; code is reviewed from base 88c6894. Code slice 88c6894..a4dac9b: 208 lines, medium, review_due=false (under_budget) -> pending, reviewed together with T2. Old history kept on branch backup/feat-agent-before-split.
 - Delivery rule from now on: any dependency add goes in its own `chore(deps)` commit, so code slices stay reviewable.
 
+- T2 deps commit: 2599d46 (`chore(deps)`). Versions: langchain-mcp-adapters 0.3.2, langchain 1.4.9, langchain-anthropic 1.7.10, mcp 1.30.0 (mcp<2 kept).
+- T2 RED: `tests/test_cli.py:3: E   ImportError: cannot import name 'cli' from 'flybrain'` (+ `flybrain.agent_mcp` missing; 2 collection errors).
+- T2 GREEN: `uv run pytest -q` -> 40 passed (36 + 4 new: 2 MCP integration, 2 CLI). `uv run flybrain-chat --help` -> exit 0. Without network/key the CLI prints a one-line friendly error, no traceback.
+- T2 code commit: dcb9254 (agent_mcp.py, cli.py, tests, README, `flybrain-chat` script).
+- Session finding: `.venv/.../langchain_mcp_adapters/client.py` `get_tools()` docstring: "A new session will be created for each tool call" (calls `load_mcp_tools(None, connection=...)`). Verified by hand: search_neurons ticket then list_selection via get_tools() -> `unknown selection ... known selections: none yet`. Fix: `client.session("flybrain")` (client.py) kept open + `load_mcp_tools(session)` (tools.py); one server process per conversation, tickets survive. Covered by `test_ticket_survives_across_tool_calls`.
+- Route: delegated writer (2+ non-trivial files).
+
 ## Next step
-T2.
+Review slice 88c6894..HEAD (code only), then T5 FastAPI.
