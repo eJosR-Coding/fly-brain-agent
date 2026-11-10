@@ -39,5 +39,7 @@ Mode: strict (source: global orchestrator config "Strict TDD Mode: enabled"). Ru
 - T3 RED: `uv run pytest -q` -> 3 collection errors (no flybrain.tools / selections / mcp_server) before implementation.
 - T3 GREEN: `uv run pytest -q` -> 30 passed. Dopamine search on real data: total 5909, JSON 1317 chars. `timeout 5 uv run flybrain-mcp </dev/null` -> exit 0. mcp pinned <2 (v2 renamed FastMCP to MCPServer).
 
+- T3: commit 6e09fd9 (feat/mcp-server). Parent re-ran pytest: 30 passed. Verified mcp 2.3.0 is latest on PyPI; pinned mcp<2 (1.30.0) because 2.x renamed FastMCP -> MCPServer. Revisit when adding LangGraph adapters.
+
 ## Next step
 T4 LangGraph agent.
