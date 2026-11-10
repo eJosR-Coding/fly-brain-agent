@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import type { Brain } from "./brainData";
 import { writeSelectionIndex } from "./highlight";
+import { scatterBrightness } from "./activity";
 import type { Theme } from "./theme";
 import { homeCamera, labelSpecs, placeLabels, screenBounds, type LabelPlacement, type Landmarks } from "./anatomy";
 import { buildRegionColors, regionPalette, hexToRgb, type Regions } from "./regions";
@@ -11,6 +12,10 @@ import { ntPalette, ntWeights, type Transmitters } from "./transmitters";
 export interface BrainScene {
   /** Light up these row indices on the highlight layer (replaces any previous one); null or [] clears. */
   setHighlight(indices: ArrayLike<number> | null): void;
+  /** Choose which points the activity layer draws (the recorded rows); null removes the layer and its dimming. */
+  setActivity(rows: Uint32Array | null): void;
+  /** Per-row brightness (0..1, aligned with the rows given to setActivity) for the current frame. */
+  setActivityFrame(values: Float32Array): void;
   /** Color the base points by region tone or by neurotransmitter tier. Ignored when that layer is unavailable. */
   setColorMode(mode: "regions" | "transmitters"): void;
   /** True when the transmitter layer loaded. */
@@ -157,15 +162,61 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
   });
   const hlPoints = new THREE.Points(hlGeometry, hlMaterial);
 
+  // Activity layer: the recorded rows only, additive, with a per-point brightness that changes every frame.
+  const brightness = new Float32Array(count);
+  const brightAttr = new THREE.BufferAttribute(brightness, 1);
+  brightAttr.setUsage(THREE.DynamicDrawUsage);
+  const actIndex = new THREE.BufferAttribute(new Uint32Array(count), 1);
+  actIndex.setUsage(THREE.DynamicDrawUsage);
+  const actGeometry = new THREE.BufferGeometry();
+  actGeometry.setAttribute("position", positions);
+  actGeometry.setAttribute("aBright", brightAttr);
+  actGeometry.setIndex(actIndex);
+  actGeometry.setDrawRange(0, 0);
+  const glow = dotTexture(true);
+  const actMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      uMap: { value: glow },
+      uSize: { value: baseSize * theme.activitySizeScale },
+      uScale: { value: 1 },
+      uOpacity: { value: theme.activityOpacity },
+    },
+    vertexShader: `
+      attribute float aBright;
+      uniform float uSize, uScale;
+      varying float vB;
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vB = aBright;
+        gl_PointSize = max(uSize * uScale * (0.45 + 0.9 * aBright) / max(-mv.z, 1e-4), 1.0);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform sampler2D uMap;
+      uniform float uOpacity;
+      varying float vB;
+      void main() {
+        float a = texture2D(uMap, gl_PointCoord).a * vB * uOpacity;
+        if (a < 0.01) discard;
+        gl_FragColor = vec4(vec3(1.0), a);
+        #include <colorspace_fragment>
+      }`,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const actPoints = new THREE.Points(actGeometry, actMaterial);
+
   // center the cloud on its bounding box; the wrapper flips y (FlyWire y grows downward)
   const flip = new THREE.Group();
   flip.scale.y = -1;
-  for (const pts of [basePoints, hlPoints]) {
+  for (const pts of [basePoints, hlPoints, actPoints]) {
     pts.frustumCulled = false;
     pts.position.set(-brain.center[0], -brain.center[1], -brain.center[2]);
     flip.add(pts);
   }
   hlPoints.renderOrder = 1; // after the base layer
+  actPoints.renderOrder = 2; // activity on top of everything
   scene.add(flip);
 
   // Anatomy context: labels are HTML projected each frame from landmark centroids.
@@ -247,6 +298,7 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
     const h = container.clientHeight || window.innerHeight;
     renderer.setSize(w, h);
     baseMaterial.uniforms.uScale.value = renderer.getDrawingBufferSize(new THREE.Vector2()).y / 2;
+    actMaterial.uniforms.uScale.value = baseMaterial.uniforms.uScale.value;
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
   };
@@ -273,6 +325,20 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
       hlGeometry.setDrawRange(0, n);
       indexAttr.needsUpdate = true;
     },
+    setActivity(rows) {
+      brightness.fill(0);
+      const n = rows ? Math.min(rows.length, count) : 0;
+      if (rows) (actIndex.array as Uint32Array).set(rows.subarray(0, n));
+      actGeometry.setDrawRange(0, n);
+      actIndex.needsUpdate = true;
+      brightAttr.needsUpdate = true;
+      baseMaterial.uniforms.uOpacity.value = theme.pointOpacity * (rows ? theme.activityDim : 1); // the wave stands out
+    },
+    setActivityFrame(values) {
+      const rows = actIndex.array as Uint32Array;
+      scatterBrightness(brightness, rows.subarray(0, actGeometry.drawRange.count), values);
+      brightAttr.needsUpdate = true;
+    },
     setColorMode(mode) {
       const useNt = mode === "transmitters" && ntColors !== null && ntSizes !== null;
       colorAttr.array.set(useNt ? ntColors! : regionColors);
@@ -295,6 +361,9 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
       controls.dispose();
       baseGeometry.dispose();
       hlGeometry.dispose();
+      actGeometry.dispose();
+      actMaterial.dispose();
+      glow.dispose();
       baseMaterial.dispose();
       dot.dispose();
       hlMaterial.dispose();

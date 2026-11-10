@@ -27,6 +27,11 @@
   --tone-other: #5c5c5c;
   --point-size-divisor: 420;
   --point-opacity: 0.55;
+  /* simulated activity wave: size/opacity of the additive layer, base cloud dimming, slow motion (0.4 = 1 s of brain in 2.5 s) */
+  --activity-size-scale: 6;
+  --activity-opacity: 0.95;
+  --activity-dim: 0.4;
+  --playback-speed: 0.4;
   /* depth cue: far points dimmer and smaller, near ones brighter and larger */
   --depth-gain-far: 0.4;
   --depth-gain-near: 1.3;
@@ -95,6 +100,23 @@ button, input { font-family: inherit; }
 .key-row span { min-width: 112px; }
 .key-row b { font-weight: 400; color: var(--dim); font-variant-numeric: tabular-nums; }
 .key-row { text-shadow: 0 0 4px #000, 0 0 8px #000; }
+
+/* activity timeline: sits above the legend; the color key moves up while it is visible */
+#timeline { position: fixed; left: var(--pad); bottom: 192px; display: flex; align-items: center; gap: 14px;
+  font: 400 12px/normal var(--font-mono); letter-spacing: 0.2px; color: var(--muted); }
+#timeline[hidden] { display: none; }
+#timeline .chip { min-width: 64px; }
+#tl-time { min-width: 14ch; font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap; }
+#tl-bar { -webkit-appearance: none; appearance: none; width: 220px; height: 16px; margin: 0; background: transparent; cursor: pointer; }
+#tl-bar::-webkit-slider-runnable-track { height: 2px; background: var(--line); }
+#tl-bar::-moz-range-track { height: 2px; background: var(--line); }
+#tl-bar::-webkit-slider-thumb { -webkit-appearance: none; width: 10px; height: 10px; margin-top: -4px; border-radius: 50%; background: var(--fg); border: 0; }
+#tl-bar::-moz-range-thumb { width: 10px; height: 10px; border-radius: 50%; background: var(--fg); border: 0; }
+#tl-bar:focus-visible { outline: 1px solid var(--fg); outline-offset: 4px; }
+#timeline.still #tl-bar, #timeline.still .chip { display: none; }
+body.has-activity #key { bottom: 232px; }
+.chip:disabled { opacity: .45; cursor: default; }
+.chip:disabled:hover { color: var(--muted); border-color: var(--line); }
 
 #views { position: fixed; left: var(--pad); bottom: 102px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 #chips { position: fixed; left: var(--pad); bottom: 56px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -172,6 +194,8 @@ button, input { font-family: inherit; }
   #status { display: none; }
   #legend { bottom: calc(45vh + 106px); left: 16px; }
   #key { display: none; }
+  #timeline { bottom: calc(45vh + 146px); left: 16px; }
+  #tl-bar { width: 120px; }
   #chips { bottom: calc(45vh + 12px); left: 16px; right: 16px; }
   #views { display: none; }
   #brand { left: 16px; }

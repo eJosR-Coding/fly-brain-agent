@@ -20,6 +20,11 @@
       <span class="legend-item"><i class="dot"></i><span>all neurons</span></span>
       <span class="legend-item" id="legend-selected"><i class="dot"></i><span id="legend-text"></span></span>
     </div>
+    <div id="timeline" hidden>
+      <button id="tl-play" type="button" class="chip" aria-label="pause the activity">pause</button>
+      <input id="tl-bar" type="range" min="0" max="100" value="0" step="1" aria-label="activity timeline" />
+      <span id="tl-time">t = 0 ms</span>
+    </div>
     <div id="views"></div>
     <div id="chips"></div>
     <dl id="status"></dl>
