@@ -18,6 +18,7 @@ function recorder() {
     onMeta: (id) => log.push(`meta:${id}`),
     onToolCall: (t) => log.push(`tool:${t}`),
     onHighlight: (p) => log.push(`hl:${p.total}`),
+    onActivity: (a) => log.push(`activity:${a.simulationId}:${a.nBins}x${a.binMs}`),
     onAnswer: (t) => log.push(`answer:${t}`),
     onError: (m) => log.push(`error:${m}`),
     onDone: () => log.push("done"),
@@ -130,5 +131,27 @@ describe("formatThinking", () => {
   it("never shows negative or non-finite time", () => {
     expect(formatThinking(-3)).toBe("agent is thinking · 0 s");
     expect(formatThinking(Number.NaN)).toBe("agent is thinking · 0 s");
+  });
+});
+
+describe("streamChat activity events", () => {
+  it("dispatches a valid activity event after the highlight", async () => {
+    const f = (async () =>
+      sseResponse([
+        'event: highlight\ndata: {"selection_id":"s","total":3,"indices":[1,2,3]}\n\n',
+        'event: activity\ndata: {"simulation_id":"sim_1","n_bins":100,"bin_ms":10}\n\nevent: done\ndata: {}\n\n',
+      ])) as unknown as typeof fetch;
+    const { log, h } = recorder();
+    await streamChat("x", null, h, f);
+    expect(log).toEqual(["hl:3", "activity:sim_1:100x10", "done"]);
+  });
+
+  it("reports an invalid activity event instead of playing it", async () => {
+    const f = (async () =>
+      sseResponse(['event: activity\ndata: {"simulation_id":"sim_1","n_bins":0,"bin_ms":10}\n\nevent: done\ndata: {}\n\n'])) as unknown as typeof fetch;
+    const { log, h } = recorder();
+    await streamChat("x", null, h, f);
+    expect(log[0]).toMatch(/^error:ignored an invalid activity event: n_bins/);
+    expect(log.at(-1)).toBe("done");
   });
 });

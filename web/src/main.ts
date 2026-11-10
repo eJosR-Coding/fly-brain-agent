@@ -8,6 +8,8 @@ import { Latest, runLatest } from "./latest";
 import { deriveStatus, legendView, parseHealth, versionLine, type Health } from "./status";
 import { readTheme } from "./theme";
 import { loadLandmarks, loadRegions, type Regions } from "./regions";
+import { activityLegend, formatSimulating, loadActivity, parseSimulation, type Activity } from "./activity";
+import { createPlayer, type Player } from "./player";
 import { greyHex, keyRows, loadNt, ntTier, type Transmitters } from "./transmitters";
 import type { Theme } from "./theme";
 
@@ -20,11 +22,17 @@ const CHIPS: { label: string; params: Record<string, string> | null }[] = [
   { label: "clear", params: null },
 ];
 
+/** The sugar experiment of the Shiu et al. 2024 example: 20 sugar-sensing neurons at 100 Hz, MN9 as readout. */
+const SUGAR_RUN = { preset: "sugar", readout_preset: "mn9", rate_hz: 100, duration_ms: 1000, trials: 3 };
+
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 let brainScene: BrainScene | null = null;
 let pointCount: number | null = null; // known once the brain is loaded
 let health: Health | null = null;
 let streaming = false;
+let player: Player | null = null;
+let simulating = false;
+let sugarChip: HTMLButtonElement | null = null;
 /** Shared by chips and chat: whichever selection was requested last wins. */
 const latest = new Latest();
 
@@ -35,6 +43,51 @@ export function highlight(indices: ArrayLike<number>): void {
 
 export function clearAll(): void {
   brainScene?.setHighlight(null);
+  player?.clear();
+}
+
+/** Legend line while an activity wave is showing (lit dot, like a selection). */
+function renderActivityLegend(text: string): void {
+  $("legend-text").textContent = text;
+  $("legend-selected").classList.add("on");
+}
+
+function showActivity(a: Activity, text: string): void {
+  player?.load(a);
+  setActiveChip(null);
+  renderActivityLegend(text);
+}
+
+/** "give sugar": POST /api/simulate (no LLM), then fetch the frames and play them. */
+async function giveSugar(): Promise<void> {
+  if (simulating || !player) return;
+  simulating = true;
+  if (sugarChip) sugarChip.disabled = true;
+  latest.invalidate(); // a search finishing later must not replace the wave
+  const started = performance.now();
+  const pending = () => renderLegend(null, formatSimulating(SUGAR_RUN.duration_ms, (performance.now() - started) / 1000));
+  pending();
+  const tick = window.setInterval(pending, 1000);
+  try {
+    const res = await fetch("/api/simulate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(SUGAR_RUN),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(typeof body.detail === "string" ? body.detail : `HTTP ${res.status}`);
+    const sim = parseSimulation(body);
+    if (typeof sim === "string") throw new Error(`unexpected simulation answer: ${sim}`);
+    const activity = await loadActivity(sim.simulationId);
+    showActivity(activity, activityLegend(sim.active, sim.readoutHz === null ? null : { label: "MN9", hz: sim.readoutHz }));
+    setActiveChip("give sugar");
+  } catch (e) {
+    renderLegend(null, `simulation failed: ${(e as Error).message}`);
+  } finally {
+    window.clearInterval(tick);
+    simulating = false;
+    if (sugarChip) sugarChip.disabled = health?.simulation === false;
+  }
 }
 
 /** Resolve a highlight payload to row indices (inline, or fetched as binary). */
@@ -74,6 +127,13 @@ function renderStatus(modelEl: HTMLElement): void {
 }
 
 function setupChips(): void {
+  const sugar = document.createElement("button");
+  sugar.className = "chip";
+  sugar.textContent = "give sugar";
+  sugar.title = "simulate 1 s of the fly tasting sugar (Shiu et al. 2024 model): 20 sugar-sensing neurons at 100 Hz, MN9 read out";
+  sugar.addEventListener("click", () => void giveSugar());
+  sugarChip = sugar;
+  $("chips").appendChild(sugar);
   for (const chip of CHIPS) {
     const b = document.createElement("button");
     b.className = "chip";
@@ -182,6 +242,10 @@ async function boot(): Promise<void> {
         setActiveChip(null);
         renderLegend(p.total);
       }).then(() => undefined),
+    onActivity: async (a) => {
+      const activity = await loadActivity(a.simulationId);
+      showActivity(activity, activityLegend(activity.nRows, null));
+    },
     getPointCount: () => pointCount,
     onStreaming: (s) => {
       streaming = s;
@@ -189,7 +253,13 @@ async function boot(): Promise<void> {
     },
   });
   renderStatus(chat.model);
-  void loadHealth().then(() => renderStatus(chat.model));
+  void loadHealth().then(() => {
+    renderStatus(chat.model);
+    if (sugarChip && health?.simulation === false) {
+      sugarChip.disabled = true;
+      sugarChip.title = "the simulator is not set up on this server (run flybrain-build-sim-weights)";
+    }
+  });
   try {
     const brain = await loadBrain();
     pointCount = brain.meta.count;
@@ -203,6 +273,12 @@ async function boot(): Promise<void> {
     ]);
     const ok = <T,>(r: PromiseSettledResult<T>) => (r.status === "fulfilled" ? r.value : undefined);
     brainScene = createScene($("stage"), brain, theme, { regions: ok(regions), landmarks: ok(landmarks), nt: ok(nt) });
+    player = createPlayer({
+      scene: brainScene,
+      root: $("timeline"),
+      reducedMotion: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true,
+      speed: theme.playbackSpeed,
+    });
     setupViewChips(brainScene, theme, ok(regions), ok(nt));
     $("version").textContent = versionLine(brain.meta.count);
   } catch (e) {

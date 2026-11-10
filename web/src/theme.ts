@@ -18,6 +18,12 @@ export interface Theme {
   /** auto-orbit speed (OrbitControls units; 2 = one turn per 30 s) and the pause after the user lets go (ms) */
   orbitSpeed: number;
   orbitResumeMs: number;
+  /** activity layer: point size multiplier, opacity, and how much the base cloud dims while it plays */
+  activitySizeScale: number;
+  activityOpacity: number;
+  activityDim: number;
+  /** simulated ms per real ms (below 1 = slow motion) */
+  playbackSpeed: number;
   /** base point tone per region name (central, optic, sensory, other) */
   tones: Record<string, string>;
 }
@@ -25,6 +31,7 @@ export interface Theme {
 const FALLBACK = {
   bg: "#000000", base: "#6b6b6b", hl: "#ffffff", div: "450", opacity: "0.6",
   hlScale: "2.5", hlOpacity: "0.9", depthGainFar: "0.4", depthGainNear: "1.3", depthSizeFar: "0.8", depthSizeNear: "1.3", orbitSpeed: "0.6", orbitResumeMs: "4000",
+  activitySize: "3", activityOpacity: "0.95", activityDim: "0.55", playbackSpeed: "0.4",
   toneCentral: "#d6d6d6", toneOptic: "#8c8c8c", toneSensory: "#a9bccd", toneOther: "#5e5e5e",
 };
 
@@ -50,6 +57,10 @@ export function readTheme(): Theme {
     depthSizeNear: Number(cssVar("--depth-size-near", FALLBACK.depthSizeNear)),
     orbitSpeed: Number(cssVar("--orbit-speed", FALLBACK.orbitSpeed)),
     orbitResumeMs: Number(cssVar("--orbit-resume-ms", FALLBACK.orbitResumeMs)),
+    activitySizeScale: Number(cssVar("--activity-size-scale", FALLBACK.activitySize)),
+    activityOpacity: Number(cssVar("--activity-opacity", FALLBACK.activityOpacity)),
+    activityDim: Number(cssVar("--activity-dim", FALLBACK.activityDim)),
+    playbackSpeed: Number(cssVar("--playback-speed", FALLBACK.playbackSpeed)),
     tones: {
       central: cssVar("--tone-central", FALLBACK.toneCentral),
       optic: cssVar("--tone-optic", FALLBACK.toneOptic),

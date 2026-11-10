@@ -8,6 +8,11 @@ describe("parseHealth", () => {
   it("accepts the /health contract", () => {
     expect(parseHealth(ON)).toEqual(ON);
   });
+  it("passes the simulation flag through when the backend sends it", () => {
+    expect(parseHealth({ ...ON, simulation: true })).toEqual({ ...ON, simulation: true });
+    expect(parseHealth({ ...ON, simulation: false })?.simulation).toBe(false);
+    expect(parseHealth({ ...ON, simulation: "yes" })).toBeNull();
+  });
   it("rejects anything else", () => {
     expect(parseHealth(null)).toBeNull();
     expect(parseHealth({ status: "ok", neurons: 3 })).toBeNull();

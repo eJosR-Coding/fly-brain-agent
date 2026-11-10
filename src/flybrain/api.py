@@ -5,6 +5,7 @@ agent reaches it over an in-memory MCP session, so the agent still only talks to
 through MCP while the API shares the SAME SelectionStore (ticket -> root_ids -> rows).
 """
 
+import asyncio
 import json
 import math
 import os
@@ -22,7 +23,7 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from langchain_mcp_adapters.tools import load_mcp_tools
 from langgraph.checkpoint.memory import InMemorySaver
 from mcp.shared.memory import create_connected_server_and_client_session
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, ConfigDict, StrictInt, StringConstraints
 
 from flybrain.agent import MAX_STEPS, build_graph, stream_events
 from flybrain.agent_mcp import SERVER_NAME
@@ -30,7 +31,8 @@ from flybrain.anatomy import NT_CODES, REGION_CODES, landmarks, nt_codes, region
 from flybrain.atlas import RowIndex, load_atlas
 from flybrain.mcp_server import DEFAULT_ANNOTATIONS, build_server, load_connectome
 from flybrain.selections import SelectionStore, UnknownSelectionError
-from flybrain.tools import search_neurons
+from flybrain.sim_service import SimulationService, SimulationUnavailable, UnknownSimulationError
+from flybrain.tools import load_presets, preset_selection, search_neurons, stimulate
 
 BYTES_PER_POINT = 12  # 3 x float32
 MAX_MESSAGE_CHARS = 2000
@@ -43,6 +45,20 @@ DEFAULT_CORS = "http://localhost:5173"  # Vite dev server
 class ChatRequest(BaseModel):
     message: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_MESSAGE_CHARS)]
     conversation_id: Annotated[str, StringConstraints(strip_whitespace=True, max_length=100)] | None = None
+
+
+class SimulateRequest(BaseModel):
+    """No-LLM simulation for the viewer chips: a preset or a ticket, plus optional readout/silence."""
+
+    model_config = ConfigDict(extra="forbid")
+    preset: str | None = None
+    selection_id: str | None = None
+    rate_hz: float = 100
+    duration_ms: float = 500
+    trials: StrictInt = 3
+    readout_preset: str | None = None
+    readout_selection_id: str | None = None
+    silence_selection_id: str | None = None
 
 
 def _short(value):
@@ -89,6 +105,7 @@ def create_app(
     turn_timeout: float | None = None,
     model_name: str | None = None,
     connectome_path=None,
+    simulation: SimulationService | None = None,
 ) -> FastAPI:
     """Build the app. ``model`` is a LangChain chat model; without one /chat reports an error.
 
@@ -110,10 +127,14 @@ def create_app(
         app.state.landmarks = landmarks(atlas)
         app.state.graph = None
         app.state.connectome = load_connectome(atlas, connectome_path)  # optional: None if not built
+        # the simulator loads lazily on the first run; only its presence is checked here
+        app.state.sims = simulation if simulation is not None else SimulationService.default(atlas)
         async with AsyncExitStack() as stack:
             if model is not None:
                 session = await stack.enter_async_context(
-                    create_connected_server_and_client_session(build_server(atlas, store, app.state.connectome))
+                    create_connected_server_and_client_session(
+                        build_server(atlas, store, app.state.connectome, app.state.sims)
+                    )
                 )
                 tools = await load_mcp_tools(session, server_name=SERVER_NAME)
                 app.state.graph = build_graph(model, tools, checkpointer=InMemorySaver())
@@ -138,6 +159,7 @@ def create_app(
             "model": model_name if chat_on else None,
             "connectome": app.state.connectome is not None,
             "connectome_edges": app.state.connectome.n_edges if app.state.connectome is not None else None,
+            "simulation": app.state.sims.available,
         }
 
     @app.get("/brain/meta")
@@ -198,6 +220,62 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(exc)) from None
         return Response(rows.tobytes(), media_type="application/octet-stream")
 
+    def _record(simulation_id: str):
+        try:
+            return app.state.sims.get(simulation_id)
+        except UnknownSimulationError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+
+    @app.get("/simulations/{simulation_id}")
+    def simulation_meta(simulation_id: str):
+        rec = _record(simulation_id)
+        return {"simulation_id": rec.id, "bin_ms": rec.bin_ms, "n_bins": rec.n_bins, "n_rows": rec.n_rows,
+                "duration_ms": rec.duration_ms, "stimulus": rec.stimulus, "trials": rec.trials}
+
+    @app.get("/simulations/{simulation_id}/frames")
+    def simulation_frames(simulation_id: str):
+        """uint32 LE atlas rows (n_rows), then uint8 spike counts (n_rows * n_bins, row-major)."""
+        rec = _record(simulation_id)
+        return Response(rec.rows.astype("<u4").tobytes() + rec.frames.tobytes(), media_type="application/octet-stream")
+
+    def _ticket(preset: str | None, selection_id: str | None, what: str) -> str | None:
+        if preset is not None and selection_id is not None:
+            raise HTTPException(status_code=422, detail=f"give either {what}preset or {what}selection_id, not both")
+        if preset is None:
+            return selection_id
+        res = preset_selection(app.state.atlas, app.state.store, preset)
+        if res["selection_id"] is None:
+            raise HTTPException(status_code=422, detail=res["hint"])
+        return res["selection_id"]
+
+    @app.post("/simulate")
+    async def simulate(req: SimulateRequest):
+        """Same summary as the stimulate tool, without an LLM. Runs in a thread (it takes seconds)."""
+        if req.preset is None and req.selection_id is None:
+            raise HTTPException(status_code=422, detail="give a preset or a selection_id")
+        if not app.state.sims.available:
+            raise HTTPException(status_code=503, detail=_unavailable_message())
+        try:
+            sid = _ticket(req.preset, req.selection_id, "")
+            readout = _ticket(req.readout_preset, req.readout_selection_id, "readout_")
+            return await asyncio.to_thread(
+                stimulate, app.state.atlas, app.state.store, app.state.sims, sid, req.rate_hz,
+                req.duration_ms, req.trials, req.silence_selection_id, readout,
+            )
+        except SimulationUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+        except UnknownSelectionError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    def _unavailable_message() -> str:
+        try:
+            app.state.sims.simulation()
+        except SimulationUnavailable as exc:
+            return str(exc)
+        return "simulation unavailable"
+
     @app.get("/neurons/search")
     def neurons_search(cell_type: str | None = None, nt: str | None = None,
                        super_class: str | None = None, side: str | None = None):
@@ -239,6 +317,18 @@ def create_app(
             payload["indices"] = rows.tolist()
         return _sse("highlight", payload)
 
+    def _activity(content: str) -> ServerSentEvent | None:
+        """A tool result carrying a simulation_id also becomes an activity event (the animation)."""
+        try:
+            data = json.loads(content)
+            sim_id = data.get("simulation_id") if isinstance(data, dict) else None
+            rec = app.state.sims.get(sim_id) if isinstance(sim_id, str) else None
+        except (ValueError, UnknownSimulationError):
+            return None
+        if rec is None:
+            return None
+        return _sse("activity", {"simulation_id": rec.id, "n_bins": rec.n_bins, "bin_ms": rec.bin_ms})
+
     @app.post("/chat", response_class=EventSourceResponse)
     async def chat(req: ChatRequest) -> AsyncIterable[ServerSentEvent]:
         conversation_id = req.conversation_id or uuid.uuid4().hex
@@ -261,6 +351,9 @@ def create_app(
                         hl = None if ev["error"] else _highlight(ev["content"], seen)
                         if hl is not None:
                             yield hl
+                        act = None if ev["error"] else _activity(ev["content"])
+                        if act is not None:
+                            yield act
                     elif ev["type"] == "answer":
                         yield _sse("answer", {"text": ev["text"]})
                     else:

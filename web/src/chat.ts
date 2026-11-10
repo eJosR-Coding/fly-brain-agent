@@ -1,3 +1,4 @@
+import { parseActivityEvent, type ActivityEvent } from "./activity";
 import { parseSSE } from "./sse";
 
 export interface HighlightPayload {
@@ -11,6 +12,7 @@ export interface ChatHandlers {
   onMeta(conversationId: string): void;
   onToolCall(tool: string, args: unknown): void;
   onHighlight(p: HighlightPayload): void;
+  onActivity(a: ActivityEvent): void;
   onAnswer(text: string): void;
   onError(message: string): void;
   onDone(): void;
@@ -97,6 +99,12 @@ export async function streamChat(
           else h.onHighlight(p);
           break;
         }
+        case "activity": {
+          const a = parseActivityEvent(d);
+          if (typeof a === "string") h.onError(`ignored an invalid activity event: ${a}`);
+          else h.onActivity(a);
+          break;
+        }
         case "answer": h.onAnswer(String(d.text)); break;
         case "error": h.onError(String(d.message)); break;
         case "done": finish(); break;
@@ -114,6 +122,8 @@ const ARROW_UP = "M6.357 2.184q-.079 .012-.146 .06-.063 .044-2.012 1.993l-1.546 
 
 export interface ChatOptions {
   onHighlight: (p: HighlightPayload) => Promise<void> | void;
+  /** a simulation finished during the turn: fetch and play its activity */
+  onActivity?: (a: ActivityEvent) => Promise<void> | void;
   getPointCount?: () => number | null;
   /** true while an SSE turn is running */
   onStreaming?: (streaming: boolean) => void;
@@ -121,7 +131,7 @@ export interface ChatOptions {
 
 /** DOM wiring for the chat panel. Returns the element that shows the model label. */
 export function mountChat(root: HTMLElement, opts: ChatOptions): { model: HTMLElement } {
-  const { onHighlight, getPointCount = () => null, onStreaming = () => undefined } = opts;
+  const { onHighlight, onActivity = () => undefined, getPointCount = () => null, onStreaming = () => undefined } = opts;
   root.innerHTML =
     '<header id="chat-head"><span id="agent-label">agent</span><span id="model"></span></header>' +
     '<div id="log" role="log" aria-live="polite" aria-label="conversation"></div>' +
@@ -195,6 +205,17 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): { model: HTMLEl
         sel.textContent = p.selection_id;
         el.append(lit, sel);
         void Promise.resolve(onHighlight(p)).catch((err) => add("error", `highlight failed: ${(err as Error).message}`));
+      },
+      onActivity: (a) => {
+        settle();
+        const el = add("hl", "");
+        const wave = document.createElement("span");
+        wave.textContent = `\u25B6 activity \u00b7 ${(a.nBins * a.binMs) / 1000} s simulated`;
+        const sel = document.createElement("span");
+        sel.className = "sel";
+        sel.textContent = a.simulationId;
+        el.append(wave, sel);
+        void Promise.resolve(onActivity(a)).catch((err) => add("error", `activity failed: ${(err as Error).message}`));
       },
       onAnswer: (t) => { settle(); add("answer", t); },
       onError: (m) => { settle(); add("error", m); },

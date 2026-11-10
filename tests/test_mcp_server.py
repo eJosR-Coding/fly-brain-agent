@@ -9,7 +9,7 @@ def test_server_lists_the_tools(tiny_atlas):
     names = {t.name for t in asyncio.run(server.list_tools())}
     assert names == {
         "search_neurons", "count_neurons", "describe_neuron", "list_selection",
-        "neighbors", "find_path", "lesion_effect", "top_hubs",
+        "neighbors", "find_path", "lesion_effect", "top_hubs", "preset_selection", "stimulate",
     }
 
 

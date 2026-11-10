@@ -5,6 +5,8 @@ export interface Health {
   neurons: number;
   chat: boolean;
   model: string | null;
+  /** the whole-brain simulator can run (older backends do not send it) */
+  simulation?: boolean;
 }
 
 export interface StatusRow {
@@ -26,7 +28,10 @@ export function parseHealth(d: unknown): Health | null {
   if (typeof h.status !== "string" || typeof h.neurons !== "number") return null;
   if (typeof h.chat !== "boolean") return null;
   if (h.model !== null && typeof h.model !== "string") return null;
-  return { status: h.status, neurons: h.neurons, chat: h.chat, model: h.model };
+  if (h.simulation !== undefined && typeof h.simulation !== "boolean") return null;
+  const out: Health = { status: h.status, neurons: h.neurons, chat: h.chat, model: h.model };
+  if (h.simulation !== undefined) out.simulation = h.simulation;
+  return out;
 }
 
 /**

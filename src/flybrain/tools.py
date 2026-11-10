@@ -1,5 +1,10 @@
 """Tool functions: small JSON-friendly outputs only. No MCP imports here."""
 
+import json
+import math
+import time
+from importlib import resources
+
 import numpy as np
 
 from flybrain.atlas import Atlas, RowIndex, clean_filter
@@ -369,3 +374,126 @@ def top_hubs(
     for item, r in zip(out["hubs"], rows):
         item["super_class"] = _text(super_classes[int(r)])
     return _finish(out, notes, conn)
+
+
+# --- level 1: presets and the LIF simulator -----------------------------------------------
+
+MAX_RATE_HZ, MIN_RATE_HZ = 300.0, 1.0
+MIN_DURATION_MS, MAX_DURATION_MS = 100.0, 1000.0
+MAX_TRIALS = 10
+ACTIVE_HZ = 1.0  # a neuron counts as active above this mean rate
+TOP_RESPONDERS = 10
+READOUT_TOP = 5
+SIM_BINS = 100  # time bins per recording (the simulator caps at 200)
+SIM_NOTE = (
+    "LIF model with the Shiu et al. 2024 parameters (validated against their code); not the living "
+    "fly: no neuromodulation, plasticity or nerve cord."
+)
+
+
+def load_presets() -> dict:
+    """Named neuron sets with their source (src/flybrain/data/presets.json, package data)."""
+    text = resources.files("flybrain").joinpath("data/presets.json").read_text(encoding="utf-8")
+    return json.loads(text)["presets"]
+
+
+def preset_selection(atlas: Atlas, store: SelectionStore, name, presets: dict | None = None) -> dict:
+    """A ticket for a published, named neuron set (e.g. the sugar-sensing neurons)."""
+    presets = load_presets() if presets is None else presets
+    if not isinstance(name, str):
+        raise TypeError(f"name must be a string, got {type(name).__name__}")
+    key = name.strip().lower()
+    available = sorted(presets)
+    if key not in presets:
+        return {"selection_id": None, "name": name, "available": available,
+                "hint": f"Unknown preset {name!r}. Available presets: {', '.join(available)}."}
+    preset = presets[key]
+    rows = _row_index(atlas).positions(preset["root_ids"])
+    found = rows[rows >= 0]
+    out = {"name": key, "description": preset["description"], "source": preset["source"],
+           "total": int(len(found)), "missing": int(len(rows) - len(found)), "selection_id": None}
+    if not len(found):
+        out["hint"] = f"None of its {len(rows)} neurons exists in this atlas."
+        return out
+    out["selection_id"] = _ticket(atlas, store, found, f"preset {key}", f"preset_selection(name={key!r})")
+    out["by_super_class"] = _summaries(atlas, found)["by_super_class"]
+    out["by_cell_type"] = _summaries(atlas, found)["by_cell_type"]
+    return out
+
+
+def _number(name: str, value) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise TypeError(f"{name} must be a finite number, got {value!r}")
+    return float(value)
+
+
+def _group(atlas: Atlas, rates: np.ndarray, rows: np.ndarray) -> dict:
+    """Readout of a neuron group: mean/max rate and the most active few."""
+    r = rates[rows]
+    order = np.argsort(-r, kind="stable")[:READOUT_TOP]
+    top = [{"root_id": item["root_id"], "cell_type": item["cell_type"], "rate_hz": round(float(r[i]), 1)}
+           for item, i in zip(_label(atlas, rows[order]), order)]
+    return {"neurons": int(len(rows)), "mean_hz": round(float(r.mean()), 1), "max_hz": round(float(r.max()), 1),
+            "top": top}
+
+
+def stimulate(
+    atlas: Atlas, store: SelectionStore, sims, selection_id, rate_hz=100, duration_ms=500, trials=3,
+    silence_selection_id=None, readout_selection_id=None, seed: int = 0,
+) -> dict:
+    """Poisson-drive a selection in the whole-brain LIF model; return a small activity summary."""
+    notes: list[str] = []
+    rate = _clamp("rate_hz", _number("rate_hz", rate_hz), MIN_RATE_HZ, MAX_RATE_HZ, notes)
+    duration = round(_clamp("duration_ms", _number("duration_ms", duration_ms), MIN_DURATION_MS, MAX_DURATION_MS, notes), 1)
+    n_trials = _clamp("trials", _int("trials", trials), 1, MAX_TRIALS, notes)
+    stim = _selection_rows(atlas, store, selection_id)
+    silence = _selection_rows(atlas, store, silence_selection_id) if silence_selection_id is not None else None
+    readout = _selection_rows(atlas, store, readout_selection_id) if readout_selection_id is not None else None
+    bin_ms = max(1.0, math.ceil(duration / SIM_BINS * 10) / 10)
+
+    t0 = time.perf_counter()
+    with sims.exclusive():
+        sim = sims.simulation()  # lazy load; SimulationUnavailable says what to download/build
+        res = sim.run(stim, rate, duration, n_trials, seed=seed, silence_rows=silence, bin_ms=bin_ms)
+        base = sim.run(stim, rate, duration, n_trials, seed=seed) if silence is not None else None
+    runtime = time.perf_counter() - t0
+
+    rates = res.rate_hz
+    active = np.flatnonzero(rates > ACTIVE_HZ)
+    order = active[np.argsort(-rates[active], kind="stable")][:TOP_RESPONDERS]
+    super_classes = atlas.neurons["super_class"].to_numpy()
+    top = [{**item, "super_class": _text(super_classes[int(r)]), "rate_hz": round(float(rates[r]), 1)}
+           for item, r in zip(_label(atlas, order), order)]
+    out = {
+        "stimulus": {"neurons": int(len(stim)), "rate_hz": rate, "duration_ms": duration, "trials": n_trials},
+        "active_neurons": int(len(active)),
+        "top_responders": top,
+        "selection_id": None,
+    }
+    if len(active):
+        out["selection_id"] = _ticket(
+            atlas, store, active, f"neurons above {ACTIVE_HZ:g} Hz after stimulating {selection_id}",
+            f"stimulate(selection_id={selection_id!r}, rate_hz={rate:g}, duration_ms={duration:g}, trials={n_trials})",
+        )
+    else:
+        out["hint"] = "No neuron fired above 1 Hz. Raise rate_hz or stimulate more neurons."
+    if readout is not None:
+        out["readout"] = _group(atlas, rates, readout)
+    if base is not None:
+        out["silenced_neurons"] = int(len(silence))
+        out["baseline"] = {"active_neurons": int((base.rate_hz > ACTIVE_HZ).sum())}
+        if readout is not None:
+            before = float(base.rate_hz[readout].mean())
+            after = float(rates[readout].mean())
+            out["baseline"]["readout_mean_hz"] = round(before, 1)
+            out["readout_change"] = {
+                "baseline_mean_hz": round(before, 1), "silenced_mean_hz": round(after, 1),
+                "change_hz": round(after - before, 1),
+                "change_pct": round(100 * (after - before) / before, 1) if before else None,
+            }
+        notes.append("silencing runs a baseline too, so it costs 2x the runtime (same random seed for both)")
+    frames = np.minimum(res.frames, 255).astype(np.uint8)
+    out["simulation_id"] = sims.add(res.active_rows, frames, bin_ms, duration, n_trials, out["stimulus"])
+    out["runtime_s"] = round(runtime, 1)
+    out["note"] = "; ".join([*notes, SIM_NOTE])
+    return out
