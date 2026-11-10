@@ -164,7 +164,7 @@ def create_app(
             result = search_neurons(
                 app.state.atlas, app.state.store, cell_type=cell_type, nt=nt, super_class=super_class, side=side
             )
-        except (ValueError, TypeError) as exc:
+        except ValueError as exc:  # filter validation; a TypeError here is a bug -> 500
             raise HTTPException(status_code=422, detail=str(exc)) from None
         body = {k: result[k] for k in ("selection_id", "total", "filters", "note", "hint") if k in result}
         sid = result["selection_id"]
