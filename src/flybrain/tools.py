@@ -136,10 +136,13 @@ def list_selection(
 
 MAX_PARTNERS = 50  # neighbors / top_hubs never list more than this
 MAX_HOPS = 12
+MAX_ALTERNATIVES = 3
+MAX_PATH_COUNT = 1_000_000  # shortest_path_count is reported up to this and flagged beyond
 SUMMARY_GROUPS = 6
 STRUCTURAL = (
     "Structural connections only (>= {n} synapses between a neuron pair, summed over "
-    "neuropils); this is wiring, not signal flow, sign or function."
+    "neuropils); this is wiring, not signal flow, sign or function. Strength = synapse count, "
+    "a proxy for connection weight, not sign or efficacy."
 )
 _ROW_INDEX_CACHE: dict[int, tuple[Atlas, RowIndex]] = {}
 
@@ -246,16 +249,22 @@ def neighbors(
     return _finish(out, notes, conn)
 
 
+def _chain(atlas: Atlas, rows) -> str:
+    """'A > B > C' of cell types (root_id where a neuron has none): a compact route label."""
+    n = atlas.neurons
+    return " > ".join(_text(n["cell_type"].iat[int(r)]) or str(int(n["root_id"].iat[int(r)])) for r in rows)
+
+
 def find_path(
     atlas: Atlas, store: SelectionStore, conn, from_selection, to_selection, max_hops=8
 ) -> dict:
-    """One shortest directed structural path from any neuron of one selection to any of another."""
+    """The strongest of the shortest directed structural paths between two selections."""
     conn = _need_connectome(conn)
     notes: list[str] = []
     max_hops = _clamp("max_hops", _int("max_hops", max_hops), 1, MAX_HOPS, notes)
     src = _selection_rows(atlas, store, from_selection)
     tgt = _selection_rows(atlas, store, to_selection)
-    found = conn.shortest_path(src, tgt, max_hops)
+    found = conn.strongest_paths(src, tgt, max_hops, MAX_ALTERNATIVES)
     out = {"found": found is not None, "from_neurons": int(len(src)), "to_neurons": int(len(tgt)),
            "max_hops": max_hops, "selection_id": None}
     if found is None:
@@ -264,13 +273,24 @@ def find_path(
             "swap from/to (paths are directed), or widen the groups."
         )
         return _finish(out, notes, conn)
-    hops, path = found
-    out["hops"] = hops
+    path = found["path"]
+    out["hops"] = found["hops"]
     labelled = _label(atlas, path)
     n = atlas.neurons
-    for item, r in zip(labelled, path):
+    for i, (item, r) in enumerate(zip(labelled, path)):
         item["super_class"] = _text(n["super_class"].iat[r])
+        item["synapses_from_previous"] = found["hop_synapses"][i - 1] if i else None
     out["path"] = labelled
+    out["min_hop_synapses"] = found["min_hop_synapses"]
+    out["total_synapses"] = found["total_synapses"]
+    count = found["path_count"]
+    out["shortest_path_count"] = min(count, MAX_PATH_COUNT)
+    if count >= MAX_PATH_COUNT:
+        out["shortest_path_count_capped"] = True
+    out["alternative_routes"] = [
+        {"chain": _chain(atlas, alt["path"]), "min_hop_synapses": alt["min_hop_synapses"]}
+        for alt in found["alternatives"]
+    ]
     out["selection_id"] = _ticket(
         atlas, store, path, f"path {from_selection} -> {to_selection}",
         f"find_path(from_selection={from_selection!r}, to_selection={to_selection!r}, max_hops={max_hops})",
