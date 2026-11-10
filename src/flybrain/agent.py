@@ -224,55 +224,74 @@ async def stream_events(
         {"messages": [HumanMessage(question)]}, config=config, stream_mode="updates"
     ).__aiter__()
     failure: str | None = None  # set on every non-answer path; the thread is repaired below
+    answered = False
     try:
-        while True:
-            left = None if deadline is None else max(deadline - time.monotonic(), 0)
-            try:
-                update = await asyncio.wait_for(updates.__anext__(), left)
-            except StopAsyncIteration:
-                break
-            except TimeoutError:
-                if deadline is None or time.monotonic() < deadline:
-                    raise  # raised by a tool/provider itself, not our deadline: ordinary failure
-                failure = (
-                    f"the turn took longer than {turn_timeout:g} s (the model provider "
-                    "may be overloaded); try again or switch --model"
-                )
-                break
-            for node, delta in update.items():
-                for msg in (delta or {}).get("messages", []):
-                    if node == "agent":
-                        last_agent = msg
-                        for tc in getattr(msg, "tool_calls", None) or []:
-                            yield {"type": "tool_call", "tool": tc["name"], "args": tc["args"]}
-                    elif isinstance(msg, ToolMessage):
-                        yield {
-                            "type": "tool_result",
-                            "tool": msg.name,
-                            "content": msg.text,
-                            "error": msg.status == "error",
-                        }
-    except GraphRecursionError:
-        failure = _hard_stop(max_steps)
-    except ServerStoppedError as exc:
-        failure = str(exc)
-    except Exception as exc:  # model/provider failure: report it, never hang the stream
-        dead = server_gone(exc)
-        if dead is not None:
-            failure = str(stopped_error(dead))
-        else:
-            reason = " ".join(str(exc).split()) or type(exc).__name__
-            failure = f"model call failed: {reason}"
-    if failure is None:
-        if last_agent is None:
-            failure = NO_ANSWER
-        elif getattr(last_agent, "tool_calls", None) or getattr(
-            last_agent, "invalid_tool_calls", None
-        ):
+        try:
+            while True:
+                left = None if deadline is None else max(deadline - time.monotonic(), 0)
+                try:
+                    update = await asyncio.wait_for(updates.__anext__(), left)
+                except StopAsyncIteration:
+                    break
+                except TimeoutError:
+                    if deadline is None or time.monotonic() < deadline:
+                        raise  # raised by a tool/provider itself, not our deadline: ordinary failure
+                    failure = (
+                        f"the turn took longer than {turn_timeout:g} s (the model provider "
+                        "may be overloaded); try again or switch --model"
+                    )
+                    break
+                for node, delta in update.items():
+                    for msg in (delta or {}).get("messages", []):
+                        if node == "agent":
+                            last_agent = msg
+                            for tc in getattr(msg, "tool_calls", None) or []:
+                                yield {"type": "tool_call", "tool": tc["name"], "args": tc["args"]}
+                        elif isinstance(msg, ToolMessage):
+                            yield {
+                                "type": "tool_result",
+                                "tool": msg.name,
+                                "content": msg.text,
+                                "error": msg.status == "error",
+                            }
+        except GraphRecursionError:
             failure = _hard_stop(max_steps)
-    if failure is not None:
-        await close_dangling_tool_calls(graph, config, failure)
-        yield {"type": "error", "message": failure}
-        return
-    text = last_agent.text
-    yield {"type": "answer", "text": text if text.strip() else NO_ANSWER}
+        except ServerStoppedError as exc:
+            failure = str(exc)
+        except Exception as exc:  # model/provider failure: report it, never hang the stream
+            dead = server_gone(exc)
+            if dead is not None:
+                failure = str(stopped_error(dead))
+            else:
+                reason = " ".join(str(exc).split()) or type(exc).__name__
+                failure = f"model call failed: {reason}"
+        if failure is None:
+            if last_agent is None:
+                failure = NO_ANSWER
+            elif getattr(last_agent, "tool_calls", None) or getattr(
+                last_agent, "invalid_tool_calls", None
+            ):
+                failure = _hard_stop(max_steps)
+        if failure is not None:
+            await _repair(graph, config, updates, failure)
+            yield {"type": "error", "message": failure}
+            return
+        text = last_agent.text
+        answered = True
+        yield {"type": "answer", "text": text if text.strip() else NO_ANSWER}
+    finally:
+        if not answered:
+            # Runs on every exit that is not a clean answer: failure (after the error event),
+            # CancelledError (task cancelled), GeneratorExit (aclose() when the client left).
+            # The repair is shielded so a cancellation in flight cannot abort it halfway, and
+            # the cancellation itself is never swallowed (this finally just re-raises it).
+            await asyncio.shield(_repair(graph, config, updates, failure or "client disconnected"))
+
+
+async def _repair(graph, config, updates, reason: str) -> None:
+    """Stop the still-running graph stream, then pair any unanswered tool call."""
+    try:
+        await updates.aclose()
+    except Exception:  # noqa: BLE001 - best effort; the repair below is what matters
+        pass
+    await close_dangling_tool_calls(graph, config, reason)

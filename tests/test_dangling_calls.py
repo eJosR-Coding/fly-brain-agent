@@ -136,3 +136,56 @@ def test_normal_turn_adds_no_synthetic_messages():
 def test_close_without_checkpointer_is_a_noop():
     graph = build_graph(fn_model(lambda m: AIMessage(content="x")), [quick])
     asyncio.run(close_dangling_tool_calls(graph, {"configurable": {"thread_id": "t"}}, "why"))
+
+
+# --- consumer stops mid-turn ---------------------------------------------------------------
+
+def test_cancelled_consumer_mid_tool_leaves_thread_usable():
+    model = _model("slow")
+    graph = build_graph(model, [slow], checkpointer=InMemorySaver())
+
+    async def run():
+        seen = []
+
+        async def consume():
+            async for event in stream_events(graph, "first", "t1"):
+                seen.append(event)
+
+        task = asyncio.create_task(consume())
+        for _ in range(200):  # wait until the tool is running
+            if any(e["type"] == "tool_call" for e in seen):
+                break
+            await asyncio.sleep(0.01)
+        await asyncio.sleep(0.1)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            cancelled = True
+        else:
+            cancelled = False
+        second = await collect(graph, "second", turn_timeout=5)
+        return cancelled, second
+
+    cancelled, second = asyncio.run(run())
+    assert cancelled, "CancelledError must not be swallowed"
+    assert second[-1] == {"type": "answer", "text": "recovered"}
+    assert_paired(model.seen[-1])
+    synthetic = [m for m in model.seen[-1] if isinstance(m, ToolMessage) and m.status == "error"]
+    assert len(synthetic) == 1 and "client disconnected" in synthetic[0].content
+
+
+def test_aclose_after_tool_call_leaves_thread_usable():
+    model = _model("slow")
+    graph = build_graph(model, [slow], checkpointer=InMemorySaver())
+
+    async def run():
+        gen = stream_events(graph, "first", "t1")
+        first = await gen.__anext__()
+        assert first["type"] == "tool_call"
+        await gen.aclose()
+        return await collect(graph, "second", turn_timeout=5)
+
+    second = asyncio.run(run())
+    assert second[-1] == {"type": "answer", "text": "recovered"}
+    assert_paired(model.seen[-1])
