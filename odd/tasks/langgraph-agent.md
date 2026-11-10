@@ -36,19 +36,19 @@ The MCP server works from Claude Code, but the product needs its own agent so us
 ## Progress / evidence
 - T1 RED: `tests/test_agent.py` -> `E   ModuleNotFoundError: No module named 'flybrain.agent'` (1 collection error).
 - T1 GREEN: `uv run pytest -q` -> 36 passed (31 before + 5 new). Versions: langgraph 1.2.20, langchain-core 1.7.7, mcp 1.30.0 (mcp<2 kept).
-- T1 commit: a4dac9b
+- T1 commit: 3d25f1e
 - Engram mirror: pending (mem_save blocked by hook/auto-mode in this session).
 
 - Review (2026-11-10): slice 03f8f7c..0dc810d too big for the reviewer context (lens_context_budget_exceeded, 1072 lines, mostly uv.lock). Split: ticket-fix slice 03f8f7c..14c5d92 -> user declined. Agent slice 14c5d92..0dc810d (1016 lines) -> granted but lens_context_budget_exceeded again; no authority created. Unreviewed; uv.lock growth makes any slice with a dependency add exceed the budget.
-- Fix (user-authorized history rewrite, 2026-11-10): regrouped commits so dependency changes live alone in 88c6894 (`chore(deps)`: pyproject + uv.lock + .gitattributes marking uv.lock generated). Generated lock is not reviewable under the lens budget; code is reviewed from base 88c6894. Code slice 88c6894..a4dac9b: 208 lines, medium, review_due=false (under_budget) -> pending, reviewed together with T2. Old history kept on branch backup/feat-agent-before-split.
+- Fix (user-authorized history rewrite, 2026-11-10): regrouped commits so dependency changes live alone in 88c6894 (`chore(deps)`: pyproject + uv.lock + .gitattributes marking uv.lock generated). Generated lock is not reviewable under the lens budget; code is reviewed from base 56a6e6e (both chore(deps) commits first). Code slice 88c6894..3d25f1e: 208 lines, medium, review_due=false (under_budget) -> pending, reviewed together with T2. Old history kept on branch backup/feat-agent-before-split.
 - Delivery rule from now on: any dependency add goes in its own `chore(deps)` commit, so code slices stay reviewable.
 
-- T2 deps commit: 2599d46 (`chore(deps)`). Versions: langchain-mcp-adapters 0.3.2, langchain 1.4.9, langchain-anthropic 1.7.10, mcp 1.30.0 (mcp<2 kept).
+- T2 deps commit: 56a6e6e (`chore(deps)`). Versions: langchain-mcp-adapters 0.3.2, langchain 1.4.9, langchain-anthropic 1.7.10, mcp 1.30.0 (mcp<2 kept).
 - T2 RED: `tests/test_cli.py:3: E   ImportError: cannot import name 'cli' from 'flybrain'` (+ `flybrain.agent_mcp` missing; 2 collection errors).
 - T2 GREEN: `uv run pytest -q` -> 40 passed (36 + 4 new: 2 MCP integration, 2 CLI). `uv run flybrain-chat --help` -> exit 0. Without network/key the CLI prints a one-line friendly error, no traceback.
-- T2 code commit: dcb9254 (agent_mcp.py, cli.py, tests, README, `flybrain-chat` script).
+- T2 code commit: 28df57c (agent_mcp.py, cli.py, tests, README, `flybrain-chat` script).
 - Session finding: `.venv/.../langchain_mcp_adapters/client.py` `get_tools()` docstring: "A new session will be created for each tool call" (calls `load_mcp_tools(None, connection=...)`). Verified by hand: search_neurons ticket then list_selection via get_tools() -> `unknown selection ... known selections: none yet`. Fix: `client.session("flybrain")` (client.py) kept open + `load_mcp_tools(session)` (tools.py); one server process per conversation, tickets survive. Covered by `test_ticket_survives_across_tool_calls`.
 - Route: delegated writer (2+ non-trivial files).
 
 ## Next step
-Review slice 88c6894..HEAD (code only), then T5 FastAPI.
+Review slice 56a6e6e..HEAD (code only), then T5 FastAPI.
