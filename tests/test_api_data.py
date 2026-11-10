@@ -14,7 +14,23 @@ def client_for(path):
 
 def test_health(tiny_tsv_path):
     with client_for(tiny_tsv_path) as c:
-        assert c.get("/health").json() == {"status": "ok", "neurons": 63}
+        assert c.get("/health").json() == {"status": "ok", "neurons": 63, "chat": False, "model": None}
+
+
+def test_health_reports_a_configured_chat_model(tiny_tsv_path):
+    from fakes import fn_model
+
+    app = create_app(atlas_path=tiny_tsv_path, model=fn_model(lambda msgs: None), model_name="test:fake-1")
+    with TestClient(app) as c:
+        assert c.get("/health").json() == {"status": "ok", "neurons": 63, "chat": True, "model": "test:fake-1"}
+
+
+def test_health_chat_without_a_name_has_null_model(tiny_tsv_path):
+    from fakes import fn_model
+
+    with TestClient(create_app(atlas_path=tiny_tsv_path, model=fn_model(lambda msgs: None))) as c:
+        body = c.get("/health").json()
+    assert body["chat"] is True and body["model"] is None
 
 
 def test_meta_contract(tiny_tsv_path, tiny_atlas):

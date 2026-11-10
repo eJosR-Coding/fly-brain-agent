@@ -86,8 +86,11 @@ def create_app(
     max_steps: int = MAX_STEPS,
     max_inline_indices: int = MAX_INLINE_INDICES,
     turn_timeout: float | None = None,
+    model_name: str | None = None,
 ) -> FastAPI:
-    """Build the app. ``model`` is a LangChain chat model; without one /chat reports an error."""
+    """Build the app. ``model`` is a LangChain chat model; without one /chat reports an error.
+
+    ``model_name`` is the provider:model label shown by /health (only while chat is on)."""
     path = Path(atlas_path or os.environ.get("FLYBRAIN_ANNOTATIONS") or DEFAULT_ANNOTATIONS)
 
     @asynccontextmanager
@@ -121,7 +124,13 @@ def create_app(
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "neurons": len(app.state.atlas.neurons)}
+        chat_on = app.state.graph is not None
+        return {
+            "status": "ok",
+            "neurons": len(app.state.atlas.neurons),
+            "chat": chat_on,
+            "model": model_name if chat_on else None,
+        }
 
     @app.get("/brain/meta")
     def brain_meta():
