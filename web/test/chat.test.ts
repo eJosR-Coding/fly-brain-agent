@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatToolCall, streamChat, type ChatHandlers } from "../src/chat";
+import { formatThinking, formatToolCall, streamChat, type ChatHandlers } from "../src/chat";
 
 function sseResponse(chunks: string[], status = 200): Response {
   const enc = new TextEncoder();
@@ -114,5 +114,21 @@ describe("formatToolCall", () => {
   });
   it("falls back to JSON for non-object args", () => {
     expect(formatToolCall("f", [1, 2])).toBe("f([1,2])");
+  });
+});
+
+describe("formatThinking", () => {
+  it("says the agent is working and counts whole seconds", () => {
+    expect(formatThinking(0)).toBe("agent is thinking · 0 s");
+    expect(formatThinking(12.7)).toBe("agent is thinking · 12 s");
+  });
+
+  it("warns that a slow provider may be the cause after 20 s", () => {
+    expect(formatThinking(25)).toBe("agent is thinking · 25 s · the model provider may be slow");
+  });
+
+  it("never shows negative or non-finite time", () => {
+    expect(formatThinking(-3)).toBe("agent is thinking · 0 s");
+    expect(formatThinking(Number.NaN)).toBe("agent is thinking · 0 s");
   });
 });

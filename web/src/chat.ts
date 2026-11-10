@@ -17,6 +17,13 @@ export interface ChatHandlers {
 }
 
 /** `tool(k="v", n=5)`: how a tool call is shown in the trace. */
+/** Pending-state text while a turn runs; after 20 s hint that the provider may be slow. */
+export function formatThinking(seconds: number): string {
+  const s = Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 0;
+  const base = `agent is thinking \u00b7 ${s} s`;
+  return s >= 20 ? `${base} \u00b7 the model provider may be slow` : base;
+}
+
 export function formatToolCall(tool: string, args: unknown): string {
   if (typeof args === "object" && args !== null && !Array.isArray(args)) {
     const inner = Object.entries(args as Record<string, unknown>)
@@ -155,9 +162,21 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): { model: HTMLEl
     input.disabled = send.disabled = true;
     add("user", text);
     onStreaming(true);
+    // pending indicator: visible until the first real event, so a slow provider never looks dead
+    const started = performance.now();
+    let thinking: HTMLElement | null = add("thinking", formatThinking(0));
+    const tick = window.setInterval(() => {
+      if (thinking) thinking.textContent = formatThinking((performance.now() - started) / 1000);
+    }, 1000);
+    const settle = () => {
+      window.clearInterval(tick);
+      thinking?.remove();
+      thinking = null;
+    };
     void streamChat(text, conversationId, {
       onMeta: (id) => { conversationId = id; },
       onToolCall: (tool, args) => {
+        settle();
         const el = add("tool", "");
         const arrow = document.createElement("span");
         arrow.className = "arrow";
@@ -167,6 +186,7 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): { model: HTMLEl
         el.append(arrow, call);
       },
       onHighlight: (p) => {
+        settle();
         const el = add("hl", "");
         const lit = document.createElement("span");
         lit.textContent = `\u25CF lit ${p.total.toLocaleString("en-US")} neurons`;
@@ -176,9 +196,10 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): { model: HTMLEl
         el.append(lit, sel);
         void Promise.resolve(onHighlight(p)).catch((err) => add("error", `highlight failed: ${(err as Error).message}`));
       },
-      onAnswer: (t) => add("answer", t),
-      onError: (m) => add("error", m),
+      onAnswer: (t) => { settle(); add("answer", t); },
+      onError: (m) => { settle(); add("error", m); },
       onDone: () => {
+        settle();
         input.disabled = send.disabled = false;
         onStreaming(false);
         input.focus();

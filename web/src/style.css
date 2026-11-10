@@ -131,6 +131,9 @@ button, input { font-family: inherit; }
 .msg { max-width: 100%; overflow-wrap: anywhere; white-space: pre-wrap; flex: none; }
 .msg.user { align-self: flex-end; width: 300px; max-width: 100%; border: 1px solid var(--line); border-radius: var(--radius);
   padding: 12px 14px; font: 400 12.5px/19px var(--font-ui); color: var(--text-soft); }
+.msg.thinking { color: var(--dimmer); font-family: var(--font-mono); font-size: 11px; animation: thinking-pulse 1.6s ease-in-out infinite; }
+@keyframes thinking-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .msg.thinking { animation: none; } }
 .msg.tool { display: flex; gap: 7px; align-items: center; margin-bottom: -13px; /* trace lines sit 7px apart */
   font: 400 10px/normal var(--font-mono); color: #6e6e6e; white-space: normal; }
 .msg.tool .arrow { color: var(--dimmer); }
