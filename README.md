@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/cover.png" alt="fly-brain-agent: a minimal geometric fruit fly drawn in white lines on black" width="640">
+  <img src="assets/cover.png" alt="fly-brain-agent: a minimal fruit fly in white lines on black, with a status panel reading LangGraph OK and MCP server (FastMCP) OK" width="800">
 </p>
 
 # fly-brain-agent
