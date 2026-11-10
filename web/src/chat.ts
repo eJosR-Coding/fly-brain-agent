@@ -124,9 +124,9 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): { model: HTMLEl
   const { onHighlight, getPointCount = () => null, onStreaming = () => undefined } = opts;
   root.innerHTML =
     '<header id="chat-head"><span id="agent-label">agent</span><span id="model"></span></header>' +
-    '<div id="log"></div>' +
-    '<form id="form"><div id="field"><input id="input" autocomplete="off" placeholder="Ask about the fly brain\u2026" />' +
-    '<button id="send" type="submit" aria-label="send"><svg viewBox="0 0 13 13" width="13" height="13" aria-hidden="true">' +
+    '<div id="log" role="log" aria-live="polite" aria-label="conversation"></div>' +
+    '<form id="form"><div id="field"><input id="input" autocomplete="off" aria-label="Ask about the fly brain" placeholder="Ask about the fly brain\u2026" />' +
+    '<button id="send" type="submit" aria-label="send"><svg viewBox="0 0 13 13" width="15" height="15" aria-hidden="true">' +
     `<path d="${ARROW_UP}" fill="currentColor"/></svg></button></div></form>`;
   const log = root.querySelector<HTMLElement>("#log")!;
   const form = root.querySelector<HTMLFormElement>("#form")!;
