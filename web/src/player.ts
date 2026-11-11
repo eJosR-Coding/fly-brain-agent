@@ -1,6 +1,6 @@
 /** DOM + scene glue for the activity wave. All the logic it uses lives in activity.ts (tested). */
 import {
-  binAt, createPlayback, fillBrightness, formatTime, scrub, summedBrightness, tick, togglePlay,
+  binAt, createPlayback, fillBrightness, formatTime, playLabel, scrub, summedBrightness, tick, togglePlay,
   type Activity, type Playback,
 } from "./activity";
 import type { BrainScene } from "./scene";
@@ -31,12 +31,14 @@ export function createPlayer({ scene, root, reducedMotion, speed }: PlayerOption
 
   const draw = () => {
     if (!activity || !pb) return;
-    fillBrightness(activity, binAt(pb.timeMs, activity.binMs, activity.nBins), values);
+    if (!pb.playing && pb.timeMs >= pb.durationMs) summedBrightness(activity, values); // finished: everything that fired
+    else fillBrightness(activity, binAt(pb.timeMs, activity.binMs, activity.nBins), values);
     scene.setActivityFrame(values);
     label.textContent = formatTime(pb.timeMs);
     bar.value = String(Math.round((pb.timeMs / pb.durationMs) * Number(bar.max)));
-    playBtn.textContent = pb.playing ? "pause" : "play";
-    playBtn.setAttribute("aria-label", pb.playing ? "pause the activity" : "play the activity");
+    const lab = playLabel(pb);
+    playBtn.textContent = lab;
+    playBtn.setAttribute("aria-label", `${lab} the activity`);
   };
 
   const frame = (now: number) => {

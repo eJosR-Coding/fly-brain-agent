@@ -493,7 +493,8 @@ def stimulate(
             }
         notes.append("silencing runs a baseline too, so it costs 2x the runtime (same random seed for both)")
     frames = np.minimum(res.frames, 255).astype(np.uint8)
-    out["simulation_id"] = sims.add(res.active_rows, frames, bin_ms, duration, n_trials, out["stimulus"])
+    out["simulation_id"] = sims.add(res.active_rows, frames, bin_ms, duration, n_trials, out["stimulus"],
+                              active_count=len(active))
     out["runtime_s"] = round(runtime, 1)
     out["note"] = "; ".join([*notes, SIM_NOTE])
     return out

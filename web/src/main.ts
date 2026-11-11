@@ -79,7 +79,7 @@ async function giveSugar(): Promise<void> {
     const sim = parseSimulation(body);
     if (typeof sim === "string") throw new Error(`unexpected simulation answer: ${sim}`);
     const activity = await loadActivity(sim.simulationId);
-    showActivity(activity, activityLegend(sim.active, sim.readoutHz === null ? null : { label: "MN9", hz: sim.readoutHz }));
+    showActivity(activity, activityLegend(sim.active, activity.nRows, sim.readoutHz === null ? null : { label: "MN9", hz: sim.readoutHz }));
     setActiveChip("give sugar");
   } catch (e) {
     renderLegend(null, `simulation failed: ${(e as Error).message}`);
@@ -244,7 +244,7 @@ async function boot(): Promise<void> {
       }).then(() => undefined),
     onActivity: async (a) => {
       const activity = await loadActivity(a.simulationId);
-      showActivity(activity, activityLegend(activity.nRows, null));
+      showActivity(activity, activityLegend(activity.activeCount, activity.nRows, null));
     },
     getPointCount: () => pointCount,
     onStreaming: (s) => {

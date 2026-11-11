@@ -105,12 +105,15 @@ def test_simulate_does_not_block_the_event_loop(tiny_tsv_path, svc):
 
 def test_frames_endpoints(tiny_tsv_path, svc):
     with TestClient(create_app(atlas_path=tiny_tsv_path, simulation=svc)) as client:
-        sim_id = client.post("/simulate", json={"selection_id": orn_ticket(client), **BODY}).json()["simulation_id"]
+        summary = client.post("/simulate", json={"selection_id": orn_ticket(client), **BODY}).json()
+        sim_id, active = summary["simulation_id"], summary["active_neurons"]
         meta = client.get(f"/simulations/{sim_id}").json()
         frames = client.get(f"/simulations/{sim_id}/frames")
     rec = svc.get(sim_id)
     assert meta == {"simulation_id": sim_id, "bin_ms": 1.0, "n_bins": 100, "n_rows": rec.n_rows, "duration_ms": 100.0,
-                    "stimulus": {"neurons": 1, "rate_hz": 300.0, "duration_ms": 100.0, "trials": 1}, "trials": 1}
+                    "stimulus": {"neurons": 1, "rate_hz": 300.0, "duration_ms": 100.0, "trials": 1}, "trials": 1,
+                    "active_count": rec.active_count, "active_hz": 1.0}
+    assert meta["active_count"] == active  # same "> 1 Hz" count the stimulate summary reports
     assert frames.headers["content-type"] == "application/octet-stream"
     raw = frames.content
     assert len(raw) == 4 * meta["n_rows"] + meta["n_rows"] * meta["n_bins"]
@@ -149,4 +152,6 @@ def test_chat_emits_an_activity_event_after_the_highlight(tiny_tsv_path, svc):
     assert names == ["meta", "tool_call", "highlight", "tool_call", "highlight", "activity", "answer", "done"]
     act = dict(events)["activity"]
     rec = svc.get(act["simulation_id"])
-    assert act == {"simulation_id": rec.id, "n_bins": rec.n_bins, "bin_ms": rec.bin_ms}
+    assert act == {"simulation_id": rec.id, "n_bins": rec.n_bins, "bin_ms": rec.bin_ms,
+                   "active_count": rec.active_count, "active_hz": 1.0}
+    assert rec.active_count is not None and rec.active_count <= rec.n_rows  # spiked at least once >= active > 1 Hz

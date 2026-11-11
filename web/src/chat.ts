@@ -1,4 +1,5 @@
 import { parseActivityEvent, type ActivityEvent } from "./activity";
+import { renderMarkdown } from "./markdown";
 import { parseSSE } from "./sse";
 
 export interface HighlightPayload {
@@ -217,7 +218,7 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): { model: HTMLEl
         el.append(wave, sel);
         void Promise.resolve(onActivity(a)).catch((err) => add("error", `activity failed: ${(err as Error).message}`));
       },
-      onAnswer: (t) => { settle(); add("answer", t); },
+      onAnswer: (t) => { settle(); add("answer", "").append(renderMarkdown(t)); },
       onError: (m) => { settle(); add("error", m); },
       onDone: () => {
         settle();
