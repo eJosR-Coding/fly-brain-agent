@@ -104,6 +104,10 @@ default is `--model` plus these Groq models with tool use (checked on
 <https://console.groq.com/docs/tool-use>): `groq:openai/gpt-oss-120b`,
 `groq:openai/gpt-oss-20b` (the Llama 3 ids were no longer served on Groq when checked on 2026-11-10; list yours with the Groq models API and pass them with `--models`).
 
+DeepSeek (paid, no per-minute cap like Groq's free 8k TPM): set `DEEPSEEK_API_KEY` and add
+`deepseek:deepseek-flash` (V4.1 Flash) or `deepseek:deepseek-v4-pro` to `--models`. Both support
+tool calling (checked on the DeepSeek pricing page, 2026-11-10).
+
 ```bash
 uv run --env-file .env flybrain-web --model google_genai:gemini-3.5-flash \
   --models google_genai:gemini-3.5-flash,groq:openai/gpt-oss-120b
