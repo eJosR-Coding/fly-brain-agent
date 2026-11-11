@@ -257,3 +257,21 @@ def test_readout_rows_are_capped(tiny_atlas, store, sims):
     pen = ticket(tiny_atlas, store, cell_type="PEN_a")
     ro = sims.get(run(tiny_atlas, store, sims, readout_selection_id=pen)["simulation_id"]).readout
     assert ro["neurons"] == 60 and len(ro["rows"]) == 20
+
+
+def test_a_baseline_is_never_evicted_while_a_silenced_run_still_points_at_it(tiny_atlas, store):
+    svc = SimulationService.from_simulation(
+        Simulation.from_arrays([62, 61, 60], [61, 60, 0], [1000, 1000, 1000], len(tiny_atlas.neurons)), max_results=3
+    )
+    epg = ticket(tiny_atlas, store, cell_type="EPG")
+    pen = ticket(tiny_atlas, store, cell_type="PEN_a")
+    first = run(tiny_atlas, store, svc, trials=1, silence_selection_id=epg, readout_selection_id=pen)["simulation_id"]
+    for _ in range(4):
+        run(tiny_atlas, store, svc, trials=1)
+        for sim_id in list(svc._records):
+            cid = svc._records[sim_id].compare_id
+            assert cid is None or cid in svc._records, "dangling baseline"
+    assert len(svc._records) <= 3
+    # the pair goes together: once the silenced run is gone its baseline may go too
+    with pytest.raises(UnknownSimulationError):
+        svc.get(first)

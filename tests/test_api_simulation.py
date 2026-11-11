@@ -113,7 +113,7 @@ def test_frames_endpoints(tiny_tsv_path, svc):
     assert meta == {"simulation_id": sim_id, "bin_ms": 1.0, "n_bins": 100, "n_rows": rec.n_rows, "duration_ms": 100.0,
                     "stimulus": {"neurons": 1, "rate_hz": 300.0, "duration_ms": 100.0, "trials": 1}, "trials": 1,
                     "active_count": rec.active_count, "active_hz": 1.0, "compare_id": None,
-                    "silenced_rows": None, "readout": None}
+                    "silenced_rows": [], "silenced_truncated": False, "readout": None}
     assert meta["active_count"] == active  # same "> 1 Hz" count the stimulate summary reports
     assert frames.headers["content-type"] == "application/octet-stream"
     raw = frames.content
@@ -176,16 +176,27 @@ def test_simulate_with_silencing_exposes_both_recordings(tiny_tsv_path, svc):
         base_meta = client.get(f"/simulations/{meta['compare_id']}").json()
         base_frames = client.get(f"/simulations/{meta['compare_id']}/frames")
     assert meta["compare_id"].startswith("sim_") and base_meta["compare_id"] is None
-    assert meta["silenced_rows"] == [60] and base_meta["silenced_rows"] is None
+    assert meta["silenced_rows"] == [60] and base_meta["silenced_rows"] == []
+    assert meta["silenced_truncated"] is False and base_meta["silenced_truncated"] is False
     assert meta["readout"]["label"] == "PEN_a" and len(meta["readout"]["hz"]) == meta["n_bins"]
     assert len(base_frames.content) == 4 * base_meta["n_rows"] + base_meta["n_rows"] * base_meta["n_bins"]
+
+
+def test_too_many_silenced_rows_are_flagged_not_confused_with_no_silencing(tiny_tsv_path, svc):
+    with TestClient(create_app(atlas_path=tiny_tsv_path, simulation=svc, max_inline_indices=0)) as client:
+        sim_id = compare_run(client).json()["simulation_id"]
+        meta = client.get(f"/simulations/{sim_id}").json()
+        plain = client.post("/simulate", json={"selection_id": orn_ticket(client), **BODY}).json()["simulation_id"]
+        plain_meta = client.get(f"/simulations/{plain}").json()
+    assert meta["silenced_truncated"] is True and meta["silenced_rows"] is None
+    assert plain_meta["silenced_truncated"] is False and plain_meta["silenced_rows"] == []
 
 
 def test_plain_meta_has_null_comparison_fields(tiny_tsv_path, svc):
     with TestClient(create_app(atlas_path=tiny_tsv_path, simulation=svc)) as client:
         sim_id = client.post("/simulate", json={"selection_id": orn_ticket(client), **BODY}).json()["simulation_id"]
         meta = client.get(f"/simulations/{sim_id}").json()
-    assert meta["compare_id"] is None and meta["silenced_rows"] is None and meta["readout"] is None
+    assert meta["compare_id"] is None and meta["silenced_rows"] == [] and meta["readout"] is None
 
 
 def test_simulate_accepts_a_silence_preset_and_rejects_both(tiny_tsv_path, svc):

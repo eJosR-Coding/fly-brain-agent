@@ -124,8 +124,20 @@ class SimulationService:
                 None if readout is None else dict(readout),
             )
             while len(self._records) > self.max_results:
-                self._expired.add(self._records.popitem(last=False)[0])
+                self._evict_oldest()
             return sim_id
+
+    def _evict_oldest(self) -> None:
+        """Drop the least recently used recording, skipping baselines a silenced run still points at.
+
+        A baseline therefore lives exactly as long as the last run compared against it (the pair
+        expires together) and `compare_id` can never dangle. The runs that point at a baseline
+        are not baselines themselves, so there is always something else to evict.
+        """
+        needed = {r.compare_id for r in self._records.values() if r.compare_id is not None}
+        victim = next((i for i in self._records if i not in needed), next(iter(self._records)))
+        del self._records[victim]
+        self._expired.add(victim)
 
     def get(self, sim_id: str) -> ActivityRecord:
         with self._record_lock:
