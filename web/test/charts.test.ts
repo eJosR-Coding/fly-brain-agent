@@ -63,6 +63,20 @@ describe("rasterModel", () => {
     expect(m.rows.find((r) => r.row === 14)!.emphasized).toBe(true);
   });
 
+  it("keeps readout rows that never spiked as flat rows (a quiet readout is a result, not missing data)", () => {
+    const m = rasterModel(a, (r) => types.get(r) ?? null, { top: 2, emphasize: { rows: [99, 98], label: "MN9" } });
+    const quiet = m.rows.filter((r) => r.row === 99 || r.row === 98);
+    expect(quiet.map((r) => [r.total, r.spikes, r.emphasized, r.label])).toEqual([[0, [], true, "MN9"], [0, [], true, "MN9"]]);
+    expect(m.groups.find((g) => g.label === "MN9")).toMatchObject({ emphasized: true, end: m.rows.length });
+  });
+
+  it("caps the quiet readout rows and keeps an empty recording drawable", () => {
+    const m = rasterModel(a, () => null, { top: 0, emphasize: { rows: [90, 91, 92, 93, 94], label: "R" } });
+    expect(m.rows.length).toBe(3);
+    const none = rasterModel(act([5], [[0, 0]]), () => null, { emphasize: { rows: [7], label: "R" } });
+    expect(none.rows.map((r) => r.row)).toEqual([7]);
+  });
+
   it("lists the bins with spikes and their counts, plus the duration", () => {
     const m = rasterModel(a, (r) => types.get(r) ?? null, { top: 1, emphasize: null });
     expect(m.rows[0].spikes).toEqual([{ bin: 0, count: 3 }, { bin: 1, count: 3 }, { bin: 2, count: 3 }]);

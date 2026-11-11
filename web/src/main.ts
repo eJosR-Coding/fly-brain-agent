@@ -6,6 +6,7 @@ import { parseModels } from "./models";
 import { fetchIndices, loadBrain } from "./brainData";
 import { createScene, type BrainScene } from "./scene";
 import { Latest, runLatest } from "./latest";
+import { loadLatestActivity } from "./activityLoader";
 import { deriveStatus, legendView, parseHealth, versionLine, type Health } from "./status";
 import { readTheme } from "./theme";
 import { loadLandmarks, loadRegions, type Regions } from "./regions";
@@ -44,6 +45,8 @@ let waveLegend = ""; // the legend line of the wave mode (restored when switchin
 let pathShown = false; // cables are on screen (the legend shows their summary)
 /** Shared by chips and chat: whichever selection was requested last wins. */
 const latest = new Latest();
+/** Recordings have their own token: the newest requested one is the one shown, whatever order the loads finish in. */
+const activityLatest = new Latest();
 
 /** Light up row indices (replacing any previous highlight). */
 export function highlight(indices: ArrayLike<number>): void {
@@ -53,6 +56,7 @@ export function highlight(indices: ArrayLike<number>): void {
 }
 
 export function clearAll(): void {
+  activityLatest.invalidate();
   waveLegend = "";
   charts?.clear();
   if (chartsChip) chartsChip.disabled = true;
@@ -68,11 +72,15 @@ function renderActivityLegend(text: string): void {
   $("legend-selected").classList.add("on");
 }
 
-/** Show a recording; a silenced run also fetches its baseline so the difference map is available. */
-async function showActivity(a: Activity, text: string): Promise<void> {
+/** A recording plus, for a silenced run, its baseline (so the difference map is available). */
+async function loadWithBaseline(id: string): Promise<{ a: Activity; baseline: Activity | null }> {
+  const a = await loadActivity(id);
+  const baseline = a.compareId ? await loadActivity(a.compareId).catch(() => null) : null; // expired baseline: just no diff mode
+  return { a, baseline };
+}
+
+function showActivity({ a, baseline }: { a: Activity; baseline: Activity | null }, text: string): void {
   waveLegend = text;
-  let baseline: Activity | null = null;
-  if (a.compareId) baseline = await loadActivity(a.compareId).catch(() => null); // expired baseline: just no diff mode
   player?.load(a, baseline);
   charts?.show(a, baseline);
   if (chartsChip) chartsChip.disabled = false;
@@ -100,9 +108,11 @@ async function giveSugar(): Promise<void> {
     if (!res.ok) throw new Error(typeof body.detail === "string" ? body.detail : `HTTP ${res.status}`);
     const sim = parseSimulation(body);
     if (typeof sim === "string") throw new Error(`unexpected simulation answer: ${sim}`);
-    const activity = await loadActivity(sim.simulationId);
-    await showActivity(activity, activityLegend(sim.active, activity.nRows, sim.readoutHz === null ? null : { label: "MN9", hz: sim.readoutHz }));
-    setActiveChip("give sugar");
+    const shown = await loadLatestActivity(activityLatest, () => loadWithBaseline(sim.simulationId), (loaded) => {
+      showActivity(loaded, activityLegend(sim.active, loaded.a.nRows, sim.readoutHz === null ? null : { label: "MN9", hz: sim.readoutHz }));
+      setActiveChip("give sugar");
+    });
+    if (!shown) return; // a newer recording (from the chat) took the stage while this one loaded
   } catch (e) {
     renderLegend(null, `simulation failed: ${(e as Error).message}`);
   } finally {
@@ -290,8 +300,8 @@ async function boot(): Promise<void> {
       renderLegend(null);
     },
     onActivity: async (a) => {
-      const activity = await loadActivity(a.simulationId);
-      await showActivity(activity, activityLegend(activity.activeCount, activity.nRows, null));
+      await loadLatestActivity(activityLatest, () => loadWithBaseline(a.simulationId), (loaded) =>
+        showActivity(loaded, activityLegend(loaded.a.activeCount, loaded.a.nRows, null)));
     },
     getPointCount: () => pointCount,
     onModelChange: (id) => {
