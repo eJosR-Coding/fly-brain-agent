@@ -89,6 +89,23 @@ def test_stimulate_returns_a_small_summary_with_tickets(tiny_atlas, store, sims)
     assert out["stimulus"] == {"neurons": 1, "rate_hz": 300.0, "duration_ms": 200.0, "trials": 2}
 
 
+def test_top_non_sensory_skips_sensory_inputs_and_lists_silencing_candidates(tiny_atlas, store, sims):
+    out = run(tiny_atlas, store, sims)
+    top = out["top_non_sensory"]
+    assert 1 <= len(top) <= 5
+    assert all(set(r) == {"root_id", "cell_type", "super_class", "rate_hz"} for r in top)
+    assert all(r["super_class"] not in ("sensory", "sensory_ascending") for r in top)
+    assert 102 not in {r["root_id"] for r in top}  # the stimulated sensory neuron itself
+    assert {r["root_id"] for r in top} >= {101, 100}
+    assert top == sorted(top, key=lambda r: -r["rate_hz"])
+    assert len(json.dumps(out)) < 2000
+
+
+def test_top_non_sensory_is_empty_when_nothing_fires(tiny_atlas, store, sims):
+    out = run(tiny_atlas, store, sims, rate_hz=1, duration_ms=100, trials=1, selection_id=ticket(tiny_atlas, store, cell_type="PEN_a"))
+    assert isinstance(out["top_non_sensory"], list)
+
+
 def test_stimulate_stores_sparse_uint8_frames(tiny_atlas, store, sims):
     out = run(tiny_atlas, store, sims)
     rec = sims.get(out["simulation_id"])

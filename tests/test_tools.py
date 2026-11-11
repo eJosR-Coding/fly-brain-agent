@@ -48,10 +48,24 @@ def test_describe_neuron_is_a_plain_dict(tiny_atlas):
     assert tools.describe_neuron(tiny_atlas, 100)["cell_type"] == "EPG"
 
 
-def test_listing_a_selection_never_returns_more_than_50(tiny_atlas, store):
+def test_listing_a_selection_never_returns_more_than_25(tiny_atlas, store):
     sid = tools.search_neurons(tiny_atlas, store)["selection_id"]
     out = tools.list_selection(tiny_atlas, store, sid, limit=1000)
-    assert len(out["neurons"]) == 50
+    assert len(out["neurons"]) == 25
+
+
+def test_listing_defaults_to_20_rows(tiny_atlas, store):
+    sid = tools.search_neurons(tiny_atlas, store)["selection_id"]
+    out = tools.list_selection(tiny_atlas, store, sid)
+    assert len(out["neurons"]) == 20 and "note" not in out
+
+
+def test_listing_rows_are_compact(tiny_atlas, store):
+    sid = tools.search_neurons(tiny_atlas, store, cell_type="EPG")["selection_id"]
+    out = tools.list_selection(tiny_atlas, store, sid)
+    assert out["neurons"] == [{"root_id": 100, "cell_type": "EPG", "super_class": "central", "side": "right"}]
+    sid = tools.search_neurons(tiny_atlas, store)["selection_id"]
+    assert len(json.dumps(tools.list_selection(tiny_atlas, store, sid, limit=25))) < 2500
 
 
 def test_listing_pages_through_the_ticket(tiny_atlas, store):
@@ -138,7 +152,7 @@ def test_count_neurons_non_str_group_by_is_clear(tiny_atlas):
 def test_list_selection_caps_limit_with_a_note(tiny_atlas, store):
     sid = tools.search_neurons(tiny_atlas, store)["selection_id"]
     out = tools.list_selection(tiny_atlas, store, sid, limit=1000)
-    assert out["note"] == "limit capped to 50"
+    assert out["note"] == "limit capped to 25"
 
 
 def test_list_selection_clamps_negative_offset_and_limit(tiny_atlas, store):

@@ -175,6 +175,8 @@ def test_concise_docs_keep_the_interpretation_rules(tiny_atlas):
     by_name = {t.name: t for t in asyncio.run(build_server(tiny_atlas).list_tools())}
     assert "not the living fly" in by_name["stimulate"].description
     assert "silence_selection_id" in by_name["stimulate"].inputSchema["properties"]
+    assert "top_non_sensory" in by_name["stimulate"].description  # where silencing candidates come from
+    assert "25" in by_name["list_selection"].description
     assert "selection_id" in by_name["search_neurons"].description  # the ticket concept
     assert "not signal flow" in by_name["neighbors"].description
     assert "reachab" in by_name["lesion_effect"].description.lower()
