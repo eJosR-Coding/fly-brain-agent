@@ -12,9 +12,13 @@ uniform dimming, reading the giant fiber (DNp01), and show it visually.
 - Shortest routes skip T4/T5 (motion detectors), which in the real fly give LPLC2 its looming selectivity.
 
 ## Tasks
-- [ ] T1 time-varying stimulus: per-neuron rate schedule in the simulator (piecewise-constant
+- [x] T1 time-varying stimulus: per-neuron rate schedule in the simulator (piecewise-constant
       rate per time window), exposed through the service; constant stimulation unchanged.
       (route: delegated writer)
+      Done in d64c8bc: `StimulusSchedule` + `Simulation.run_schedule` + `SimulationService.run_schedule`
+      (cached, own key tag). Full suite 688 passed; new tests/test_stimulus_schedule.py (constant
+      run pinned, one-segment schedule bit-identical to `run`). Real brain, 500 ms, 400 neurons:
+      constant 2.5 s vs 4-segment growing schedule 3.1 s.
 - [ ] T2 eye map: pick R1-6 inside a disc on the eye from their 3D positions; disc grows/shrinks.
 - [ ] T3 looming experiment tool: looming vs receding vs dimming with equal total drive, DNp01
       readout, stats; plus lesion LPLC2+LC4 control.
