@@ -39,6 +39,7 @@ BYTES_PER_POINT = 12  # 3 x float32
 MAX_MESSAGE_CHARS = 2000
 MAX_INLINE_INDICES = 5000  # bigger highlights are fetched as binary instead of inlined
 TURN_TIMEOUT_S = 90.0  # provider SDKs can retry 503s for minutes; cap the whole chat turn
+NEURON_PARTNERS = 5  # top partners per direction on the neuron card
 MAX_ARG_CHARS = 100  # tool args in events are cut to keep events small
 DEFAULT_CORS = "http://localhost:5173"  # Vite dev server
 
@@ -72,6 +73,30 @@ def _short(value):
     if isinstance(value, list):
         return [_short(v) for v in value[:20]]
     return value
+
+
+def path_payload(data, row_index: RowIndex) -> dict | None:
+    """A successful find_path result as {selection_id, rows, synapses, bottleneck}, or None.
+
+    rows are atlas rows in route order, synapses has one count per hop (len(rows) - 1). A path with
+    a neuron the atlas does not know, or without a single hop, is not drawable, so it gives None.
+    """
+    if not isinstance(data, dict) or data.get("found") is not True:
+        return None
+    path = data.get("path")
+    if not isinstance(path, list) or len(path) < 2 or not all(isinstance(p, dict) for p in path):
+        return None
+    try:
+        rows = row_index.positions([p["root_id"] for p in path])
+        synapses = [int(p["synapses_from_previous"]) for p in path[1:]]
+        bottleneck = int(data["min_hop_synapses"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    if (rows < 0).any():
+        return None
+    sid = data.get("selection_id")
+    return {"selection_id": sid if isinstance(sid, str) else "", "rows": [int(r) for r in rows],
+            "synapses": synapses, "bottleneck": bottleneck}
 
 
 def _sse(event: str, data: dict) -> ServerSentEvent:
@@ -364,6 +389,40 @@ def create_app(
             body["indices"] = _rows_for(sid)[0].tolist()
         return body
 
+    @app.get("/neurons/{row}")
+    def neuron_card(row: int):
+        """One neuron by atlas row (the index the viewer uses): identity, position and top partners."""
+        n = app.state.atlas.neurons
+        if not 0 <= row < len(n):
+            raise HTTPException(status_code=404, detail=f"no neuron at row {row}; rows run 0..{len(n) - 1}")
+        rec = n.iloc[row]
+
+        card = {
+            "row": row,
+            "root_id": str(int(rec["root_id"])),  # string: a root_id does not fit a JS number
+            "cell_type": text_at(row, "cell_type"), "cell_class": text_at(row, "cell_class"),
+            "super_class": text_at(row, "super_class"), "side": text_at(row, "side"),
+            "top_nt": text_at(row, "top_nt"),
+            "position_um": [float(rec["x_um"]), float(rec["y_um"]), float(rec["z_um"])],
+            "region": REGION_CODES[int(np.frombuffer(app.state.regions, dtype=np.uint8)[row])],
+        }
+        conn = app.state.connectome
+        card["partners"] = conn is not None
+        if conn is not None:
+            for key, direction in (("inputs", "in"), ("outputs", "out")):
+                rows, syn = conn.neighbors([row], direction)
+                card[key] = [
+                    {"row": int(r), "cell_type": text_at(int(r), "cell_type"), "super_class": text_at(int(r), "super_class"),
+                     "synapses": int(s)}
+                    for r, s in zip(rows[:NEURON_PARTNERS], syn[:NEURON_PARTNERS])
+                ]
+                card[f"synapses_{direction}"] = int(syn.sum())
+        return card
+
+    def text_at(r: int, field: str):
+        v = app.state.atlas.neurons[field].iat[r]
+        return None if v is None or v != v else str(v)
+
     def _highlight(content: str, seen: set[str]) -> ServerSentEvent | None:
         """A tool result carrying a selection_id becomes a highlight (once per ticket)."""
         try:
@@ -397,6 +456,16 @@ def create_app(
             return None
         return _sse("activity", {"simulation_id": rec.id, "n_bins": rec.n_bins, "bin_ms": rec.bin_ms,
                                 "active_count": rec.active_count, "active_hz": ACTIVE_HZ})
+
+    def _path(tool: str, content: str) -> ServerSentEvent | None:
+        """find_path also becomes a path event: the route as atlas rows, for the cables."""
+        if tool != "find_path":
+            return None
+        try:
+            payload = path_payload(json.loads(content), app.state.row_index)
+        except ValueError:
+            return None
+        return None if payload is None else _sse("path", payload)
 
     @app.post("/chat", response_class=EventSourceResponse)
     async def chat(
@@ -433,6 +502,9 @@ def create_app(
                         hl = None if ev["error"] else _highlight(ev["content"], seen)
                         if hl is not None:
                             yield hl
+                        route = None if ev["error"] else _path(ev["tool"], ev["content"])
+                        if route is not None:
+                            yield route
                         act = None if ev["error"] else _activity(ev["content"])
                         if act is not None:
                             yield act

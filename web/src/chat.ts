@@ -1,6 +1,7 @@
 import { parseActivityEvent, type ActivityEvent } from "./activity";
 import { renderMarkdown } from "./markdown";
 import { loadStoredModel, optionLabel, pickModel, saveStoredModel, type ModelList } from "./models";
+import { parsePathEvent, pathLegend, type PathPayload } from "./path";
 import { parseSSE } from "./sse";
 
 export interface HighlightPayload {
@@ -19,6 +20,8 @@ export interface ChatHandlers {
   onAnswerDelta?(text: string): void;
   onHighlight(p: HighlightPayload): void;
   onActivity(a: ActivityEvent): void;
+  /** a find_path result: draw the route as cables */
+  onPath?(p: PathPayload): void;
   /** tokens spent by the turn, sent just before the answer */
   onUsage?(u: Usage): void;
   onAnswer(text: string): void;
@@ -172,6 +175,12 @@ export async function streamChat(
           else h.onActivity(a);
           break;
         }
+        case "path": {
+          const p = parsePathEvent(d, getPointCount());
+          if (typeof p === "string") h.onError(`ignored an invalid path event: ${p}`);
+          else h.onPath?.(p);
+          break;
+        }
         case "usage": {
           const u = parseUsage(d);
           if (u) h.onUsage?.(u);
@@ -201,6 +210,10 @@ export interface ChatOptions {
   onHighlight: (p: HighlightPayload) => Promise<void> | void;
   /** a simulation finished during the turn: fetch and play its activity */
   onActivity?: (a: ActivityEvent) => Promise<void> | void;
+  /** a find_path route arrived (after the highlight of its neurons has been applied) */
+  onPath?: (p: PathPayload) => Promise<void> | void;
+  /** "new chat" was pressed: drop whatever the old conversation put on the brain */
+  onNewChat?: () => void;
   getPointCount?: () => number | null;
   /** true while an SSE turn is running */
   onStreaming?: (streaming: boolean) => void;
@@ -221,7 +234,7 @@ const FOLLOW_SLACK_PX = 48; // within this of the bottom still counts as "follow
 /** DOM wiring for the chat panel. */
 export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
   const {
-    onHighlight, onActivity = () => undefined, getPointCount = () => null,
+    onHighlight, onActivity = () => undefined, onPath = () => undefined, onNewChat = () => undefined, getPointCount = () => null,
     onStreaming = () => undefined, onModelChange = () => undefined,
   } = opts;
   root.innerHTML =
@@ -327,6 +340,7 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
   newChat.addEventListener("click", () => {
     if (running) return;
     conversationId = null; // the next message opens a fresh thread on the server
+    onNewChat();
     turnUsage = null;
     usageEl = null;
     dropStream();
@@ -356,6 +370,7 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
       if (thinking) thinking.textContent = formatThinking((performance.now() - started) / 1000);
       tickTools();
     }, 1000);
+    let highlighted: Promise<unknown> = Promise.resolve();
     const settle = () => {
       thinking?.remove();
       thinking = null;
@@ -392,7 +407,19 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
         sel.className = "sel";
         sel.textContent = p.selection_id;
         el.append(lit, sel);
-        void Promise.resolve(onHighlight(p)).catch((err) => add("error", `highlight failed: ${(err as Error).message}`));
+        highlighted = Promise.resolve(onHighlight(p)).catch((err) => add("error", `highlight failed: ${(err as Error).message}`));
+      },
+      onPath: (p) => {
+        settle();
+        const el = add("hl", "");
+        const route = document.createElement("span");
+        route.textContent = `\u2192 ${pathLegend(p)}`;
+        const sel = document.createElement("span");
+        sel.className = "sel";
+        sel.textContent = p.selectionId;
+        el.append(route, sel);
+        // the path's own highlight (same tool result) must land first, or it would repaint over the cables
+        void highlighted.then(() => onPath(p)).catch((err) => add("error", `path failed: ${(err as Error).message}`));
       },
       onActivity: (a) => {
         settle();
