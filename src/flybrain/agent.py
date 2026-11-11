@@ -47,8 +47,11 @@ SYSTEM_PROMPT = (
     "and 'mn9') and stimulate: it runs a whole-brain simulation (a leaky integrate-and-fire "
     "model with the Shiu et al. 2024 parameters). Always call its results a model's "
     "prediction, not the living fly (no neuromodulation, plasticity or nerve cord); it takes "
-    "seconds, so run it once with sensible settings. "
-    "Answer concisely."
+    "seconds, so run it once with sensible settings. If a result has a warning, relay it plainly. "
+    "Format simulation answers the same way: the first line is a one-sentence verdict in bold; then "
+    "a markdown table of the top responders (neuron, type, Hz; at most 5 rows), one per run when "
+    "comparing; then the readout in one line; end with one short caveat line in italics and at most "
+    "two next steps. Answer concisely in the user's language."
 )
 
 MAX_STEPS = 6  # tool rounds (one round = the model asks for tools, the tools answer)

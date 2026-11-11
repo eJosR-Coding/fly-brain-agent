@@ -388,6 +388,10 @@ DEFAULT_TRIALS = 3
 COMPARE_TRIALS = 5  # default when silencing: a p-value needs a few trials
 ACTIVE_HZ = 1.0  # a neuron counts as active above this mean rate
 TOP_RESPONDERS = 10
+# Shiu et al. 2024 sign every transmitter except GABA and glutamate as excitatory, so a broad
+# projector driven hard can light up a large slice of the brain. Above this many active neurons
+# the result is flagged so the agent reports a likely model artifact, not a biological amplifier.
+RUNAWAY_ACTIVE = 5000
 TOP_NON_SENSORY = 5
 SENSORY_CLASSES = ("sensory", "sensory_ascending")
 READOUT_TOP = 5
@@ -501,6 +505,16 @@ def _readout_trace(atlas: Atlas, readout: np.ndarray, bin_ms: float, trials: int
     return trace
 
 
+def _runaway_warning(lit: int, stimulated: int, total: int) -> str:
+    return (
+        f"likely runaway excitation: {lit} neurons ({100 * lit / total:.1f}% of the brain) fired above "
+        f"{ACTIVE_HZ:g} Hz from {stimulated} stimulated. The model treats every transmitter except GABA and "
+        "glutamate as excitatory (dopamine, octopamine and serotonin too, with no neuromodulation), so a "
+        "cascade this wide is most likely a model artifact; say so instead of calling it a biological "
+        "amplifier, and try a lower rate_hz"
+    )
+
+
 def stimulate(
     atlas: Atlas, store: SelectionStore, sims, selection_id, rate_hz=100, duration_ms=500, trials=None,
     silence_selection_id=None, readout_selection_id=None, seed: int = 0,
@@ -580,6 +594,9 @@ def stimulate(
         active_count=len(active), compare_id=compare_id, silenced_rows=silence,
         readout=None if trace is None else trace(res),
     )
+    lit = max(len(active), out.get("baseline", {}).get("active_neurons", 0))
+    if lit > RUNAWAY_ACTIVE:
+        out["warning"] = _runaway_warning(lit, len(stim), len(atlas.neurons))
     out["runtime_s"] = round(runtime, 1)
     out["note"] = "; ".join([*notes, SIM_NOTE])
     return out

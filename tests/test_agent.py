@@ -244,3 +244,13 @@ def test_ordinary_tool_errors_still_go_back_to_the_model():
         assert fb[0].status == "error" and "bad cell_type" in fb[0].content
 
     asyncio.run(run())
+
+
+def test_the_prompt_fixes_one_answer_layout_for_simulation_results():
+    # same shape every time: verdict first, a small table, one caveat line, the runaway flag relayed
+    for phrase in ("first line", "markdown table", "at most 5 rows", "one short caveat line", "warning"):
+        assert phrase in SYSTEM_PROMPT
+
+
+def test_the_prompt_stays_small():
+    assert len(SYSTEM_PROMPT) < 1800  # sent on every model call

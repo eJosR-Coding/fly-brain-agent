@@ -318,3 +318,32 @@ def test_no_effect_is_called_noise_not_a_finding(tiny_atlas, store, sims):
                           silence_selection_id=pen, readout_selection_id=ticket(tiny_atlas, store, cell_type="EPG"))
     st = out["readout_stats"]  # silencing PEN (a leaf here) cannot change EPG
     assert st["delta_hz"] == 0 and st["p_value"] == 1.0 and "not distinguishable from noise with 3 trials" in st["verdict"]
+
+
+# --- runaway excitation warning ----------------------------------------------------------
+
+
+def test_a_brain_wide_cascade_gets_a_runaway_warning(tiny_atlas, store, sims, monkeypatch):
+    monkeypatch.setattr(tools, "RUNAWAY_ACTIVE", 3)  # the tiny net lights 3+ neurons; the real cut is 5000
+    out = run(tiny_atlas, store, sims)
+    warning = out["warning"]
+    assert warning.startswith("likely runaway excitation")
+    assert f"{out['active_neurons']} neurons" in warning
+    assert "from 1 stimulated" in warning
+    # the reason the model must give instead of calling it a biological amplifier
+    assert "dopamine, octopamine and serotonin" in warning and "GABA and glutamate" in warning
+    assert "artifact" in warning and "lower rate_hz" in warning
+
+
+def test_ordinary_runs_carry_no_runaway_warning(tiny_atlas, store, sims):
+    assert tools.RUNAWAY_ACTIVE == 5000
+    assert "warning" not in run(tiny_atlas, store, sims)
+
+
+def test_a_silenced_run_warns_when_either_side_ran_away(tiny_atlas, store, sims, monkeypatch):
+    monkeypatch.setattr(tools, "RUNAWAY_ACTIVE", 3)
+    stim = ticket(tiny_atlas, store, cell_type="ORN_DA1")
+    silence = ticket(tiny_atlas, store, cell_type="PEN_a")  # silencing downstream keeps the upstream 3 lit
+    out = tools.stimulate(tiny_atlas, store, sims, stim, rate_hz=300, duration_ms=200, trials=2,
+                          silence_selection_id=silence)
+    assert "warning" in out
