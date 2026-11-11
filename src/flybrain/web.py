@@ -6,7 +6,7 @@ import sys
 
 from flybrain.agent import MAX_STEPS
 from flybrain.cli import DEFAULT_MODEL, _model_spec, _one_line, _positive_int, _unwrap
-from flybrain.models import parse_model_list, resolve_models
+from flybrain.models import CHAT_MODEL_KWARGS, parse_model_list, resolve_models
 
 
 def _model_list(value: str) -> str:
@@ -54,7 +54,7 @@ def main(argv=None) -> int:
     from flybrain.api import create_app
 
     try:
-        model = init_chat_model(args.model)
+        model = init_chat_model(args.model, **CHAT_MODEL_KWARGS)
     except Exception as exc:
         print(
             f"flybrain-web: could not set up model {args.model!r}: {_one_line(_unwrap(exc))}\n"

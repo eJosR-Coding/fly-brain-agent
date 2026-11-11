@@ -30,7 +30,7 @@ from flybrain.agent_mcp import SERVER_NAME
 from flybrain.anatomy import NT_CODES, REGION_CODES, landmarks, nt_codes, region_codes
 from flybrain.atlas import RowIndex, load_atlas
 from flybrain.mcp_server import DEFAULT_ANNOTATIONS, build_server, load_connectome
-from flybrain.models import describe_models
+from flybrain.models import CHAT_MODEL_KWARGS, describe_models
 from flybrain.selections import SelectionStore, UnknownSelectionError
 from flybrain.sim_service import SimulationService, SimulationUnavailable, UnknownSimulationError
 from flybrain.tools import ACTIVE_HZ, load_presets, preset_selection, search_neurons, stimulate
@@ -175,7 +175,7 @@ def create_app(
             return model_factory(model_id)
         from langchain.chat_models import init_chat_model
 
-        return init_chat_model(model_id)
+        return init_chat_model(model_id, **CHAT_MODEL_KWARGS)
 
     async def _graph_for(model_id: str):
         """The graph for an allowlisted id, built once (all share the checkpointer)."""

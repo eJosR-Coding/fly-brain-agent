@@ -10,6 +10,7 @@ from langchain.chat_models import init_chat_model
 
 from flybrain.agent import MAX_STEPS, ask, build_graph
 from flybrain.agent_mcp import ServerStoppedError, mcp_tools
+from flybrain.models import CHAT_MODEL_KWARGS
 
 DEFAULT_MODEL = "anthropic:claude-sonnet-5-5"
 
@@ -71,7 +72,7 @@ def parse_args(argv):
 async def run(args) -> str:
     """Run the question; every failure class is turned into its own CliError message."""
     try:
-        model = init_chat_model(args.model)
+        model = init_chat_model(args.model, **CHAT_MODEL_KWARGS)
     except Exception as exc:
         raise CliError(
             f"could not set up model {args.model!r}: {_one_line(_unwrap(exc))}\n"

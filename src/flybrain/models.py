@@ -8,6 +8,12 @@ from collections.abc import Mapping
 
 # Groq models with tool use, from https://console.groq.com/docs/tool-use (production tier
 # on https://console.groq.com/docs/models).
+# Passed to init_chat_model for every chat model. Provider SDKs retry 429/5xx with backoff
+# (Groq and Google default to 2 retries, honouring Retry-After), which on a rate-limited free
+# tier looks like a hang. One retry, then the friendly quota message reaches the user.
+# `max_retries` is the kwarg of langchain-groq, -google-genai, -anthropic and -openai alike.
+CHAT_MODEL_KWARGS = {"max_retries": 1}
+
 DEFAULT_EXTRA_MODELS = [
     # checked against the Groq models API (2026-11-10): the Llama 3 ids were no longer served
     "groq:openai/gpt-oss-120b",
