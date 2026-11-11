@@ -40,3 +40,32 @@ Route: one delegated writer, all four tasks (writer trigger: 2+ non-trivial file
 
 ## Next step
 Try a real Groq turn and compare the usage line against the provider dashboard.
+
+## Follow-up: fit small per-minute token limits (branch fix/fit-small-token-limits)
+
+Evidence (2026-11-10, Groq response headers on the user's key): `openai/gpt-oss-120b` and
+`openai/gpt-oss-20b` allow 8,000 tokens per minute (`x-ratelimit-limit-tokens`), 1,000 requests.
+A single request above that fails with HTTP 413 "Request too large". Observed: turn 1 (sugar
+stimulate, 4 calls, 9.4k tokens) fine; turn 2 the model called `list_selection(limit=50)` on a
+336-neuron ticket (~11-12k chars) and the next request exceeded 8k -> 413, mislabelled as quota.
+
+- [x] T5 `fit_to_budget` + `FLYBRAIN_CONTEXT_BUDGET` (default 6000). Commit f91e518.
+- [x] T6 `top_non_sensory` in `stimulate`; `list_selection` default 20, cap 25, compact rows. Commit e0e51fa.
+- [x] T7 413 / "request too large" friendly error. Commit 2d9d4ca.
+- [x] T8 web `new chat` button (`newChatEnabled`). Commit 8488dea.
+
+Route: delegated direct, one writer. TDD strict, runners `uv run pytest -q`, `pnpm -C web test`.
+
+Evidence:
+- T5 RED: `ImportError: cannot import name 'DEFAULT_CONTEXT_BUDGET' from 'flybrain.agent'`; GREEN 19 tests (budget respected, oldest turn dropped first, current kept, pairing invariant for budgets 1000..20000, largest-first truncation to the 1,000-char floor, idempotent, input not mutated, env validated, end-to-end with fakes: every request <= budget while the checkpoint keeps the 12,000-char result whole).
+- T6 RED: 5 failed (`top_non_sensory` KeyError, page cap 50 != 25, rows carried positions, note text). GREEN 456 passed. Tool definitions 6,494 chars (budget 6,500).
+- T7 RED: 2 failed (413 text mapped to nothing / quota). GREEN 459 passed. The size wording is tested before the quota wording because Groq's 413 body also says `rate_limit_exceeded`.
+- T8 RED: 3 failed (`newChatEnabled` not exported). GREEN 189 vitest, `pnpm -C web build` ok.
+- Estimated tokens per request, failing scenario replayed with fakes (turn 1: search 1.2k + preset 0.9k + stimulate 1.9k chars; turn 2: list page 12k chars; tool definitions ~6.5k chars + system prompt 919 chars, chars/4):
+  - before (no fit): 1,691 / 2,011 / 2,257 / 2,751 / 2,891 / 3,909 (max 3,909; the 12k page is already cut to 4,000 chars by compaction).
+  - budget 3,000: same until the page arrives, last request 2,708 (max 2,891).
+  - budget 6,000 (default): identical to before here, since nothing exceeds it.
+
+## Not done (follow-up)
+- chars/4 undercounts id-heavy JSON; the real request that hit 413 was ~2x the estimate. Default 6000 may still be too high for an 8k TPM tier (the TPM counter also spans requests within the minute, which a per-request budget cannot see). Consider a lower default or a per-model budget after a real Groq run.
+- No real-provider run (no real LLM by instruction).

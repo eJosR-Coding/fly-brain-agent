@@ -100,7 +100,7 @@ def build_server(
 
     @server.tool()
     def list_selection(selection_id: str, offset: int = 0, limit: int = 20) -> dict:
-        """Page through a selection's neurons (only for individuals). limit max 50, clamped (`note`)."""
+        """Page a selection's neurons (id, type, class, side); only for individuals. limit 20, max 25."""
         return tools.list_selection(atlas, store, selection_id, offset, limit)
 
     @server.tool()
@@ -185,8 +185,8 @@ def build_server(
     ) -> dict:
         """Whole-brain SIMULATION: Poisson-drive a group, see who responds (LIF model, Shiu et al. 2024). A MODEL, not the living fly.
 
-        Returns active count (> 1 Hz), top 10 responders (root_id, cell_type, rate_hz), readout
-        rates if given, a NEW `selection_id` of active neurons and a `simulation_id`. Silencing adds a baseline run (2x time).
+        Returns active count (> 1 Hz), top 10 responders, `top_non_sensory` (silencing candidates), readout
+        rates, a NEW `selection_id` of active neurons and a `simulation_id`. Silencing adds a baseline run (2x).
         Slow (~5 s/sim-s/trial): run once.
 
         Args:

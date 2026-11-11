@@ -126,15 +126,15 @@ switch model in the picker or retry later.
 | `search_neurons` | filter by cell_type / nt / super_class / side; returns a summary + `selection_id` |
 | `count_neurons` | counts grouped by a field (top N + other) |
 | `describe_neuron` | one neuron by root_id |
-| `list_selection` | page through a ticket (max 50 per call) |
+| `list_selection` | page through a ticket (default 20, max 25 per call; compact rows) |
 
 Behavior worth knowing:
 
 - Filters are trimmed; an empty or whitespace-only filter means "no filter". Values over 200
   characters are rejected. `side` is `left`, `right`, `center` or `na`.
-- Out-of-range paging never errors: `offset`, `limit` (max 50) and `count_neurons` `top`
+- Out-of-range paging never errors: `offset`, `limit` (max 25) and `count_neurons` `top`
   (max 100) are clamped and the answer carries a `note` saying what changed
-  (e.g. `limit capped to 50`, `offset 900 is past the end (total 42)`).
+  (e.g. `limit capped to 25`, `offset 900 is past the end (total 42)`).
 - A search with no match lists the valid values when `nt`, `super_class` or `side` is off.
 - Tickets live in server memory, capped at 100 (`FLYBRAIN_MAX_SELECTIONS`), least recently
   used evicted first. An expired ticket says which search to run again.
@@ -226,7 +226,7 @@ The full table and the semantics we matched are in `odd/tasks/simulation-level1.
 | Tool | What it does |
 |---|---|
 | `preset_selection` | a ticket for a published, cited neuron set: `sugar` (the 21 sugar-sensing GRNs of the paper's example, 20 exist in v783) or `mn9` (the proboscis motor neuron it reads out). The sets live in `src/flybrain/data/presets.json` with their source; an unknown name lists the available ones |
-| `stimulate` | drives a selection and returns, in under 2 KB: how many neurons were active (above 1 Hz), the top 10 responders (`cell_type`, `super_class`, `rate_hz`), the rates of an optional readout group, a ticket of the active neurons (the viewer highlights it) and a `simulation_id` for the activity animation. Inputs are capped (rate 1 to 300 Hz, 100 to 1000 ms, 1 to 10 trials) and a `note` says when they were. With `silence_selection_id` those neurons still fire but pass nothing on; a baseline run is added to report the change in the readout (2x the runtime) |
+| `stimulate` | drives a selection and returns, in under 2 KB: how many neurons were active (above 1 Hz), the top 10 responders (`cell_type`, `super_class`, `rate_hz`), `top_non_sensory` (the 5 most active neurons that are not sensory: where silencing candidates come from), the rates of an optional readout group, a ticket of the active neurons (the viewer highlights it) and a `simulation_id` for the activity animation. Inputs are capped (rate 1 to 300 Hz, 100 to 1000 ms, 1 to 10 trials) and a `note` says when they were. With `silence_selection_id` those neurons still fire but pass nothing on; a baseline run is added to report the change in the readout (2x the runtime) |
 
 One simulation runs at a time (a lock), in a thread, so the API stays responsive. Results are kept in
 a small LRU (10). Real numbers on this machine: `stimulate(sugar, 100 Hz, 1000 ms, 3 trials,
@@ -280,6 +280,21 @@ conversation. Free tiers (Groq) limit tokens per minute, so the agent keeps all 
   question and the final answer: their tool calls and results are dropped together, so no tool
   call is left without its result. In the kept window a single tool result over 4,000 characters
   is cut with a `... [truncated N chars]` marker.
+- **Per-request budget.** After compaction, `fit_to_budget` makes the whole request (system
+  prompt + tool definitions + messages, estimated as characters / 4) fit
+  `FLYBRAIN_CONTEXT_BUDGET` tokens (default 6000, an integer >= 1000). It drops the oldest
+  whole turns first (never the current one), then cuts the largest tool results of the
+  current turn down to 1,000 characters each. Why: on 2026-11-10 the Groq headers for
+  `openai/gpt-oss-120b` and `openai/gpt-oss-20b` on the free tier showed
+  `x-ratelimit-limit-tokens: 8000` per minute, and a single request above that fails with
+  HTTP 413 ("Request too large"). The estimate is rough (id-heavy JSON tokenizes denser than
+  4 chars per token), so on that tier set `FLYBRAIN_CONTEXT_BUDGET=4000` if you still see 413s.
+  A 413 is reported as "request too large for its per-minute token limit; start a new chat or
+  ask a narrower question", distinct from the 429 quota message.
+- **New chat.** The chat header has a `new chat` button that clears the log and drops the
+  conversation id, so the next message starts a fresh thread (and a fresh token count).
+  `list_selection` pages are small by design (default 20, max 25 rows of
+  `root_id, cell_type, super_class, side`).
 - **Fail fast on rate limits.** Chat models are built with `max_retries=1`, so a 429 reaches the
   friendly quota message in seconds instead of the SDK retrying silently until the turn limit.
 - **Usage per turn.** The server sums `usage_metadata` over every model call of the turn and

@@ -12,7 +12,9 @@ from flybrain.connectome import Connectome, ConnectomeError
 from flybrain.selections import SelectionStore
 
 SAMPLE_SIZE = 5
-MAX_PAGE = 50
+MAX_PAGE = 25  # list_selection rows per call (a page is ~100 chars per neuron in the context)
+DEFAULT_PAGE = 20
+PAGE_FIELDS = ("root_id", "cell_type", "super_class", "side")
 MAX_TOP = 100  # count_neurons never shows more groups than this
 
 # tool filter name -> atlas column, for the closed sets we can list in a no-match hint
@@ -113,9 +115,9 @@ def describe_neuron(atlas: Atlas, root_id: int) -> dict:
 
 
 def list_selection(
-    atlas: Atlas, store: SelectionStore, selection_id, offset=0, limit=20
+    atlas: Atlas, store: SelectionStore, selection_id, offset=0, limit=DEFAULT_PAGE
 ) -> dict:
-    """One page of a ticket. Limit is hard-capped so the context stays small."""
+    """One page of a ticket. Limit is hard-capped and rows are compact so the context stays small."""
     if not isinstance(selection_id, str):
         raise TypeError(f"selection_id must be a string, got {type(selection_id).__name__}")
     notes: list[str] = []
@@ -130,7 +132,7 @@ def list_selection(
         "selection_id": selection_id,
         "total": total,
         "offset": offset,
-        "neurons": [atlas.describe(r) for r in page],
+        "neurons": [{k: d[k] for k in PAGE_FIELDS} for d in map(atlas.describe, page)],
     }
     if notes:
         out["note"] = "; ".join(notes)
@@ -383,6 +385,8 @@ MIN_DURATION_MS, MAX_DURATION_MS = 100.0, 1000.0
 MAX_TRIALS = 10
 ACTIVE_HZ = 1.0  # a neuron counts as active above this mean rate
 TOP_RESPONDERS = 10
+TOP_NON_SENSORY = 5
+SENSORY_CLASSES = ("sensory", "sensory_ascending")
 READOUT_TOP = 5
 SIM_BINS = 100  # time bins per recording (the simulator caps at 200)
 SIM_NOTE = (
@@ -464,10 +468,15 @@ def stimulate(
     super_classes = atlas.neurons["super_class"].to_numpy()
     top = [{**item, "super_class": _text(super_classes[int(r)]), "rate_hz": round(float(rates[r]), 1)}
            for item, r in zip(_label(atlas, order), order)]
+    non_sensory = active[~np.isin(super_classes[active], SENSORY_CLASSES)]
+    non_sensory = non_sensory[np.argsort(-rates[non_sensory], kind="stable")][:TOP_NON_SENSORY]
+    top_non_sensory = [{**item, "super_class": _text(super_classes[int(r)]), "rate_hz": round(float(rates[r]), 1)}
+                       for item, r in zip(_label(atlas, non_sensory), non_sensory)]
     out = {
         "stimulus": {"neurons": int(len(stim)), "rate_hz": rate, "duration_ms": duration, "trials": n_trials},
         "active_neurons": int(len(active)),
         "top_responders": top,
+        "top_non_sensory": top_non_sensory,
         "selection_id": None,
     }
     if len(active):
