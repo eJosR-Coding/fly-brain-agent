@@ -273,6 +273,11 @@ class Simulation:
     def _csr(self) -> sparse.csr_matrix:
         return sparse.csr_matrix((self._counts, self._indices, self._indptr), shape=(self.n, self.n))
 
+    def outgoing_signs(self, rows) -> np.ndarray:
+        """Net sign of each row's outgoing weights: +1 excitatory, -1 inhibitory, 0 no outgoing synapses."""
+        idx = self._rows(rows, "sign")
+        return np.sign(np.asarray(self._csr()[idx].sum(axis=1)).ravel()).astype(np.int8)
+
     # -- running -----------------------------------------------------------------------
 
     def _rows(self, rows, what: str) -> np.ndarray:
