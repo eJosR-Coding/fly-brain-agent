@@ -150,3 +150,38 @@ def test_find_path_doc_explains_strength_fields(tiny_atlas):
     for field in ("synapses_from_previous", "min_hop_synapses", "total_synapses",
                   "shortest_path_count", "alternative_routes", "bottleneck"):
         assert field in doc, field
+
+
+# --- token budget: the tool definitions ride on EVERY model call ---------------------------------
+
+TOOL_DEFS_BUDGET_CHARS = 6500  # ~1,600 tokens; was 12,320 chars (~3,100 tokens) before trimming
+
+
+def _definition_chars(tiny_atlas) -> dict[str, int]:
+    tools_ = asyncio.run(build_server(tiny_atlas).list_tools())
+    return {
+        t.name: len(json.dumps({"name": t.name, "description": t.description, "inputSchema": t.inputSchema}))
+        for t in tools_
+    }
+
+
+def test_tool_definitions_stay_within_the_token_budget(tiny_atlas):
+    sizes = _definition_chars(tiny_atlas)
+    assert len(sizes) == 10
+    assert sum(sizes.values()) <= TOOL_DEFS_BUDGET_CHARS, sizes
+
+
+def test_concise_docs_keep_the_interpretation_rules(tiny_atlas):
+    by_name = {t.name: t for t in asyncio.run(build_server(tiny_atlas).list_tools())}
+    assert "not the living fly" in by_name["stimulate"].description
+    assert "silence_selection_id" in by_name["stimulate"].inputSchema["properties"]
+    assert "selection_id" in by_name["search_neurons"].description  # the ticket concept
+    assert "not signal flow" in by_name["neighbors"].description
+    assert "reachab" in by_name["lesion_effect"].description.lower()
+    assert "sugar" in by_name["preset_selection"].description and "mn9" in by_name["preset_selection"].description
+
+
+def test_schemas_carry_no_title_noise(tiny_atlas):
+    for t in asyncio.run(build_server(tiny_atlas).list_tools()):
+        assert "title" not in t.inputSchema
+        assert all("title" not in p for p in t.inputSchema["properties"].values()), t.name
