@@ -24,7 +24,7 @@ import time
 from collections.abc import AsyncIterator
 
 from langchain_core.runnables import RunnableConfig
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
@@ -239,8 +239,11 @@ async def stream_events(
 ) -> AsyncIterator[dict]:
     """Run one turn and yield typed events (plain dicts) as the graph progresses.
 
-    Types: ``tool_call`` {tool, args}, ``tool_result`` {tool, content, error},
-    ``answer`` {text}, ``error`` {message}. Failures never raise: they become one final
+    Types: ``tool_call`` {id, tool, args}, ``tool_result`` {id, tool, content, error, ms}
+    (ms = since the matching tool_call), ``answer_delta`` {text} (token chunks of a reply that
+    carries no tool call, only from models that stream; text before a tool call can show up too,
+    so a consumer drops it on the next tool_call), ``answer`` {text} (the full text), ``error``
+    {message}. Failures never raise: they become one final
     ``error`` event (same texts as ``ask``), so a consumer can always close the stream.
     ``thread_id`` selects the conversation memory (needs a checkpointer in the graph).
     A tool_call event is emitted when the model asks; if the budget then cuts the run,
@@ -257,8 +260,9 @@ async def stream_events(
     last_agent: AIMessage | None = None
     deadline = None if turn_timeout is None else time.monotonic() + turn_timeout
     updates = graph.astream(
-        {"messages": [HumanMessage(question)]}, config=config, stream_mode="updates"
+        {"messages": [HumanMessage(question)]}, config=config, stream_mode=["updates", "messages"]
     ).__aiter__()
+    started: dict[str, float] = {}
     failure: str | None = None  # set on every non-answer path; the thread is repaired below
     answered = False
     try:
@@ -277,18 +281,29 @@ async def stream_events(
                         "may be overloaded); try again or switch --model"
                     )
                     break
-                for node, delta in update.items():
+                mode, payload = update
+                if mode == "messages":
+                    chunk, meta = payload
+                    if (isinstance(chunk, AIMessageChunk) and meta.get("langgraph_node") == "agent"
+                            and not chunk.tool_call_chunks and chunk.text):
+                        yield {"type": "answer_delta", "text": chunk.text}
+                    continue
+                for node, delta in payload.items():
                     for msg in (delta or {}).get("messages", []):
                         if node == "agent":
                             last_agent = msg
                             for tc in getattr(msg, "tool_calls", None) or []:
-                                yield {"type": "tool_call", "tool": tc["name"], "args": tc["args"]}
+                                started[tc["id"]] = time.monotonic()
+                                yield {"type": "tool_call", "id": tc["id"], "tool": tc["name"], "args": tc["args"]}
                         elif isinstance(msg, ToolMessage):
+                            t0 = started.pop(msg.tool_call_id, None)
                             yield {
                                 "type": "tool_result",
+                                "id": msg.tool_call_id,
                                 "tool": msg.name,
                                 "content": msg.text,
                                 "error": msg.status == "error",
+                                "ms": 0 if t0 is None else round((time.monotonic() - t0) * 1000),
                             }
         except GraphRecursionError:
             failure = _hard_stop(max_steps)

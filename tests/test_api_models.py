@@ -107,3 +107,20 @@ def test_factory_failure_becomes_an_error_event(tiny_tsv_path):
     names = [n for n, _ in events]
     assert names == ["meta", "error", "done"]
     assert "groq:fast" in dict(events)["error"]["message"]
+
+
+def test_provider_errors_name_the_chosen_model(tiny_tsv_path):
+    class Boom(Exception):
+        status_code = 429
+
+    def factory(model_id):
+        def reply(msgs):
+            raise Boom("429 RESOURCE_EXHAUSTED")
+
+        return fn_model(reply)
+
+    app = create_app(atlas_path=tiny_tsv_path, model=answering("x"), model_name="google_genai:g",
+                     models=["google_genai:g", "groq:fast"], model_factory=factory, env=ENV)
+    with TestClient(app) as client:
+        events = parse_sse(chat(client, "hi", model="groq:fast").text)
+    assert dict(events)["error"]["message"].startswith("model groq:fast hit its quota or rate limit")

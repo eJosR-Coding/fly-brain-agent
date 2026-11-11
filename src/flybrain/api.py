@@ -417,12 +417,15 @@ def create_app(
             # aclosing: when the client leaves, the stream is closed right away (not at GC time)
             # so its finally block repairs the thread before the next turn.
             async with aclosing(
-                stream_events(graph, req.message, conversation_id, max_steps, app.state.turn_timeout)
+                stream_events(graph, req.message, conversation_id, max_steps, app.state.turn_timeout, used)
             ) as events:
                 async for ev in events:
                     if ev["type"] == "tool_call":
-                        yield _sse("tool_call", {"tool": ev["tool"], "args": _short(ev["args"])})
+                        yield _sse("tool_call", {"id": ev["id"], "tool": ev["tool"], "args": _short(ev["args"])})
+                    elif ev["type"] == "answer_delta":
+                        yield _sse("answer_delta", {"text": ev["text"]})
                     elif ev["type"] == "tool_result":
+                        yield _sse("tool_result", {"id": ev["id"], "tool": ev["tool"], "ok": not ev["error"], "ms": ev["ms"]})
                         hl = None if ev["error"] else _highlight(ev["content"], seen)
                         if hl is not None:
                             yield hl

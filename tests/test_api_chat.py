@@ -46,14 +46,17 @@ def test_event_order_and_highlight_indices(tiny_tsv_path, tiny_atlas):
         r = chat(client, "glutamate?")
     assert r.headers["content-type"].startswith("text/event-stream")
     events = parse_sse(r.text)
-    assert [n for n, _ in events] == ["meta", "tool_call", "highlight", "answer", "done"]
+    assert [n for n, _ in events] == ["meta", "tool_call", "tool_result", "highlight", "answer", "done"]
     assert events[0][1]["conversation_id"]
-    assert events[1][1] == {"tool": "search_neurons", "args": {"nt": "glutamate"}}
-    hl = events[2][1]
+    assert events[1][1] == {"id": "c1", "tool": "search_neurons", "args": {"nt": "glutamate"}}
+    tr = events[2][1]
+    assert (tr["id"], tr["tool"], tr["ok"]) == ("c1", "search_neurons", True)
+    assert isinstance(tr["ms"], int) and tr["ms"] >= 0
+    hl = events[3][1]
     expected = tiny_atlas.neurons.index[tiny_atlas.neurons["top_nt"] == "glutamate"].tolist()
     assert hl["indices"] == expected == [60]
     assert hl["total"] == 1 and hl["selection_id"].startswith("sel_")
-    assert events[3][1] == {"text": "One glutamate neuron."}
+    assert events[4][1] == {"text": "One glutamate neuron."}
 
 
 def test_big_selection_sends_fetch_url_instead_of_indices(tiny_tsv_path):
@@ -190,3 +193,15 @@ def test_bad_env_turn_timeout_is_rejected(tiny_tsv_path, monkeypatch, bad):
 def test_bad_turn_timeout_argument_is_rejected(tiny_tsv_path, bad):
     with pytest.raises(ValueError, match="turn_timeout"):
         create_app(atlas_path=tiny_tsv_path, turn_timeout=bad)
+
+
+def test_streaming_model_sends_answer_deltas_before_the_full_answer(tiny_tsv_path):
+    from test_agent_stream import streaming
+
+    app = create_app(atlas_path=tiny_tsv_path, model=streaming(lambda m: AIMessage(content="alpha beta gamma")))
+    with TestClient(app) as client:
+        events = parse_sse(chat(client).text)
+    names = [n for n, _ in events]
+    assert names[0] == "meta" and names[-2:] == ["answer", "done"]
+    assert names.count("answer_delta") >= 2 and set(names[1:-2]) == {"answer_delta"}
+    assert "".join(d["text"] for n, d in events if n == "answer_delta").strip() == "alpha beta gamma"

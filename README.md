@@ -310,6 +310,12 @@ must be a positive number; anything else stops startup with a one-line error.
 | `POST /chat` | `text/event-stream`, body `{"message", "conversation_id"?, "model"?}`; `model` must be an available id from `/models`, else `422` listing them |
 | `GET /selections/{id}/indices` | row indices of a ticket, uint32 LE; 404 if unknown or expired |
 
+**Chat stream events** (`POST /chat`): `meta` `{conversation_id, model}`, `tool_call`
+`{id, tool, args}` (the tool started), `tool_result` `{id, tool, ok, ms}` (it finished, `ms`
+since its `tool_call`), `highlight` and `activity` as before, `answer_delta` `{text}` (final
+answer chunks, only from models that stream; a client drops any partial text when the next
+`tool_call` arrives), then `answer` `{text}` with the full text, `error` `{message}`, `done`.
+
 **Binary contract.** `/brain/points` is `count * 12` bytes: float32, little-endian, `x y z`
 interleaved, in micrometers, in atlas row order. Decode with
 `new Float32Array(buffer)` in the browser or `np.frombuffer(body, "<f4").reshape(-1, 3)`.
