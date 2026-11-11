@@ -295,6 +295,60 @@ Honesty note: this is the published model of the wiring diagram with fixed param
 living fly: no neuromodulation, no plasticity, no ventral nerve cord, and the sign of each synapse
 comes from the reference data. The agent is told to call results a model's prediction.
 
+## Experiment bench (dose-response, silencing screen, statistics)
+
+Two MCP tools turn single simulations into small experiments. Both are model predictions: the
+trials of the simulator differ only by Poisson input noise, so every interval and p-value below
+says how reproducible a result is inside the model, not how variable living flies are.
+
+| Tool | What it does |
+|---|---|
+| `dose_response(selection_id, readout_selection_id, rates_hz=[10,25,50,100,200], duration_ms=300, trials=3)` | one simulation per rate (at most 8 rates, 1..300 Hz; duration 100..1000 ms; trials 1..10): readout mean Hz with a 95% CI (Student t over trials, lower bound clipped at 0 Hz), active neurons, and `ec50_hz`, the rate at half of the maximum response by linear interpolation (null, with a reason, when there is no response or it is already above half-max at the lowest rate) |
+| `silencing_screen(selection_id, readout_selection_id, candidates="top_non_sensory", n=8, duration_ms=300, trials=3, rate_hz=100)` | one baseline, then each candidate neuron silenced in turn (same seeds): delta Hz with a 95% CI, Welch p, Holm-adjusted `p_adj` and `significant` (p_adj < 0.05). Candidates are the busiest non-sensory neurons of the baseline (never the stimulus or the readout), or any ticket; at most 12. Returns a `candidates_selection_id` ticket |
+| `stimulate` | with `silence_selection_id`, trials default to 5 and the result gains `readout_stats`: baseline vs silenced as mean and 95% CI, delta, Welch p, Cohen's d and a plain verdict |
+
+Statistics (`src/flybrain/stats.py`): sample SD, t interval, Welch's t-test, Cohen's d (pooled SD)
+and the Holm correction, checked against textbook values. A run with one trial reports no interval
+and no p-value ("need at least 2 trials"); groups without any spread are handled explicitly (equal
+means give p = 1, different means p = 0, never NaN). The verdict says "significant at p<0.05" or
+"not distinguishable from noise with N trials", and names the correction when several candidates
+are tested. Silencing zeroes a neuron's outgoing synapses; the same random seeds are used for the
+baseline and the silenced runs, which makes the Welch test conservative rather than lenient.
+
+Everything runs under the simulator's single lock (one simulation at a time) and holds the lock for
+the whole experiment. Each silenced run is kept as a recording linked to the shared baseline (a
+baseline is never evicted while a run compared against it is alive), so the viewer can open the
+difference map of any screen row. Progress (`experiment`, `done`, `total`) is streamed as SSE
+`progress` events during a chat turn and exposed by `GET /experiments/progress`; the finished
+chart arrives as a `chart` event (`{kind: "dose_response" | "screen", id, ...}`).
+
+No-LLM endpoints for the viewer chips: `POST /experiments/dose_response` and
+`POST /experiments/screen` (stimulus and readout as a preset or a ticket, like `POST /simulate`);
+the answer is the tool result plus its `chart` payload.
+
+Measured on the real data on this machine (sugar-sensing neurons -> MN9 readout, 300 ms, 3 trials):
+one run costs about 1.3 s per trial at 100 Hz, so the default dose-response (5 rates) took
+19.0 s and the default screen (baseline + 8 candidates) 37.1 s. That fits the 90 s turn limit with
+room to spare, but a turn that also waits on a slow model may not, so experiment tools extend the
+turn deadline by `FLYBRAIN_EXPERIMENT_TIMEOUT` seconds (default 300) each time the model starts one;
+other tools get no extra time.
+
+Real example (screen, 3 trials, 100 Hz): baseline MN9 63.3 Hz (95% CI 41.4 to 85.2). Silencing the
+eight busiest non-sensory neurons moved MN9 by between -12 and +19 Hz, and none of them was
+significant after Holm correction (smallest raw p = 0.045 for DNge031, adjusted 0.36): with this
+trial-to-trial spread, 3 trials cannot resolve effects that small. The dose-response gave no MN9
+response at 10 and 25 Hz, 17.8 Hz at 50, 63.3 at 100 and 85.6 at 200 Hz (half-max about 77.5 Hz,
+and the curve is still rising at the top of the sweep).
+
+The viewer has two chips, `dose` and `screen` (sugar neurons -> MN9, disabled when the simulator is
+unavailable, with live `screen · 3/8` progress). Their charts open in the charts panel: the
+dose-response curve (log x axis, mean line with CI band and whiskers, a dashed EC50 marker with a
+direct label, tooltips with the exact values) and the screen (ranked dots with CI whiskers around a
+zero line; filled dot = significant after correction, hollow = not, so nothing relies on colour;
+clicking or pressing Enter on a row opens that candidate's difference map). Both have a visually
+hidden data table. The tool definitions sent on every model call grew by about 540 tokens for the
+two tools (budget test: 8,400 characters).
+
 ## How the agent works
 
 `flybrain.agent` is an explicit LangGraph loop: the model node asks, `ToolNode` executes,
@@ -400,7 +454,7 @@ per hop, and the weakest hop; omitted when the route has a neuron the atlas does
 answer chunks, only from models that stream; a client drops any partial text when the next
 `tool_call` arrives), then `usage` `{calls, input_tokens, output_tokens, total_tokens}` (token
 counts of the turn, `null` when the provider reports none; sent before `answer`/`error` when the
-model was called), `answer` `{text}` with the full text, `error` `{message}`, `done`.
+model was called), `answer` `{text}` with the full text, `error` `{message}`, `done`. Experiments add `progress` `{experiment, done, total}` (between an experiment tool's `tool_call` and `tool_result`) and `chart` `{kind, id, ...}` (after its result).
 
 **Binary contract.** `/brain/points` is `count * 12` bytes: float32, little-endian, `x y z`
 interleaved, in micrometers, in atlas row order. Decode with
