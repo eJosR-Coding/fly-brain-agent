@@ -9,9 +9,9 @@ from collections.abc import Mapping
 # Groq models with tool use, from https://console.groq.com/docs/tool-use (production tier
 # on https://console.groq.com/docs/models).
 DEFAULT_EXTRA_MODELS = [
+    # checked against the Groq models API (2026-11-10): the Llama 3 ids were no longer served
     "groq:openai/gpt-oss-120b",
-    "groq:llama-3.3-70b-versatile",
-    "groq:llama-3.1-8b-instant",
+    "groq:openai/gpt-oss-20b",
 ]
 
 PROVIDER_KEYS = {
