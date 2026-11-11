@@ -12,6 +12,8 @@ export interface Activity {
   peak: number;
   /** neurons above 1 Hz mean rate (as the stimulate tool reports), when the backend sent it; the rows are every neuron that spiked at all */
   activeCount: number | null;
+  /** the simulation id this recording was loaded from (null for a bare decode) */
+  id: string | null;
   /** trials summed into `counts` (spikes per trial per second = count / trials / seconds) */
   trials: number;
   /** silenced runs: the id of the baseline recording to compare with */
@@ -22,7 +24,7 @@ export interface Activity {
   readout: Readout | null;
 }
 
-export interface Readout { label: string; neurons: number; hz: number[] }
+export interface Readout { label: string; neurons: number; /** a few atlas rows of the group */ rows: number[]; hz: number[] }
 
 /** Decode `GET /simulations/{id}/frames`: nRows uint32 LE row indices, then nRows * nBins uint8 counts. */
 export function decodeFrames(buffer: ArrayBuffer, nRows: number, nBins: number, binMs: number): Activity {
@@ -40,7 +42,7 @@ export function decodeFrames(buffer: ArrayBuffer, nRows: number, nBins: number, 
   let peak = 1;
   for (let i = 0; i < counts.length; i++) if (counts[i] > peak) peak = counts[i];
   return { rows, counts, nRows, nBins, binMs, durationMs: nBins * binMs, peak, activeCount: null,
-    trials: 1, compareId: null, silencedRows: null, readout: null };
+    id: null, trials: 1, compareId: null, silencedRows: null, readout: null };
 }
 
 const TRAIL_DECAY = 0.6; // each bin after a spike keeps this share of the brightness
@@ -211,7 +213,7 @@ export async function loadActivity(id: string, fetchFn: typeof fetch = fetch, ba
   const buf = await (await ok(await fetchFn(`${base}/simulations/${id}/frames`), "simulation frames")).arrayBuffer();
   const a = decodeFrames(buf, meta.n_rows, meta.n_bins, meta.bin_ms);
   const ac = meta.active_count;
-  return { ...a, activeCount: typeof ac === "number" && Number.isInteger(ac) && ac >= 0 ? ac : null, ...parseComparison(meta) };
+  return { ...a, activeCount: typeof ac === "number" && Number.isInteger(ac) && ac >= 0 ? ac : null, ...parseComparison(meta), id };
 }
 
 /** The optional comparison fields of a simulation meta; anything malformed is dropped, never fatal. */
@@ -223,7 +225,10 @@ export function parseComparison(meta: Record<string, unknown>): Pick<Activity, "
   const ro = meta.readout as Record<string, unknown> | null | undefined;
   const hz = ro && Array.isArray(ro.hz) && ro.hz.every((v) => typeof v === "number" && Number.isFinite(v)) ? (ro.hz as number[]) : null;
   const readout = ro && hz && typeof ro.label === "string"
-    ? { label: ro.label, neurons: typeof ro.neurons === "number" ? ro.neurons : 0, hz }
+    ? {
+        label: ro.label, neurons: typeof ro.neurons === "number" ? ro.neurons : 0, hz,
+        rows: Array.isArray(ro.rows) ? (ro.rows as unknown[]).filter((r): r is number => typeof r === "number" && Number.isInteger(r)) : [],
+      }
     : null;
   return { trials, compareId, silencedRows, readout };
 }

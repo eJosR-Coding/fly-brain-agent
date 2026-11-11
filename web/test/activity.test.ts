@@ -311,13 +311,13 @@ describe("comparison fields", () => {
         ? new Response(wire([7], [[1, 3]]))
         : Response.json({
             bin_ms: 5, n_bins: 2, n_rows: 1, duration_ms: 10, trials: 3, compare_id: "sim_base", silenced_rows: [4, 9],
-            readout: { label: "MN9", neurons: 1, hz: [10.5, 20] },
+            readout: { label: "MN9", neurons: 1, rows: [7], hz: [10.5, 20] },
           })) as unknown as typeof fetch;
     const a = await loadActivity("sim_x", f);
     expect(a.trials).toBe(3);
     expect(a.compareId).toBe("sim_base");
     expect(a.silencedRows).toEqual([4, 9]);
-    expect(a.readout).toEqual({ label: "MN9", neurons: 1, hz: [10.5, 20] });
+    expect(a.readout).toEqual({ label: "MN9", neurons: 1, rows: [7], hz: [10.5, 20] });
   });
 
   it("ignores malformed comparison fields instead of failing", async () => {

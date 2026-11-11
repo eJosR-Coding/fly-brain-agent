@@ -49,9 +49,9 @@ export function ringSprite(): THREE.CanvasTexture {
   c.width = c.height = size;
   const g = c.getContext("2d")!;
   g.strokeStyle = "#fff";
-  g.lineWidth = 8;
+  g.lineWidth = 11;
   g.beginPath();
-  g.arc(size / 2, size / 2, size / 2 - 7, 0, Math.PI * 2);
+  g.arc(size / 2, size / 2, size / 2 - 8, 0, Math.PI * 2);
   g.stroke();
   return new THREE.CanvasTexture(c);
 }
@@ -63,7 +63,7 @@ export function crossSprite(): THREE.CanvasTexture {
   c.width = c.height = size;
   const g = c.getContext("2d")!;
   g.strokeStyle = "#fff";
-  g.lineWidth = 8;
+  g.lineWidth = 11;
   g.lineCap = "round";
   g.beginPath();
   g.moveTo(12, 12);

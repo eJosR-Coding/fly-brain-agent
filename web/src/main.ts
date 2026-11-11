@@ -11,6 +11,7 @@ import { readTheme } from "./theme";
 import { loadLandmarks, loadRegions, type Regions } from "./regions";
 import { activityLegend, formatSimulating, loadActivity, parseSimulation, type Activity } from "./activity";
 import { createPlayer, type Player } from "./player";
+import { createChartsPanel, type ChartsPanel } from "./chartsPanel";
 import { mountInspector } from "./inspector";
 import { pathLegend } from "./path";
 import { greyHex, keyRows, loadNt, ntTier, type Transmitters } from "./transmitters";
@@ -35,6 +36,8 @@ let health: Health | null = null;
 let streaming = false;
 let selectedModel: string | null = null;
 let player: Player | null = null;
+let charts: ChartsPanel | null = null;
+let chartsChip: HTMLButtonElement | null = null;
 let simulating = false;
 let sugarChip: HTMLButtonElement | null = null;
 let waveLegend = ""; // the legend line of the wave mode (restored when switching back to it)
@@ -51,6 +54,8 @@ export function highlight(indices: ArrayLike<number>): void {
 
 export function clearAll(): void {
   waveLegend = "";
+  charts?.clear();
+  if (chartsChip) chartsChip.disabled = true;
   brainScene?.setHighlight(null);
   brainScene?.setPath(null);
   pathShown = false;
@@ -69,6 +74,8 @@ async function showActivity(a: Activity, text: string): Promise<void> {
   let baseline: Activity | null = null;
   if (a.compareId) baseline = await loadActivity(a.compareId).catch(() => null); // expired baseline: just no diff mode
   player?.load(a, baseline);
+  charts?.show(a, baseline);
+  if (chartsChip) chartsChip.disabled = false;
   setActiveChip(null);
   renderActivityLegend(text);
 }
@@ -228,10 +235,15 @@ function setupViewChips(scene: BrainScene, theme: Theme, regions?: Regions, nt?:
     modes.push(mk("transmitters", "tint the neurons by predicted neurotransmitter", () => select("transmitters"), "mode"));
   }
   renderKey(regionRows());
+  chartsChip = mk("charts", "spike raster of the busiest neurons and the readout trace over time", (b) => {
+    charts?.setOpen(!charts.open);
+    b.classList.toggle("active", charts?.open === true);
+  }, "sep toggle");
+  chartsChip.disabled = true; // needs a recording
   mk("orbit", "slow auto-orbit; pauses while you drag", (b) => {
     scene.setOrbit(!scene.orbitOn);
     b.classList.toggle("active", scene.orbitOn);
-  }, `sep toggle${scene.orbitOn ? " active" : ""}`);
+  }, `toggle${scene.orbitOn ? " active" : ""}`);
   mk("front", "reset the camera to a straight front view", () => scene.setView("front"), "sep");
   mk("3/4", "reset the camera to the default three-quarter view", () => scene.setView("home"));
 }
@@ -313,11 +325,13 @@ async function boot(): Promise<void> {
     ]);
     const ok = <T,>(r: PromiseSettledResult<T>) => (r.status === "fulfilled" ? r.value : undefined);
     brainScene = createScene($("stage"), brain, theme, { regions: ok(regions), landmarks: ok(landmarks), nt: ok(nt) });
+    charts = createChartsPanel($("charts"));
     player = createPlayer({
       scene: brainScene,
       root: $("timeline"),
       reducedMotion: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true,
       speed: theme.playbackSpeed,
+      onTime: (ms) => charts?.setTime(ms),
       onMode: (_mode, legend) => {
         if (legend !== null) renderActivityLegend(legend);
         else if (waveLegend) renderActivityLegend(waveLegend);

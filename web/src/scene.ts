@@ -198,7 +198,7 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
         vB = aBright;
         vShape = aShape;
         // rings and crosses need a few pixels to stay legible
-        gl_PointSize = max(uSize * uScale * (0.45 + 0.9 * aBright) / max(-mv.z, 1e-4), aShape > 0.5 ? 8.0 : 1.0);
+        gl_PointSize = max(uSize * uScale * (0.45 + 0.9 * aBright) / max(-mv.z, 1e-4), aShape > 0.5 ? 11.0 : 1.0);
         gl_Position = projectionMatrix * mv;
       }`,
     fragmentShader: `

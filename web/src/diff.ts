@@ -64,7 +64,7 @@ export function computeDiff(base: Activity, sil: Activity, silencedRows: ArrayLi
 }
 
 const DIFF_FLOOR = 0.35; // smallest visible change is still readable
-const SILENCED_GREY = 0.55; // the silenced marks are a fixed mid grey, distinct from any change
+const SILENCED_GREY = 0.7; // the silenced marks are a fixed mid grey, distinct from any change
 
 /** Brightness (0..1) per row: unchanged hidden, changes scale with the magnitude (sqrt keeps small ones visible). */
 export function diffBrightness(d: Diff, out: Float32Array): void {
