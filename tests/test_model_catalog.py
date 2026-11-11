@@ -1,6 +1,7 @@
 """Hybrid catalog: curated ids, shown per key, cross-checked against the provider's list."""
 
 import httpx
+import pytest
 
 from flybrain.models import (
     CATALOG,
@@ -148,3 +149,34 @@ def test_fetch_served_raises_on_http_error_without_leaking_the_key():
         assert "SECRETKEY" not in str(exc)
     else:
         raise AssertionError("expected an error")
+
+
+def test_fetch_served_google_follows_page_tokens():
+    # Google pages at 50 by default: a catalog model on page 2 must not look retired
+    pages = {None: (["models/a"], "t2"), "t2": (["models/gemini-3.5-flash"], None)}
+
+    def handler(request):
+        names, nxt = pages[request.url.params.get("pageToken")]
+        body = {"models": [{"name": n} for n in names]}
+        if nxt:
+            body["nextPageToken"] = nxt
+        return httpx.Response(200, json=body)
+
+    assert fetch_served("google_genai", "K", _client(handler)) == {"a", "gemini-3.5-flash"}
+
+
+def test_fetch_served_anthropic_follows_has_more():
+    def handler(request):
+        if request.url.params.get("after_id") == "m1":
+            return httpx.Response(200, json={"data": [{"id": "claude-haiku-5-5"}], "has_more": False})
+        return httpx.Response(200, json={"data": [{"id": "m1"}], "has_more": True, "last_id": "m1"})
+
+    assert fetch_served("anthropic", "K", _client(handler)) == {"m1", "claude-haiku-5-5"}
+
+
+def test_fetch_served_gives_up_on_endless_pages_so_the_caller_fails_open():
+    def handler(request):
+        return httpx.Response(200, json={"models": [{"name": "models/x"}], "nextPageToken": "again"})
+
+    with pytest.raises(RuntimeError, match="too many pages"):
+        fetch_served("google_genai", "K", _client(handler))

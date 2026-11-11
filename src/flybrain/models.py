@@ -89,20 +89,42 @@ def fetch_served(provider: str, key: str, client: httpx.Client | None = None) ->
     url, headers = _LIST_ENDPOINTS[provider]
     owns = client is None
     client = client or httpx.Client(timeout=LIST_TIMEOUT)
+    served: set[str] = set()
+    params: dict[str, str] = dict(_FIRST_PAGE.get(provider, {}))
     try:
-        resp = client.get(url, headers=headers(key), timeout=LIST_TIMEOUT)
+        for _ in range(MAX_LIST_PAGES):
+            body = _get_page(client, provider, url, headers(key), params)
+            if provider == "google_genai":  # names come back as "models/<id>"
+                served |= {m["name"].removeprefix("models/") for m in body.get("models", [])}
+                token = body.get("nextPageToken")
+                if not token:
+                    return served
+                params["pageToken"] = token
+            else:
+                served |= {m["id"] for m in body.get("data", [])}
+                if not (provider == "anthropic" and body.get("has_more")):
+                    return served
+                params["after_id"] = body["last_id"]
+    finally:
+        if owns:
+            client.close()
+    raise RuntimeError(f"{provider} model list: too many pages")
+
+
+# Google and Anthropic paginate (Google at 50 by default); ask for big pages, then follow them.
+_FIRST_PAGE = {"google_genai": {"pageSize": "1000"}, "anthropic": {"limit": "1000"}}
+MAX_LIST_PAGES = 10
+
+
+def _get_page(client: httpx.Client, provider: str, url: str, headers: dict, params: dict) -> dict:
+    try:
+        resp = client.get(url, headers=headers, params=params, timeout=LIST_TIMEOUT)
         resp.raise_for_status()
-        body = resp.json()
+        return resp.json()
     except httpx.HTTPStatusError as exc:
         raise RuntimeError(f"{provider} model list returned HTTP {exc.response.status_code}") from None
     except Exception as exc:
         raise RuntimeError(f"{provider} model list failed: {type(exc).__name__}") from None
-    finally:
-        if owns:
-            client.close()
-    if provider == "google_genai":  # names come back as "models/<id>"
-        return {m["name"].removeprefix("models/") for m in body.get("models", [])}
-    return {m["id"] for m in body.get("data", [])}
 
 
 def discover_served(env: Mapping[str, str], fetcher: Callable[[str, str], set[str]] = fetch_served
