@@ -19,9 +19,21 @@ uniform dimming, reading the giant fiber (DNp01), and show it visually.
       (cached, own key tag). Full suite 688 passed; new tests/test_stimulus_schedule.py (constant
       run pinned, one-segment schedule bit-identical to `run`). Real brain, 500 ms, 400 neurons:
       constant 2.5 s vs 4-segment growing schedule 3.1 s.
-- [ ] T2 eye map: pick R1-6 inside a disc on the eye from their 3D positions; disc grows/shrinks.
-- [ ] T3 looming experiment tool: looming vs receding vs dimming with equal total drive, DNp01
+- [x] T2 eye map: pick R1-6 inside a disc on the eye from their 3D positions; disc grows/shrinks.
+      (route: delegated writer) Done in d9835be: src/flybrain/eye.py (`EyeMap` PCA 2D, `disc`,
+      `eye_map(atlas, side)`, `looming_radii`, `disc_schedule`, `schedule_drive`); tests/test_eye.py 9 passed.
+      Process note: the module was written before its tests (no observed RED for T2).
+- [x] T3 looming experiment tool: looming vs receding vs dimming with equal total drive, DNp01
       readout, stats; plus lesion LPLC2+LC4 control.
+      (route: delegated writer) Done in the looming_escape commit: src/flybrain/looming.py, MCP tool,
+      added to EXPERIMENT_TOOLS (deadline extension), tool-defs budget 8400 -> 8850 (+547 chars).
+      RED: tests/test_looming.py failed at collection (no flybrain.looming); GREEN: 12 passed; full
+      suite 709 passed. Output 2151 B on the real run.
+      REAL RUN (defaults, 5 trials, right eye, 4029 R1-6, 47 s): NULL RESULT. DNp01, LPLC2 and LC4 all
+      0.0 Hz in all four conditions (all p = 1). R1-6 weights: 71.2% excitatory, 21.4% inhibitory
+      (rest no outgoing). Diagnostics: constant 300 Hz on the whole right eye for 300 ms still gives
+      LPLC2/LC4/DNp01 = 0 Hz (L3 4.2 Hz, Tm20 0.01 Hz), while driving LPLC2 at 100 Hz gives DNp01
+      139 Hz and LC4 at 100 Hz gives 85 Hz: the readout works, the signal dies in the optic lobe.
 - [ ] T4 visual: disc projected on the eye, wave, DNp01 trace.
 
 ## Checks
