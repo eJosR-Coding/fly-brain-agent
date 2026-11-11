@@ -295,6 +295,28 @@ async def close_dangling_tool_calls(graph, config, reason: str) -> None:
     await graph.aupdate_state(config, {"messages": closing}, as_node="agent")
 
 
+def sum_usage(usages) -> dict:
+    """Add up LangChain ``usage_metadata`` dicts; a field no call reported stays None (never 0).
+
+    A call without ``total_tokens`` contributes input + output when both are known.
+    """
+    out = {"input_tokens": None, "output_tokens": None, "total_tokens": None}
+    for u in usages:
+        if not u:
+            continue
+        known = {
+            "input_tokens": u.get("input_tokens"),
+            "output_tokens": u.get("output_tokens"),
+            "total_tokens": u.get("total_tokens"),
+        }
+        if known["total_tokens"] is None and None not in (known["input_tokens"], known["output_tokens"]):
+            known["total_tokens"] = known["input_tokens"] + known["output_tokens"]
+        for key, value in known.items():
+            if value is not None:
+                out[key] = (out[key] or 0) + value
+    return out
+
+
 async def stream_events(
     graph,
     question: str,
@@ -317,6 +339,9 @@ async def stream_events(
     ``turn_timeout`` (seconds) caps the whole turn: provider SDKs may retry 503s with
     backoff for minutes, so a slow turn ends with an ``error`` instead of silence.
     ``model_name`` names the model in friendlier quota / auth error texts.
+    ``usage`` {calls, input_tokens, output_tokens, total_tokens} comes right before the final
+    ``answer`` / ``error`` (only if the model was called): token counts are summed from every
+    model call's usage_metadata and are None when the provider reported none.
     """
     _check_max_steps(max_steps)
     config = {
@@ -331,6 +356,13 @@ async def stream_events(
     started: dict[str, float] = {}
     failure: str | None = None  # set on every non-answer path; the thread is repaired below
     answered = False
+    calls = 0
+    call_usages: list = []  # one entry per model call: its usage_metadata, or None
+    chunk_usage: list = []  # usage seen on streamed chunks of the call in flight (fallback)
+
+    def usage_event() -> dict | None:
+        return {"type": "usage", "calls": calls, **sum_usage(call_usages)} if calls else None
+
     try:
         try:
             while True:
@@ -351,6 +383,9 @@ async def stream_events(
                 if mode == "messages":
                     chunk, meta = payload
                     if (isinstance(chunk, AIMessageChunk) and meta.get("langgraph_node") == "agent"
+                            and chunk.usage_metadata):
+                        chunk_usage.append(chunk.usage_metadata)
+                    if (isinstance(chunk, AIMessageChunk) and meta.get("langgraph_node") == "agent"
                             and not chunk.tool_call_chunks and chunk.text):
                         yield {"type": "answer_delta", "text": chunk.text}
                     continue
@@ -358,6 +393,13 @@ async def stream_events(
                     for msg in (delta or {}).get("messages", []):
                         if node == "agent":
                             last_agent = msg
+                            calls += 1
+                            # the finished message carries the summed usage; chunks are a fallback
+                            call_usages.append(
+                                getattr(msg, "usage_metadata", None)
+                                or (sum_usage(chunk_usage) if chunk_usage else None)
+                            )
+                            chunk_usage = []
                             for tc in getattr(msg, "tool_calls", None) or []:
                                 started[tc["id"]] = time.monotonic()
                                 yield {"type": "tool_call", "id": tc["id"], "tool": tc["name"], "args": tc["args"]}
@@ -390,10 +432,14 @@ async def stream_events(
             ):
                 failure = _hard_stop(max_steps)
         if failure is not None:
+            if (spent := usage_event()) is not None:
+                yield spent
             yield {"type": "error", "message": failure}  # first: a slow repair must not delay it
             return
         text = last_agent.text
         answered = True
+        if (spent := usage_event()) is not None:
+            yield spent
         yield {"type": "answer", "text": text if text.strip() else NO_ANSWER}
     finally:
         if not answered:

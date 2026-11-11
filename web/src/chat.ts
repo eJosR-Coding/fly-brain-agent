@@ -19,9 +19,52 @@ export interface ChatHandlers {
   onAnswerDelta?(text: string): void;
   onHighlight(p: HighlightPayload): void;
   onActivity(a: ActivityEvent): void;
+  /** tokens spent by the turn, sent just before the answer */
+  onUsage?(u: Usage): void;
   onAnswer(text: string): void;
   onError(message: string): void;
   onDone(): void;
+}
+
+/** Token usage of one turn; a field is null when the provider did not report it. */
+export interface Usage {
+  calls: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+}
+
+/** Check a usage payload from the wire; null if it has no sane call count. */
+export function parseUsage(d: Record<string, unknown>): Usage | null {
+  const { calls } = d;
+  if (typeof calls !== "number" || !Number.isInteger(calls) || calls < 0) return null;
+  const count = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+  return {
+    calls,
+    inputTokens: count(d.input_tokens),
+    outputTokens: count(d.output_tokens),
+    totalTokens: count(d.total_tokens),
+  };
+}
+
+/** 850 -> "850", 15_900 -> "15.9k", 1_250_000 -> "1.3M". */
+export function formatTokens(n: number): string {
+  if (n < 1000) return String(Math.round(n));
+  const k = (n / 1000).toFixed(1);
+  if (Number(k) < 1000) return `${k}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+/** "4 calls \u00b7 18.2k tokens (15.9k in \u00b7 2.3k out)", or "usage unavailable". */
+export function formatUsage(u: Usage | null): string {
+  if (u === null) return "usage unavailable";
+  const { inputTokens: i, outputTokens: o } = u;
+  const total = u.totalTokens ?? (i !== null && o !== null ? i + o : null);
+  if (total === null) return "usage unavailable";
+  const calls = `${u.calls} call${u.calls === 1 ? "" : "s"}`;
+  const split = i !== null && o !== null ? ` (${formatTokens(i)} in \u00b7 ${formatTokens(o)} out)` : "";
+  return `${calls} \u00b7 ${formatTokens(total)} tokens${split}`;
 }
 
 /** `tool(k="v", n=5)`: how a tool call is shown in the trace. */
@@ -127,6 +170,11 @@ export async function streamChat(
           const a = parseActivityEvent(d);
           if (typeof a === "string") h.onError(`ignored an invalid activity event: ${a}`);
           else h.onActivity(a);
+          break;
+        }
+        case "usage": {
+          const u = parseUsage(d);
+          if (u) h.onUsage?.(u);
           break;
         }
         case "answer": h.onAnswer(String(d.text)); break;
@@ -240,6 +288,12 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
   let streamEl: HTMLElement | null = null;
   let streamText = "";
   let frame = 0;
+  let turnUsage: Usage | null = null; // arrives just before the answer; shown under it
+  let usageEl: HTMLElement | null = null;
+  const showUsage = () => {
+    usageEl?.remove();
+    usageEl = add("usage", formatUsage(turnUsage));
+  };
   const paintStream = () => {
     frame = 0;
     if (streamEl) {
@@ -262,6 +316,8 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
     input.value = "";
     input.disabled = send.disabled = true;
     following = true;
+    turnUsage = null;
+    usageEl = null;
     add("user", text);
     onStreaming(true);
     // pending indicator: visible at once, until the first real event, so a slow provider never looks dead
@@ -320,6 +376,7 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
         el.append(wave, sel);
         void Promise.resolve(onActivity(a)).catch((err) => add("error", `activity failed: ${(err as Error).message}`));
       },
+      onUsage: (u) => { turnUsage = u; },
       onAnswerDelta: (t) => {
         settle();
         if (!streamEl) streamEl = add("answer", "");
@@ -334,7 +391,7 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
         streamEl = null;
         streamText = "";
         el.replaceChildren(renderMarkdown(t));
-        follow();
+        showUsage();
       },
       onError: (m) => { settle(); add("error", m); },
       onDone: () => {

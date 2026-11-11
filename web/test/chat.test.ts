@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { formatThinking, formatToolCall, streamChat, toolStatusText, type ChatHandlers } from "../src/chat";
+import {
+  formatThinking, formatToolCall, formatTokens, formatUsage, parseUsage, streamChat, toolStatusText,
+  type ChatHandlers,
+} from "../src/chat";
 
 function sseResponse(chunks: string[], status = 200): Response {
   const enc = new TextEncoder();
@@ -21,6 +24,7 @@ function recorder() {
     onAnswerDelta: (t) => log.push(`delta:${t}`),
     onHighlight: (p) => log.push(`hl:${p.total}`),
     onActivity: (a) => log.push(`activity:${a.simulationId}:${a.nBins}x${a.binMs}`),
+    onUsage: (u) => log.push(`usage:${u.calls}:${u.inputTokens}:${u.outputTokens}:${u.totalTokens}`),
     onAnswer: (t) => log.push(`answer:${t}`),
     onError: (m) => log.push(`error:${m}`),
     onDone: () => log.push("done"),
@@ -208,5 +212,83 @@ describe("toolStatusText", () => {
   it("shows one decimal when done or failed", () => {
     expect(toolStatusText({ state: "done", ms: 12800 }, 0)).toBe("done · 12.8 s");
     expect(toolStatusText({ state: "failed", ms: 120 }, 0)).toBe("failed · 0.1 s");
+  });
+});
+
+describe("formatTokens", () => {
+  it("shows small counts whole and larger ones as k / M with one decimal", () => {
+    expect(formatTokens(0)).toBe("0");
+    expect(formatTokens(850)).toBe("850");
+    expect(formatTokens(999)).toBe("999");
+    expect(formatTokens(1000)).toBe("1.0k");
+    expect(formatTokens(15_900)).toBe("15.9k");
+    expect(formatTokens(18_240)).toBe("18.2k");
+    expect(formatTokens(999_949)).toBe("999.9k");
+    expect(formatTokens(1_250_000)).toBe("1.3M");
+  });
+});
+
+describe("formatUsage", () => {
+  it("is the calls, the total and the in/out split", () => {
+    expect(formatUsage({ calls: 4, inputTokens: 15_900, outputTokens: 2_300, totalTokens: 18_200 })).toBe(
+      "4 calls \u00b7 18.2k tokens (15.9k in \u00b7 2.3k out)",
+    );
+  });
+  it("says 1 call, not 1 calls", () => {
+    expect(formatUsage({ calls: 1, inputTokens: 800, outputTokens: 50, totalTokens: 850 })).toBe(
+      "1 call \u00b7 850 tokens (800 in \u00b7 50 out)",
+    );
+  });
+  it("derives the total when only in and out are known", () => {
+    expect(formatUsage({ calls: 2, inputTokens: 1000, outputTokens: 500, totalTokens: null })).toContain("1.5k tokens");
+  });
+  it("drops the split when it is unknown but keeps the total", () => {
+    expect(formatUsage({ calls: 2, inputTokens: null, outputTokens: null, totalTokens: 2_000 })).toBe(
+      "2 calls \u00b7 2.0k tokens",
+    );
+  });
+  it("is 'usage unavailable' when the provider reported nothing, or there is no usage", () => {
+    expect(formatUsage({ calls: 3, inputTokens: null, outputTokens: null, totalTokens: null })).toBe("usage unavailable");
+    expect(formatUsage(null)).toBe("usage unavailable");
+  });
+});
+
+describe("parseUsage", () => {
+  it("reads the wire payload", () => {
+    expect(parseUsage({ calls: 2, input_tokens: 10, output_tokens: 5, total_tokens: 15 })).toEqual({
+      calls: 2, inputTokens: 10, outputTokens: 5, totalTokens: 15,
+    });
+  });
+  it("keeps null as null (never 0) and ignores junk fields", () => {
+    expect(parseUsage({ calls: 1, input_tokens: null, output_tokens: "x", total_tokens: -3 })).toEqual({
+      calls: 1, inputTokens: null, outputTokens: null, totalTokens: null,
+    });
+  });
+  it("rejects a payload without a sane call count", () => {
+    expect(parseUsage({})).toBeNull();
+    expect(parseUsage({ calls: -1 })).toBeNull();
+    expect(parseUsage({ calls: 1.5 })).toBeNull();
+  });
+});
+
+describe("streamChat usage", () => {
+  it("dispatches the usage event before the answer", async () => {
+    const { log, h } = recorder();
+    const f = (async () =>
+      sseResponse([
+        'event: usage\ndata: {"calls":2,"input_tokens":10,"output_tokens":5,"total_tokens":15}\n\n',
+        'event: answer\ndata: {"text":"hi"}\n\nevent: done\ndata: {}\n\n',
+      ])) as unknown as typeof fetch;
+    await streamChat("x", null, h, f);
+    expect(log).toEqual(["usage:2:10:5:15", "answer:hi", "done"]);
+  });
+  it("tolerates a handler-less consumer and a malformed usage event", async () => {
+    const { log, h } = recorder();
+    const f = (async () =>
+      sseResponse(['event: usage\ndata: {"calls":"x"}\n\nevent: answer\ndata: {"text":"hi"}\n\n'])) as unknown as typeof fetch;
+    await streamChat("x", null, h, f);
+    expect(log).toEqual(["answer:hi", "done"]);
+    const { onUsage: _drop, ...bare } = h;
+    await expect(streamChat("x", null, bare, f)).resolves.toBeUndefined();
   });
 });

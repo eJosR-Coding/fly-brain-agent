@@ -46,7 +46,7 @@ def test_event_order_and_highlight_indices(tiny_tsv_path, tiny_atlas):
         r = chat(client, "glutamate?")
     assert r.headers["content-type"].startswith("text/event-stream")
     events = parse_sse(r.text)
-    assert [n for n, _ in events] == ["meta", "tool_call", "tool_result", "highlight", "answer", "done"]
+    assert [n for n, _ in events] == ["meta", "tool_call", "tool_result", "highlight", "usage", "answer", "done"]
     assert events[0][1]["conversation_id"]
     assert events[1][1] == {"id": "c1", "tool": "search_neurons", "args": {"nt": "glutamate"}}
     tr = events[2][1]
@@ -56,7 +56,7 @@ def test_event_order_and_highlight_indices(tiny_tsv_path, tiny_atlas):
     expected = tiny_atlas.neurons.index[tiny_atlas.neurons["top_nt"] == "glutamate"].tolist()
     assert hl["indices"] == expected == [60]
     assert hl["total"] == 1 and hl["selection_id"].startswith("sel_")
-    assert events[4][1] == {"text": "One glutamate neuron."}
+    assert events[5][1] == {"text": "One glutamate neuron."}
 
 
 def test_big_selection_sends_fetch_url_instead_of_indices(tiny_tsv_path):
@@ -203,5 +203,5 @@ def test_streaming_model_sends_answer_deltas_before_the_full_answer(tiny_tsv_pat
         events = parse_sse(chat(client).text)
     names = [n for n, _ in events]
     assert names[0] == "meta" and names[-2:] == ["answer", "done"]
-    assert names.count("answer_delta") >= 2 and set(names[1:-2]) == {"answer_delta"}
+    assert names.count("answer_delta") >= 2 and set(names[1:-3]) == {"answer_delta"} and names[-3] == "usage"
     assert "".join(d["text"] for n, d in events if n == "answer_delta").strip() == "alpha beta gamma"

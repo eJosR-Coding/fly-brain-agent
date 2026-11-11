@@ -436,6 +436,9 @@ def create_app(
                         act = None if ev["error"] else _activity(ev["content"])
                         if act is not None:
                             yield act
+                    elif ev["type"] == "usage":
+                        yield _sse("usage", {k: ev[k] for k in
+                                             ("calls", "input_tokens", "output_tokens", "total_tokens")})
                     elif ev["type"] == "answer":
                         yield _sse("answer", {"text": ev["text"]})
                     else:
