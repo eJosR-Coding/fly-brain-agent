@@ -11,6 +11,7 @@ requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.162.3",
     "langchain>=1.4.9",
+    "httpx>=0.28.1",
     "langchain-anthropic>=1.7.10",
     "langchain-core>=1.7.7",
     "langchain-deepseek>=1.1.1",
@@ -39,6 +40,5 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",
     "pytest>=9.2.0",
 ]
