@@ -304,3 +304,10 @@ body.has-activity #key { bottom: 232px; }
 @media (max-width: 720px) {
   .neuron-card { width: min(292px, calc(100% - 24px)); }
 }
+
+/* path cables: hop labels projected at each segment's midpoint (the #labels layer is hidden on small screens) */
+.path-label { position: absolute; left: 0; top: 0; translate: -50% -140%; will-change: transform; padding: 1px 7px;
+  font: 500 12px/18px var(--font-mono); letter-spacing: 0.2px; color: var(--fg); white-space: nowrap;
+  background: rgba(0, 0, 0, 0.82); border: 1px solid #666; border-radius: var(--radius); }
+.path-label.below { translate: -50% 40%; }
+.path-label.hidden { display: none; }

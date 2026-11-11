@@ -23,6 +23,7 @@ function recorder() {
     onToolResult: (id, ok, ms) => log.push(`result:${id}:${ok ? "ok" : "fail"}:${ms}`),
     onAnswerDelta: (t) => log.push(`delta:${t}`),
     onHighlight: (p) => log.push(`hl:${p.total}`),
+    onPath: (p) => log.push(`path:${p.rows.join(">")}:${p.bottleneck}`),
     onActivity: (a) => log.push(`activity:${a.simulationId}:${a.nBins}x${a.binMs}`),
     onUsage: (u) => log.push(`usage:${u.calls}:${u.inputTokens}:${u.outputTokens}:${u.totalTokens}`),
     onAnswer: (t) => log.push(`answer:${t}`),
@@ -303,5 +304,26 @@ describe("newChatEnabled", () => {
   it("is on once there is a thread or anything in the log", () => {
     expect(newChatEnabled({ streaming: false, conversationId: "c1", messages: 0 })).toBe(true);
     expect(newChatEnabled({ streaming: false, conversationId: null, messages: 2 })).toBe(true);
+  });
+});
+
+describe("streamChat path events", () => {
+  const run = async (data: unknown, count: number | null = 100) => {
+    const f = (async () =>
+      sseResponse([`event: path\ndata: ${JSON.stringify(data)}\n\nevent: done\ndata: {}\n\n`])) as unknown as typeof fetch;
+    const { log, h } = recorder();
+    await streamChat("x", null, h, f, "/api", () => count);
+    return log;
+  };
+
+  it("dispatches a valid path event", async () => {
+    expect(await run({ selection_id: "s", rows: [4, 7, 9], synapses: [12, 5], bottleneck: 5 })).toEqual(["path:4>7>9:5", "done"]);
+  });
+
+  it("skips an invalid path with an error line and keeps streaming", async () => {
+    const log = await run({ selection_id: "s", rows: [4, 700], synapses: [12], bottleneck: 12 });
+    expect(log[0]).toMatch(/^error:.*path.*row/);
+    expect(log.at(-1)).toBe("done");
+    expect(log.some((l) => l.startsWith("path:"))).toBe(false);
   });
 });

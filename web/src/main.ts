@@ -12,6 +12,7 @@ import { loadLandmarks, loadRegions, type Regions } from "./regions";
 import { activityLegend, formatSimulating, loadActivity, parseSimulation, type Activity } from "./activity";
 import { createPlayer, type Player } from "./player";
 import { mountInspector } from "./inspector";
+import { pathLegend } from "./path";
 import { greyHex, keyRows, loadNt, ntTier, type Transmitters } from "./transmitters";
 import type { Theme } from "./theme";
 
@@ -36,16 +37,21 @@ let selectedModel: string | null = null;
 let player: Player | null = null;
 let simulating = false;
 let sugarChip: HTMLButtonElement | null = null;
+let pathShown = false; // cables are on screen (the legend shows their summary)
 /** Shared by chips and chat: whichever selection was requested last wins. */
 const latest = new Latest();
 
 /** Light up row indices (replacing any previous highlight). */
 export function highlight(indices: ArrayLike<number>): void {
+  brainScene?.setPath(null); // a new selection replaces the cables
+  pathShown = false;
   brainScene?.setHighlight(indices);
 }
 
 export function clearAll(): void {
   brainScene?.setHighlight(null);
+  brainScene?.setPath(null);
+  pathShown = false;
   player?.clear();
 }
 
@@ -254,6 +260,17 @@ async function boot(): Promise<void> {
         setActiveChip(null);
         renderLegend(p.total);
       }).then(() => undefined),
+    onPath: (p) => {
+      brainScene?.setPath(p);
+      pathShown = true;
+      renderActivityLegend(pathLegend(p)); // lit dot + the route's summary
+    },
+    onNewChat: () => {
+      if (!pathShown) return;
+      brainScene?.setPath(null);
+      pathShown = false;
+      renderLegend(null);
+    },
     onActivity: async (a) => {
       const activity = await loadActivity(a.simulationId);
       showActivity(activity, activityLegend(activity.activeCount, activity.nRows, null));

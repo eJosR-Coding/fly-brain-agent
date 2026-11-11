@@ -9,6 +9,9 @@ import { buildRegionColors, regionPalette, hexToRgb, type Regions } from "./regi
 import { createOrbitGate, orbitDefault } from "./orbit";
 import { ntPalette, ntWeights, type Transmitters } from "./transmitters";
 import { pickNearest, pickThreshold } from "./inspect";
+import { dotTexture, ringTexture } from "./textures";
+import { createPathLayer } from "./pathLayer";
+import type { PathPayload } from "./path";
 
 export interface BrainScene {
   /** Light up these row indices on the highlight layer (replaces any previous one); null or [] clears. */
@@ -34,6 +37,8 @@ export interface BrainScene {
   setHover(row: number | null): void;
   /** Steady ring around the inspected neuron (null removes it). */
   setSelected(row: number | null): void;
+  /** Draw a find_path route as glowing cables between its neurons (replaces the previous one); null removes it. */
+  setPath(path: PathPayload | null): void;
   /** Stage-relative CSS pixels of a neuron right now, or null when it is behind the camera. */
   project(row: number): { x: number; y: number } | null;
   dispose(): void;
@@ -49,48 +54,6 @@ export interface Anatomy {
 /** Camera distance as a multiple of the brain's largest dimension: leaves room for labels on both sides. */
 const FIT = 1.55;
 const HOME_VIEW = { azimuth: 16, elevation: 10 };
-
-/** Round sprite for gl_PointCoord: a crisp disc, or a disc with a soft glow falloff for highlights. */
-function dotTexture(glow: boolean): THREE.CanvasTexture {
-  const size = 64;
-  const c = document.createElement("canvas");
-  c.width = c.height = size;
-  const g = c.getContext("2d")!;
-  const r = size / 2;
-  const grad = g.createRadialGradient(r, r, 0, r, r, r);
-  if (glow) {
-    grad.addColorStop(0, "rgba(255,255,255,1)");
-    grad.addColorStop(0.45, "rgba(255,255,255,0.9)");
-    grad.addColorStop(1, "rgba(255,255,255,0)");
-  } else {
-    grad.addColorStop(0, "rgba(255,255,255,1)");
-    grad.addColorStop(0.8, "rgba(255,255,255,1)");
-    grad.addColorStop(1, "rgba(255,255,255,0)");
-  }
-  g.fillStyle = grad;
-  g.fillRect(0, 0, size, size);
-  return new THREE.CanvasTexture(c);
-}
-
-/** A thin ring with a soft halo, for the hover and selection markers. */
-function ringTexture(): THREE.CanvasTexture {
-  const size = 96;
-  const c = document.createElement("canvas");
-  c.width = c.height = size;
-  const g = c.getContext("2d")!;
-  const r = size / 2;
-  const halo = g.createRadialGradient(r, r, r * 0.55, r, r, r);
-  halo.addColorStop(0, "rgba(255,255,255,0.35)");
-  halo.addColorStop(1, "rgba(255,255,255,0)");
-  g.fillStyle = halo;
-  g.fillRect(0, 0, size, size);
-  g.strokeStyle = "#fff";
-  g.lineWidth = 4;
-  g.beginPath();
-  g.arc(r, r, r * 0.55, 0, Math.PI * 2);
-  g.stroke();
-  return new THREE.CanvasTexture(c);
-}
 
 /** Pointer radius (CSS px) within which a point counts as under the cursor. */
 const PICK_RADIUS_PX = 9;
@@ -339,6 +302,7 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
   controls.enableDamping = true;
   controls.autoRotateSpeed = theme.orbitSpeed;
   const reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  const pathLayer = createPathLayer({ parent: world, positions: brain.positions, labels: labelsEl, reducedMotion: reduced });
   const gate = createOrbitGate(orbitDefault(reduced), theme.orbitResumeMs);
   controls.addEventListener("start", () => gate.press());
   controls.addEventListener("end", () => gate.release(performance.now()));
@@ -355,6 +319,7 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
     const w = container.clientWidth || window.innerWidth;
     const h = container.clientHeight || window.innerHeight;
     renderer.setSize(w, h);
+    pathLayer.setResolution(w, h);
     baseMaterial.uniforms.uScale.value = renderer.getDrawingBufferSize(new THREE.Vector2()).y / 2;
     actMaterial.uniforms.uScale.value = baseMaterial.uniforms.uScale.value;
     camera.aspect = w / h;
@@ -394,6 +359,7 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
     baseMaterial.uniforms.uFar.value = dist + radius;
     renderer.render(scene, camera);
     placeAnatomyLabels(container.clientWidth, container.clientHeight);
+    pathLayer.update(performance.now(), camera, container.clientWidth, container.clientHeight);
   };
   loop();
 
@@ -437,7 +403,9 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
     setHover: (row) => placeMark(hoverMark, row),
     setSelected: (row) => placeMark(selectMark, row),
     project,
+    setPath: (path) => pathLayer.set(path),
     dispose() {
+      pathLayer.dispose();
       cancelAnimationFrame(raf);
       labelsEl.remove();
       ro.disconnect();
