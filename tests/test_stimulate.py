@@ -244,3 +244,16 @@ def test_recordings_carry_the_readout_trace_in_hz(tiny_atlas, store, sims):
 def test_plain_runs_have_no_comparison_fields(tiny_atlas, store, sims):
     rec = sims.get(run(tiny_atlas, store, sims)["simulation_id"])
     assert rec.compare_id is None and rec.silenced_rows is None and rec.readout is None
+
+
+def test_readout_trace_names_a_preset_group_after_the_preset_and_lists_its_rows(tiny_atlas, store, sims):
+    orn = tools.preset_selection(tiny_atlas, store, "orn", presets=PRESETS)["selection_id"]
+    out = run(tiny_atlas, store, sims, readout_selection_id=orn)
+    ro = sims.get(out["simulation_id"]).readout
+    assert ro["label"] == "ORN" and ro["rows"] == [62]
+
+
+def test_readout_rows_are_capped(tiny_atlas, store, sims):
+    pen = ticket(tiny_atlas, store, cell_type="PEN_a")
+    ro = sims.get(run(tiny_atlas, store, sims, readout_selection_id=pen)["simulation_id"]).readout
+    assert ro["neurons"] == 60 and len(ro["rows"]) == 20

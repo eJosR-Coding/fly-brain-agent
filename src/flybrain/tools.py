@@ -441,10 +441,20 @@ def _group(atlas: Atlas, rates: np.ndarray, rows: np.ndarray) -> dict:
             "top": top}
 
 
-def _readout_trace(atlas: Atlas, readout: np.ndarray, bin_ms: float, trials: int):
-    """A function from a SimResult to {"label", "neurons", "hz"}: the readout group's mean rate per time bin."""
+READOUT_ROWS_SHOWN = 20  # rows of the readout group listed with its trace (the viewer emphasizes them)
+
+
+def _readout_trace(atlas: Atlas, readout: np.ndarray, bin_ms: float, trials: int, description: str = ""):
+    """A function from a SimResult to {"label", "neurons", "rows", "hz"}: the readout group's mean rate per bin.
+
+    The label is the preset's name (preset tickets), else the shared cell type, else "readout".
+    """
     types = {_text(atlas.neurons["cell_type"].iat[int(r)]) for r in readout}
-    label = next(iter(types)) if len(types) == 1 and None not in types else "readout"
+    if description.startswith("preset "):
+        label = description.removeprefix("preset ").strip().upper()
+    else:
+        label = next(iter(types)) if len(types) == 1 and None not in types else "readout"
+    shown = [int(r) for r in readout[:READOUT_ROWS_SHOWN]]
 
     def trace(res) -> dict:
         counts = np.zeros(res.frames.shape[1], dtype=np.float64)
@@ -452,7 +462,7 @@ def _readout_trace(atlas: Atlas, readout: np.ndarray, bin_ms: float, trials: int
         if keep.any():
             counts = res.frames[keep].sum(axis=0, dtype=np.float64)
         hz = counts / (len(readout) * trials * bin_ms / 1000.0)
-        return {"label": label, "neurons": int(len(readout)), "hz": [round(float(v), 2) for v in hz]}
+        return {"label": label, "neurons": int(len(readout)), "rows": shown, "hz": [round(float(v), 2) for v in hz]}
 
     return trace
 
@@ -518,7 +528,8 @@ def stimulate(
                 "change_pct": round(100 * (after - before) / before, 1) if before else None,
             }
         notes.append("silencing runs a baseline too, so it costs 2x the runtime (same random seed for both)")
-    trace = _readout_trace(atlas, readout, bin_ms, n_trials) if readout is not None else None
+    trace = (_readout_trace(atlas, readout, bin_ms, n_trials, store.get(readout_selection_id).description)
+             if readout is not None else None)
     compare_id = None
     if base is not None:  # keep the baseline too: the viewer draws the difference between the two
         compare_id = sims.add(
