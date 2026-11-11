@@ -96,6 +96,29 @@ Options: `--model provider:model` (default `anthropic:claude-sonnet-5-5`, or set
 plus the final answer). Other providers: `uv add langchain-openai`, then
 `--model openai:<model>`.
 
+### Choosing a model
+
+The picker next to the message box lists the models from `GET /models`.
+`--models` (or `FLYBRAIN_MODELS`) is a comma-separated list of `provider:model` ids; the
+default is `--model` plus these Groq models with tool use (checked on
+<https://console.groq.com/docs/tool-use>): `groq:openai/gpt-oss-120b`,
+`groq:llama-3.3-70b-versatile`, `groq:llama-3.1-8b-instant`.
+
+```bash
+uv run --env-file .env flybrain-web --model google_genai:gemini-3.5-flash \
+  --models google_genai:gemini-3.5-flash,groq:openai/gpt-oss-120b
+```
+
+A model is selectable only when its provider key is set: `GOOGLE_API_KEY` (`google_genai`),
+`GROQ_API_KEY` (`groq`), `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`. To add a provider key, put it in
+`.env` (see `.env.example`) and restart the server; models without a key show as "(no key)".
+The server only accepts ids from this list, never free text. The conversation keeps its history
+when you switch model between messages.
+
+Free tiers have small quotas (Gemini's free tier allows about 20 requests per day per model,
+and a tool-using turn makes several requests). When a model hits its quota the chat says so;
+switch model in the picker or retry later.
+
 ## Tools (MCP)
 
 | Tool | What it does |
@@ -263,7 +286,8 @@ the same selection store, which lets it turn a ticket into row indices for highl
 uv run --env-file .env flybrain-web --model google_genai:gemini-3.5-flash   # 127.0.0.1:8000
 ```
 
-Options: `--host`, `--port`, `--model` (or `FLYBRAIN_MODEL`), `--max-steps`. CORS allows
+Options: `--host`, `--port`, `--model` (or `FLYBRAIN_MODEL`), `--models` (or `FLYBRAIN_MODELS`),
+`--max-steps`. CORS allows
 `http://localhost:5173` (Vite) by default; set `FLYBRAIN_CORS_ORIGINS` to a comma-separated
 list to change it. `--help` needs no model or key.
 
@@ -282,7 +306,8 @@ must be a positive number; anything else stops startup with a one-line error.
 | `GET /brain/regions` | one `uint8` per neuron, same row order as `/brain/points`; the code table is `regions` in `/brain/meta` (`0` central, `1` optic, `2` sensory, `3` other), derived from `super_class` |
 | `GET /brain/nt` | one `uint8` per neuron, same row order: the predicted top neurotransmitter (`nt` table in `/brain/meta`: `0` acetylcholine, `1` glutamate, `2` gaba, `3` dopamine, `4` serotonin, `5` octopamine, `6` unknown) |
 | `GET /brain/landmarks` | JSON computed from the data: centroids in micrometers (`central brain`, `optic lobe L/R`, `lamina L/R`), plus per side the lobe center, a robust lobe radius (80th percentile) and the outward lamina direction |
-| `POST /chat` | `text/event-stream`, body `{"message", "conversation_id"?}` |
+| `GET /models` | `{"default", "models": [{"id", "provider", "available", "reason"?}]}`: the model picker's registry |
+| `POST /chat` | `text/event-stream`, body `{"message", "conversation_id"?, "model"?}`; `model` must be an available id from `/models`, else `422` listing them |
 | `GET /selections/{id}/indices` | row indices of a ticket, uint32 LE; 404 if unknown or expired |
 
 **Binary contract.** `/brain/points` is `count * 12` bytes: float32, little-endian, `x y z`

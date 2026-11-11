@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Annotated
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from langchain_mcp_adapters.tools import load_mcp_tools
@@ -30,6 +30,7 @@ from flybrain.agent_mcp import SERVER_NAME
 from flybrain.anatomy import NT_CODES, REGION_CODES, landmarks, nt_codes, region_codes
 from flybrain.atlas import RowIndex, load_atlas
 from flybrain.mcp_server import DEFAULT_ANNOTATIONS, build_server, load_connectome
+from flybrain.models import describe_models
 from flybrain.selections import SelectionStore, UnknownSelectionError
 from flybrain.sim_service import SimulationService, SimulationUnavailable, UnknownSimulationError
 from flybrain.tools import ACTIVE_HZ, load_presets, preset_selection, search_neurons, stimulate
@@ -45,6 +46,8 @@ DEFAULT_CORS = "http://localhost:5173"  # Vite dev server
 class ChatRequest(BaseModel):
     message: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_MESSAGE_CHARS)]
     conversation_id: Annotated[str, StringConstraints(strip_whitespace=True, max_length=100)] | None = None
+    # must be one of the configured AND available ids (checked against the allowlist, see /models)
+    model: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)] | None = None
 
 
 class SimulateRequest(BaseModel):
@@ -106,10 +109,17 @@ def create_app(
     model_name: str | None = None,
     connectome_path=None,
     simulation: SimulationService | None = None,
+    models: list[str] | None = None,
+    model_factory=None,
+    env=None,
 ) -> FastAPI:
     """Build the app. ``model`` is a LangChain chat model; without one /chat reports an error.
 
-    ``model_name`` is the provider:model label shown by /health (only while chat is on)."""
+    ``model_name`` is the provider:model label shown by /health (only while chat is on).
+    ``models`` is the picker's registry of provider:model ids; ``model_factory(id)`` builds one
+    on first use (default: init_chat_model) and ``env`` is where API keys are looked up.
+    Only registry ids whose key is set can be chosen per message; every model shares ONE
+    checkpointer, so a conversation keeps its history across a model switch."""
     path = Path(atlas_path or os.environ.get("FLYBRAIN_ANNOTATIONS") or DEFAULT_ANNOTATIONS)
 
     @asynccontextmanager
@@ -126,6 +136,9 @@ def create_app(
         app.state.nt = nt_codes(atlas).tobytes()
         app.state.landmarks = landmarks(atlas)
         app.state.graph = None
+        app.state.tools = None
+        app.state.graphs = {}  # model id -> compiled graph, built lazily
+        app.state.graph_lock = asyncio.Lock()
         app.state.connectome = load_connectome(atlas, connectome_path)  # optional: None if not built
         # the simulator loads lazily on the first run; only its presence is checked here
         app.state.sims = simulation if simulation is not None else SimulationService.default(atlas)
@@ -137,8 +150,40 @@ def create_app(
                     )
                 )
                 tools = await load_mcp_tools(session, server_name=SERVER_NAME)
-                app.state.graph = build_graph(model, tools, checkpointer=InMemorySaver())
+                app.state.tools = tools
+                app.state.checkpointer = InMemorySaver()
+                app.state.graph = build_graph(model, tools, checkpointer=app.state.checkpointer)
+                app.state.graphs[default_id] = app.state.graph
             yield
+
+    default_id = model_name or "default"
+    registry = [default_id, *[m for m in (models or []) if m != default_id]]
+
+    def _rows() -> list[dict]:
+        """Registry rows; the default is built already, so it is available whatever the env says."""
+        rows = describe_models(registry, os.environ if env is None else env)
+        for row in rows:
+            if row["id"] == default_id:
+                row.pop("reason", None)
+                row["available"] = True
+        return rows
+
+    def _make_model(model_id: str):
+        if model_factory is not None:
+            return model_factory(model_id)
+        from langchain.chat_models import init_chat_model
+
+        return init_chat_model(model_id)
+
+    async def _graph_for(model_id: str):
+        """The graph for an allowlisted id, built once (all share the checkpointer)."""
+        async with app.state.graph_lock:
+            graph = app.state.graphs.get(model_id)
+            if graph is None:
+                chat_model = await asyncio.to_thread(_make_model, model_id)
+                graph = build_graph(chat_model, app.state.tools, checkpointer=app.state.checkpointer)
+                app.state.graphs[model_id] = graph
+            return graph
 
     app = FastAPI(title="flybrain", lifespan=lifespan)
     app.state.turn_timeout = _resolve_turn_timeout(turn_timeout)
@@ -161,6 +206,24 @@ def create_app(
             "connectome_edges": app.state.connectome.n_edges if app.state.connectome is not None else None,
             "simulation": app.state.sims.available,
         }
+
+    @app.get("/models")
+    def list_models():
+        if app.state.graph is None:
+            return {"default": None, "models": []}
+        return {"default": default_id, "models": _rows()}
+
+    async def chosen_model(req: ChatRequest) -> str | None:
+        """Allowlist: an explicit model must be a configured, available id (else 422)."""
+        if req.model is None:
+            return None
+        allowed = [r["id"] for r in _rows() if r["available"]]
+        if app.state.graph is None or req.model not in allowed:
+            raise HTTPException(
+                status_code=422,
+                detail={"message": f"model {req.model!r} is not available", "available": allowed},
+            )
+        return req.model
 
     @app.get("/brain/meta")
     def brain_meta():
@@ -332,13 +395,23 @@ def create_app(
                                 "active_count": rec.active_count, "active_hz": ACTIVE_HZ})
 
     @app.post("/chat", response_class=EventSourceResponse)
-    async def chat(req: ChatRequest) -> AsyncIterable[ServerSentEvent]:
+    async def chat(
+        req: ChatRequest, picked: Annotated[str | None, Depends(chosen_model)]
+    ) -> AsyncIterable[ServerSentEvent]:
         conversation_id = req.conversation_id or uuid.uuid4().hex
-        yield _sse("meta", {"conversation_id": conversation_id})
+        used = picked or default_id
+        yield _sse("meta", {"conversation_id": conversation_id, "model": used if app.state.graph else None})
         graph = app.state.graph
+        if graph is not None and picked is not None:
+            try:
+                graph = await _graph_for(picked)
+            except Exception as exc:  # missing provider package, bad key format...
+                reason = " ".join(str(exc).split()) or type(exc).__name__
+                yield _sse("error", {"message": f"could not set up model {picked}: {reason}"})
+                graph = False
         if graph is None:
             yield _sse("error", {"message": "no chat model configured on this server"})
-        else:
+        elif graph is not False:
             seen: set[str] = set()
             # stream_events never raises: failures arrive as an "error" event
             # aclosing: when the client leaves, the stream is closed right away (not at GC time)
