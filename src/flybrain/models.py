@@ -23,6 +23,7 @@ DEFAULT_EXTRA_MODELS = [
 PROVIDER_KEYS = {
     "google_genai": "GOOGLE_API_KEY",
     "groq": "GROQ_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
 }
