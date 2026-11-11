@@ -273,6 +273,7 @@ def build_graph(
 
 
 _QUOTA = re.compile(r"\b429\b|RESOURCE_EXHAUSTED|rate.?limit|quota|too many requests", re.I)
+_TOO_LARGE = re.compile(r"request too large|\b413\b|payload too large", re.I)
 _AUTH = re.compile(
     r"\b40[13]\b|PERMISSION_DENIED|UNAUTHENTICATED|invalid.{0,12}api.?key|api.?key.{0,20}(invalid|not valid|missing)"
     r"|incorrect api key|authentication",
@@ -282,12 +283,17 @@ SHORT_CAUSE = 120
 
 
 def friendly_model_error(exc: BaseException, model_name: str | None = None) -> str | None:
-    """A readable message for quota/rate-limit and auth failures of a provider, else None."""
+    """A readable message for request-too-large, quota/rate-limit and auth failures of a provider, else None."""
     who = f"model {model_name}" if model_name else "the model"
     reason = " ".join(str(exc).split()) or type(exc).__name__
     status = next(
         (v for v in (getattr(exc, "status_code", None), getattr(exc, "code", None)) if isinstance(v, int)), None
     )
+    if status == 413 or _TOO_LARGE.search(reason):  # before quota: Groq's 413 body says rate_limit_exceeded
+        return (
+            f"{who}: request too large for its per-minute token limit; "
+            "start a new chat or ask a narrower question"
+        )
     if status == 429 or _QUOTA.search(reason):
         cause = reason if len(reason) <= SHORT_CAUSE else reason[:SHORT_CAUSE] + "…"
         return f"{who} hit its quota or rate limit; switch model in the picker or retry later ({cause})"
