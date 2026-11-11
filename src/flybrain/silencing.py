@@ -70,15 +70,18 @@ def silencing_screen(
 
     t0 = time.perf_counter()
     rows: list[dict] = []
+    cached_runs = 0
     with sims.exclusive():
-        sim = sims.simulation()
-        base = sim.run(stim, rate, duration, n_trials, seed=seed, bin_ms=bin_ms)
+        sims.simulation()
+        base, hit = sims.run(stim, rate, duration, n_trials, seed=seed, bin_ms=bin_ms)
+        cached_runs += hit
         picked = _candidates(atlas, store, candidates, base, stim, readout, n, notes)
         base_hz = base.group_trial_hz(readout)
         base_id = keep(base)
         with _Progress(sims, "silencing_screen", len(picked)) as progress:
             for row in picked:
-                res = sim.run(stim, rate, duration, n_trials, seed=seed, silence_rows=[int(row)], bin_ms=bin_ms)
+                res, hit = sims.run(stim, rate, duration, n_trials, seed=seed, silence_rows=[int(row)], bin_ms=bin_ms)
+                cached_runs += hit
                 c = compare(base_hz, res.group_trial_hz(readout))
                 rows.append({"row": int(row), "c": c, "simulation_id": keep(res, [int(row)], base_id)})
                 progress.step()
@@ -126,6 +129,7 @@ def silencing_screen(
                  for r in results],
     })
     out["runtime_s"] = round(runtime, 1)
+    out["cached_runs"] = cached_runs
     out["note"] = "; ".join([*notes, MODEL_NOTE, SIM_NOTE])
     return out
 

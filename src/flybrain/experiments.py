@@ -83,12 +83,13 @@ def dose_response(
     stim = _selection_rows(atlas, store, selection_id)
     readout = _selection_rows(atlas, store, readout_selection_id)
 
-    points, t0, clipped = [], time.perf_counter(), False
+    points, t0, clipped, cached_runs = [], time.perf_counter(), False, 0
     with sims.exclusive():
-        sim = sims.simulation()
+        sims.simulation()
         with _Progress(sims, "dose_response", len(rates)) as progress:
             for rate in rates:
-                res = sim.run(stim, rate, duration, n_trials, seed=seed)
+                res, hit = sims.run(stim, rate, duration, n_trials, seed=seed)
+                cached_runs += hit
                 s = summarize(res.group_trial_hz(readout))
                 low = None if s.ci_low is None else max(0.0, s.ci_low)  # a rate cannot be negative
                 clipped = clipped or (s.ci_low is not None and s.ci_low < 0)
@@ -127,5 +128,8 @@ def dose_response(
                    for p in points],
     })
     out["runtime_s"] = round(runtime, 1)
+    out["cached_runs"] = cached_runs
+    if cached_runs:
+        notes.append(f"{cached_runs} of {len(rates)} rate steps came from the simulation cache")
     out["note"] = "; ".join([*notes, MODEL_NOTE, SIM_NOTE])
     return out

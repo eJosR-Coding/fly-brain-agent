@@ -32,6 +32,19 @@ class SimulationUnavailable(RuntimeError):
 MAX_RESULTS = 24  # activity recordings kept (LRU); a silencing screen keeps 1 baseline + up to 12 silenced runs
 MAX_CHARTS = 12  # experiment charts kept (tiny dicts)
 
+# Raw SimResult cache (deterministic given rows + params + seed + weights). Memory per entry on the
+# real brain (n ~ 139k neurons): counts int64 1.1 MB + rate_hz float64 1.1 MB + trial_counts
+# int32 (trials <= 10) 0.56 MB per trial = ~8 MB without frames; frames are sparse uint16 (active x
+# <=100 bins x 2 B): ~0.2 MB typical, ~28 MB in a runaway cascade. 32 entries * ~36 MB worst = ~1.1 GB
+# in theory, so a byte budget caps it too: whichever limit hits first evicts the least recently used.
+MAX_CACHED_RUNS = 32
+MAX_CACHE_BYTES = 300 * 1024 * 1024
+
+
+def _result_bytes(res) -> int:
+    return sum(a.nbytes for a in (res.counts, res.rate_hz, res.trial_counts, res.active_rows, res.frames)
+               if a is not None)
+
 
 class UnknownSimulationError(KeyError):
     """Bad or expired simulation id. str() is the plain message, not a quoted repr."""
@@ -73,8 +86,13 @@ class SimulationService:
     """
 
     def __init__(self, loader: Callable[[], Simulation], available: Callable[[], bool] = lambda: True,
-                 max_results: int = MAX_RESULTS) -> None:
+                 max_results: int = MAX_RESULTS, max_cached_runs: int = MAX_CACHED_RUNS,
+                 max_cache_bytes: int = MAX_CACHE_BYTES) -> None:
         self._loader, self._available = loader, available
+        self._run_cache: OrderedDict[tuple, tuple] = OrderedDict()  # key -> (SimResult, nbytes); under _run_lock
+        self._run_cache_bytes = 0
+        self.max_cached_runs, self.max_cache_bytes = max_cached_runs, max_cache_bytes
+        self.cache_hits = 0
         self._sim: Simulation | None = None
         self._load_lock = threading.Lock()
         self._run_lock = threading.Lock()
@@ -91,8 +109,8 @@ class SimulationService:
         return cls(lambda: load_simulation(atlas)[0], weights_available, max_results)
 
     @classmethod
-    def from_simulation(cls, sim: Simulation, max_results: int = MAX_RESULTS) -> "SimulationService":
-        svc = cls(lambda: sim, lambda: True, max_results)
+    def from_simulation(cls, sim: Simulation, max_results: int = MAX_RESULTS, **cache_limits) -> "SimulationService":
+        svc = cls(lambda: sim, lambda: True, max_results, **cache_limits)
         svc._sim = sim
         return svc
 
@@ -111,6 +129,34 @@ class SimulationService:
     def exclusive(self):
         with self._run_lock:
             yield
+
+    def run(self, stim_rows, rate_hz: float, duration_ms: float = 1000.0, trials: int = 1, seed: int = 0,
+            silence_rows=None, bin_ms: float | None = None):
+        """`Simulation.run` through the result cache; returns (SimResult, cache_hit).
+
+        Call it inside `exclusive()` (the cache is guarded by that same lock). The key is the
+        RESOLVED rows plus every parameter and the weights fingerprint, never selection ticket ids.
+        Treat the returned arrays as read-only: they are shared with later hits.
+        """
+        sim = self.simulation()
+        key = (
+            sim.fingerprint, np.unique(np.asarray(list(stim_rows), dtype=np.int64)).tobytes(),
+            np.unique(np.asarray(list(silence_rows) if silence_rows is not None else [], dtype=np.int64)).tobytes(),
+            float(rate_hz), float(duration_ms), int(trials), int(seed), None if bin_ms is None else float(bin_ms),
+        )
+        if key in self._run_cache:
+            self._run_cache.move_to_end(key)
+            self.cache_hits += 1
+            return self._run_cache[key][0], True
+        res = sim.run(stim_rows, rate_hz, duration_ms, trials, seed=seed, silence_rows=silence_rows, bin_ms=bin_ms)
+        size = _result_bytes(res)
+        if size <= self.max_cache_bytes:
+            self._run_cache[key] = (res, size)
+            self._run_cache_bytes += size
+            while len(self._run_cache) > self.max_cached_runs or self._run_cache_bytes > self.max_cache_bytes:
+                _, (_, freed) = self._run_cache.popitem(last=False)
+                self._run_cache_bytes -= freed
+        return res, False
 
     def add(self, rows, frames, bin_ms: float, duration_ms: float, trials: int, stimulus: dict,
             active_count: int | None = None, compare_id: str | None = None, silenced_rows=None,
