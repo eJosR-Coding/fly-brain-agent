@@ -25,7 +25,8 @@ control rows readable at a glance.
 - Deps in their own `chore(deps)` commit.
 
 ## Tasks
-- [ ] T1 hybrid model catalog (route: delegated writer, 3+ files: models.py, web.py, tests)
+- [x] T1 hybrid model catalog (route: delegated writer, 3+ files: models.py, web.py, tests)
+  Evidence: 322d756, 579 passed (uv run pytest -q), RED seen first (import errors, 4 failing web/api tests).
 - [ ] T2 grouped viewer controls (route: delegated writer, main.ts/style.css/index.html + tests)
 
 ## Checks
