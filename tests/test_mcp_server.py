@@ -10,7 +10,7 @@ def test_server_lists_the_tools(tiny_atlas):
     assert names == {
         "search_neurons", "count_neurons", "describe_neuron", "list_selection",
         "neighbors", "find_path", "lesion_effect", "top_hubs", "preset_selection", "stimulate",
-        "dose_response",
+        "dose_response", "silencing_screen",
     }
 
 
@@ -155,7 +155,7 @@ def test_find_path_doc_explains_strength_fields(tiny_atlas):
 
 # --- token budget: the tool definitions ride on EVERY model call ---------------------------------
 
-TOOL_DEFS_BUDGET_CHARS = 7400  # ~1,850 tokens; was 12,320 chars (~3,100 tokens) before trimming; +dose_response
+TOOL_DEFS_BUDGET_CHARS = 8400  # ~2,100 tokens; was 12,320 chars (~3,100 tokens) before trimming; +2 experiments
 
 
 def _definition_chars(tiny_atlas) -> dict[str, int]:
@@ -168,7 +168,7 @@ def _definition_chars(tiny_atlas) -> dict[str, int]:
 
 def test_tool_definitions_stay_within_the_token_budget(tiny_atlas):
     sizes = _definition_chars(tiny_atlas)
-    assert len(sizes) == 11
+    assert len(sizes) == 12
     assert sum(sizes.values()) <= TOOL_DEFS_BUDGET_CHARS, sizes
 
 
