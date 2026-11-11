@@ -2,6 +2,7 @@ import "@fontsource-variable/inter";
 import "@fontsource-variable/jetbrains-mono";
 import "./style.css";
 import { mountChat } from "./chat";
+import { parseModels } from "./models";
 import { fetchIndices, loadBrain } from "./brainData";
 import { createScene, type BrainScene } from "./scene";
 import { Latest, runLatest } from "./latest";
@@ -30,6 +31,7 @@ let brainScene: BrainScene | null = null;
 let pointCount: number | null = null; // known once the brain is loaded
 let health: Health | null = null;
 let streaming = false;
+let selectedModel: string | null = null;
 let player: Player | null = null;
 let simulating = false;
 let sugarChip: HTMLButtonElement | null = null;
@@ -108,7 +110,7 @@ function setActiveChip(label: string | null): void {
 }
 
 function renderStatus(modelEl: HTMLElement): void {
-  const v = deriveStatus(health, streaming);
+  const v = deriveStatus(health, streaming, selectedModel);
   const dl = $("status");
   dl.replaceChildren(
     ...v.rows.map((r) => {
@@ -230,6 +232,15 @@ async function loadHealth(): Promise<void> {
   }
 }
 
+async function loadModels(): Promise<ReturnType<typeof parseModels>> {
+  try {
+    const res = await fetch("/api/models");
+    return res.ok ? parseModels(await res.json()) : null;
+  } catch {
+    return null; // older backend: no picker, the server default is used
+  }
+}
+
 async function boot(): Promise<void> {
   const theme = readTheme();
   $("version").textContent = versionLine(null);
@@ -247,12 +258,17 @@ async function boot(): Promise<void> {
       showActivity(activity, activityLegend(activity.activeCount, activity.nRows, null));
     },
     getPointCount: () => pointCount,
+    onModelChange: (id) => {
+      selectedModel = id;
+      renderStatus(chat.model);
+    },
     onStreaming: (s) => {
       streaming = s;
       renderStatus(chat.model);
     },
   });
   renderStatus(chat.model);
+  void loadModels().then((list) => chat.setModels(list));
   void loadHealth().then(() => {
     renderStatus(chat.model);
     if (sugarChip && health?.simulation === false) {
