@@ -410,6 +410,7 @@ async def stream_events(
     max_steps: int = MAX_STEPS,
     turn_timeout: float | None = None,
     model_name: str | None = None,
+    tool_extensions: dict[str, float] | None = None,
 ) -> AsyncIterator[dict]:
     """Run one turn and yield typed events (plain dicts) as the graph progresses.
 
@@ -424,6 +425,8 @@ async def stream_events(
     that last request never executes and the turn ends with the hard-stop error.
     ``turn_timeout`` (seconds) caps the whole turn: provider SDKs may retry 503s with
     backoff for minutes, so a slow turn ends with an ``error`` instead of silence.
+    ``tool_extensions`` {tool name: seconds} adds that many seconds to the deadline whenever the
+    model calls that tool (long experiments); other tools get no extra time.
     ``model_name`` names the model in friendlier quota / auth error texts.
     ``usage`` {calls, input_tokens, output_tokens, total_tokens} comes right before the final
     ``answer`` / ``error`` (only if the model was called): token counts are summed from every
@@ -488,6 +491,8 @@ async def stream_events(
                             chunk_usage = []
                             for tc in getattr(msg, "tool_calls", None) or []:
                                 started[tc["id"]] = time.monotonic()
+                                if deadline is not None and tool_extensions:
+                                    deadline += tool_extensions.get(tc["name"], 0.0)
                                 yield {"type": "tool_call", "id": tc["id"], "tool": tc["name"], "args": tc["args"]}
                         elif isinstance(msg, ToolMessage):
                             t0 = started.pop(msg.tool_call_id, None)
