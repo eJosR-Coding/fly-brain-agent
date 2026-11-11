@@ -10,6 +10,7 @@ import numpy as np
 from flybrain.atlas import Atlas, RowIndex, clean_filter
 from flybrain.connectome import Connectome, ConnectomeError
 from flybrain.selections import SelectionStore
+from flybrain.stats import compare, summarize, verdict
 
 SAMPLE_SIZE = 5
 MAX_PAGE = 25  # list_selection rows per call (a page is ~100 chars per neuron in the context)
@@ -383,6 +384,8 @@ def top_hubs(
 MAX_RATE_HZ, MIN_RATE_HZ = 300.0, 1.0
 MIN_DURATION_MS, MAX_DURATION_MS = 100.0, 1000.0
 MAX_TRIALS = 10
+DEFAULT_TRIALS = 3
+COMPARE_TRIALS = 5  # default when silencing: a p-value needs a few trials
 ACTIVE_HZ = 1.0  # a neuron counts as active above this mean rate
 TOP_RESPONDERS = 10
 TOP_NON_SENSORY = 5
@@ -441,7 +444,42 @@ def _group(atlas: Atlas, rates: np.ndarray, rows: np.ndarray) -> dict:
             "top": top}
 
 
+def _group_label(atlas: Atlas, rows: np.ndarray, description: str = "") -> str:
+    """The preset's name (preset tickets), else the shared cell type, else "readout"."""
+    types = {_text(atlas.neurons["cell_type"].iat[int(r)]) for r in rows}
+    if description.startswith("preset "):
+        return description.removeprefix("preset ").strip().upper()
+    return next(iter(types)) if len(types) == 1 and None not in types else "readout"
+
+
 READOUT_ROWS_SHOWN = 20  # rows of the readout group listed with its trace (the viewer emphasizes them)
+
+
+def _round_p(p: float | None) -> float | None:
+    return None if p is None else float(f"{p:.3g}")
+
+
+def _mean_ci(values) -> dict:
+    s = summarize(values)
+    ci = lambda v: None if v is None else round(v, 1)  # noqa: E731
+    return {"mean_hz": round(s.mean, 1), "ci_low": ci(s.ci_low), "ci_high": ci(s.ci_high)}
+
+
+def readout_stats(baseline_trials, silenced_trials, tests: int = 1, p_adjusted: float | None = None) -> dict:
+    """Readout of baseline vs silenced as mean +- 95% CI per condition, delta, Welch p and a plain verdict.
+
+    `baseline_trials` / `silenced_trials` are the readout group's mean Hz in each trial.
+    """
+    c = compare(baseline_trials, silenced_trials)
+    n = len(baseline_trials)
+    p = c.p if p_adjusted is None else p_adjusted
+    r1 = lambda v: None if v is None else round(v, 1)  # noqa: E731
+    return {
+        "trials": n, "baseline": _mean_ci(baseline_trials), "silenced": _mean_ci(silenced_trials),
+        "delta_hz": round(c.delta, 1), "delta_ci_low": r1(c.delta_ci_low), "delta_ci_high": r1(c.delta_ci_high),
+        "p_value": _round_p(c.p), "cohens_d": None if c.cohens_d is None else round(c.cohens_d, 2),
+        "verdict": verdict(p, n, tests),
+    }
 
 
 def _readout_trace(atlas: Atlas, readout: np.ndarray, bin_ms: float, trials: int, description: str = ""):
@@ -449,11 +487,7 @@ def _readout_trace(atlas: Atlas, readout: np.ndarray, bin_ms: float, trials: int
 
     The label is the preset's name (preset tickets), else the shared cell type, else "readout".
     """
-    types = {_text(atlas.neurons["cell_type"].iat[int(r)]) for r in readout}
-    if description.startswith("preset "):
-        label = description.removeprefix("preset ").strip().upper()
-    else:
-        label = next(iter(types)) if len(types) == 1 and None not in types else "readout"
+    label = _group_label(atlas, readout, description)
     shown = [int(r) for r in readout[:READOUT_ROWS_SHOWN]]
 
     def trace(res) -> dict:
@@ -468,13 +502,15 @@ def _readout_trace(atlas: Atlas, readout: np.ndarray, bin_ms: float, trials: int
 
 
 def stimulate(
-    atlas: Atlas, store: SelectionStore, sims, selection_id, rate_hz=100, duration_ms=500, trials=3,
+    atlas: Atlas, store: SelectionStore, sims, selection_id, rate_hz=100, duration_ms=500, trials=None,
     silence_selection_id=None, readout_selection_id=None, seed: int = 0,
 ) -> dict:
     """Poisson-drive a selection in the whole-brain LIF model; return a small activity summary."""
     notes: list[str] = []
     rate = _clamp("rate_hz", _number("rate_hz", rate_hz), MIN_RATE_HZ, MAX_RATE_HZ, notes)
     duration = round(_clamp("duration_ms", _number("duration_ms", duration_ms), MIN_DURATION_MS, MAX_DURATION_MS, notes), 1)
+    if trials is None:  # a comparison needs enough trials to tell a change from noise
+        trials = COMPARE_TRIALS if silence_selection_id is not None else DEFAULT_TRIALS
     n_trials = _clamp("trials", _int("trials", trials), 1, MAX_TRIALS, notes)
     stim = _selection_rows(atlas, store, selection_id)
     silence = _selection_rows(atlas, store, silence_selection_id) if silence_selection_id is not None else None
@@ -527,6 +563,8 @@ def stimulate(
                 "change_hz": round(after - before, 1),
                 "change_pct": round(100 * (after - before) / before, 1) if before else None,
             }
+        if readout is not None:
+            out["readout_stats"] = readout_stats(base.group_trial_hz(readout), res.group_trial_hz(readout))
         notes.append("silencing runs a baseline too, so it costs 2x the runtime (same random seed for both)")
     trace = (_readout_trace(atlas, readout, bin_ms, n_trials, store.get(readout_selection_id).description)
              if readout is not None else None)

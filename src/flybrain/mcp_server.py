@@ -179,7 +179,7 @@ def build_server(
         selection_id: str,
         rate_hz: float = 100,
         duration_ms: float = 500,
-        trials: int = 3,
+        trials: int | None = None,
         silence_selection_id: str | None = None,
         readout_selection_id: str | None = None,
     ) -> dict:
@@ -193,7 +193,7 @@ def build_server(
             selection_id: neurons to stimulate.
             rate_hz: 1..300 (default 100).
             duration_ms: 100..1000 (default 500).
-            trials: averaged, 1..10 (default 3).
+            trials: averaged, 1..10 (default 3; 5 when silencing).
             silence_selection_id: optional; fire but pass nothing on.
             readout_selection_id: optional; rates to report.
         Out-of-range values are capped.

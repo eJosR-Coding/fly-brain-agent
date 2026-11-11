@@ -275,3 +275,46 @@ def test_a_baseline_is_never_evicted_while_a_silenced_run_still_points_at_it(tin
     # the pair goes together: once the silenced run is gone its baseline may go too
     with pytest.raises(UnknownSimulationError):
         svc.get(first)
+
+
+# --- statistics (EB3) --------------------------------------------------------------------
+
+
+def test_a_comparison_defaults_to_five_trials_and_a_plain_run_to_three(tiny_atlas, store, sims):
+    orn = ticket(tiny_atlas, store, cell_type="ORN_DA1")
+    epg = ticket(tiny_atlas, store, cell_type="EPG")
+    plain = tools.stimulate(tiny_atlas, store, sims, orn, rate_hz=300, duration_ms=100)
+    silenced = tools.stimulate(tiny_atlas, store, sims, orn, rate_hz=300, duration_ms=100, silence_selection_id=epg)
+    assert plain["stimulus"]["trials"] == 3 and silenced["stimulus"]["trials"] == 5
+    explicit = tools.stimulate(tiny_atlas, store, sims, orn, rate_hz=300, duration_ms=100, trials=2, silence_selection_id=epg)
+    assert explicit["stimulus"]["trials"] == 2
+
+
+def test_silencing_reports_the_readout_with_intervals_and_a_test(tiny_atlas, store, sims):
+    epg = ticket(tiny_atlas, store, cell_type="EPG")
+    pen = ticket(tiny_atlas, store, cell_type="PEN_a")
+    out = run(tiny_atlas, store, sims, trials=5, silence_selection_id=epg, readout_selection_id=pen)
+    st = out["readout_stats"]
+    assert st["trials"] == 5
+    assert st["baseline"]["ci_low"] <= st["baseline"]["mean_hz"] <= st["baseline"]["ci_high"]
+    assert st["silenced"]["mean_hz"] == 0 and st["delta_hz"] == pytest.approx(-st["baseline"]["mean_hz"], abs=0.1)
+    assert st["p_value"] is not None and st["p_value"] < 0.05
+    assert "significant at p<0.05" in st["verdict"] and "model" in st["verdict"].lower()
+    assert st["baseline"]["mean_hz"] == out["readout_change"]["baseline_mean_hz"]  # same numbers as the old summary
+    assert len(json.dumps(out)) < 2600
+
+
+def test_one_trial_says_it_cannot_test(tiny_atlas, store, sims):
+    epg = ticket(tiny_atlas, store, cell_type="EPG")
+    pen = ticket(tiny_atlas, store, cell_type="PEN_a")
+    st = run(tiny_atlas, store, sims, trials=1, silence_selection_id=epg, readout_selection_id=pen)["readout_stats"]
+    assert st["p_value"] is None and st["baseline"]["ci_low"] is None and "at least 2 trials" in st["verdict"]
+
+
+def test_no_effect_is_called_noise_not_a_finding(tiny_atlas, store, sims):
+    orn = ticket(tiny_atlas, store, cell_type="ORN_DA1")
+    pen = ticket(tiny_atlas, store, cell_type="PEN_a")
+    out = tools.stimulate(tiny_atlas, store, sims, orn, rate_hz=300, duration_ms=100, trials=3,
+                          silence_selection_id=pen, readout_selection_id=ticket(tiny_atlas, store, cell_type="EPG"))
+    st = out["readout_stats"]  # silencing PEN (a leaf here) cannot change EPG
+    assert st["delta_hz"] == 0 and st["p_value"] == 1.0 and "not distinguishable from noise with 3 trials" in st["verdict"]

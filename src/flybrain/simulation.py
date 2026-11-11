@@ -59,9 +59,22 @@ class SimResult:
     rate_hz: np.ndarray  # (n,) mean rate per trial
     trials: int
     duration_ms: float
+    trial_counts: np.ndarray | None = None  # (trials, n) int32: spikes per trial, to measure trial-to-trial spread
     bin_ms: float | None = None
     active_rows: np.ndarray | None = None  # (n_active,) int64, sorted
     frames: np.ndarray | None = None  # (n_active, n_bins) uint16
+
+    @property
+    def trial_rate_hz(self) -> np.ndarray:
+        """(trials, n) rate of every neuron in every trial, Hz."""
+        return self.trial_counts / (self.duration_ms / 1000.0)
+
+    def group_trial_hz(self, rows) -> np.ndarray:
+        """(trials,) mean rate of a neuron group in each trial: the unit the statistics work on."""
+        idx = np.asarray(list(rows), dtype=np.int64)
+        if not len(idx):
+            return np.zeros(self.trials)
+        return self.trial_counts[:, idx].mean(axis=1) / (self.duration_ms / 1000.0)
 
     @property
     def n_bins(self) -> int | None:
@@ -227,16 +240,18 @@ class Simulation:
                 "use a coarser bin_ms"
             )
 
-        counts = np.zeros(self.n, dtype=np.int64)
+        trial_counts = np.zeros((trials, self.n), dtype=np.int32)
         events: list[np.ndarray] = []  # per trial: unique (bin * n + row) keys and their counts
-        for rng in (np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(trials)):
-            self._trial(stim, rate_hz, n_steps, rng, silenced, counts, events if bin_steps else None, bin_steps)
+        for t, rng in enumerate(np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(trials)):
+            self._trial(stim, rate_hz, n_steps, rng, silenced, trial_counts[t], events if bin_steps else None, bin_steps)
+        counts = trial_counts.sum(axis=0, dtype=np.int64)
         active = frames = None
         if bin_steps:
             active, frames = self._sparse_frames(events, n_bins)
         return SimResult(
             counts=counts, rate_hz=counts / (trials * duration_ms / 1000.0), trials=trials,
-            duration_ms=float(duration_ms), bin_ms=bin_ms, active_rows=active, frames=frames,
+            duration_ms=float(duration_ms), trial_counts=trial_counts, bin_ms=bin_ms,
+            active_rows=active, frames=frames,
         )
 
     def _sparse_frames(self, events: list[np.ndarray], n_bins: int) -> tuple[np.ndarray, np.ndarray]:

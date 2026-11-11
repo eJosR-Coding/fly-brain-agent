@@ -195,3 +195,32 @@ def test_cache_round_trip_and_invalidation(reference_files, tiny_atlas, tmp_path
     cache.write_bytes(b"not an npz")
     _, hit4 = Simulation.load_weights(*reference_files, tiny_atlas, cache=cache)
     assert hit4 is False
+
+
+# --- per-trial readouts (EB3) -------------------------------------------------------------
+
+
+def test_trial_counts_keep_every_trial_apart_and_sum_to_the_totals():
+    sim = net([(0, 1, 1000)], 3)
+    res = sim.run([0], 300.0, duration_ms=200, trials=4, seed=3)
+    assert res.trial_counts.shape == (4, 3)
+    assert (res.trial_counts.sum(axis=0) == res.counts).all()
+    assert res.trial_rate_hz.shape == (4, 3)
+    assert res.trial_rate_hz.mean(axis=0) == pytest.approx(res.rate_hz)
+
+
+def test_group_trial_hz_is_the_mean_rate_of_the_group_per_trial():
+    sim = net([(0, 1, 1000), (0, 2, 1000)], 3)
+    res = sim.run([0], 300.0, duration_ms=300, trials=3, seed=1)
+    hz = res.group_trial_hz([1, 2])
+    assert hz.shape == (3,)
+    assert hz == pytest.approx(res.trial_rate_hz[:, [1, 2]].mean(axis=1))
+    assert res.group_trial_hz([]).shape == (3,) and (res.group_trial_hz([]) == 0).all()
+
+
+def test_trials_differ_but_the_run_is_reproducible():
+    sim = net([(0, 1, 30)], 2)
+    one = sim.run([0], 100.0, duration_ms=300, trials=5, seed=7)
+    two = sim.run([0], 100.0, duration_ms=300, trials=5, seed=7)
+    assert (one.trial_counts == two.trial_counts).all()
+    assert len({tuple(r) for r in one.trial_counts}) > 1  # independent Poisson draws per trial

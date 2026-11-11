@@ -59,7 +59,7 @@ class SimulateRequest(BaseModel):
     selection_id: str | None = None
     rate_hz: float = 100
     duration_ms: float = 500
-    trials: StrictInt = 3
+    trials: StrictInt | None = None  # default: 3, or 5 when silencing
     readout_preset: str | None = None
     readout_selection_id: str | None = None
     silence_selection_id: str | None = None
