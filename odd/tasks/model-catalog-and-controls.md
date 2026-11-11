@@ -27,7 +27,8 @@ control rows readable at a glance.
 ## Tasks
 - [x] T1 hybrid model catalog (route: delegated writer, 3+ files: models.py, web.py, tests)
   Evidence: 322d756, 579 passed (uv run pytest -q), RED seen first (import errors, 4 failing web/api tests).
-- [ ] T2 grouped viewer controls (route: delegated writer, main.ts/style.css/index.html + tests)
+- [x] T2 grouped viewer controls (route: delegated writer, main.ts/style.css/index.html + tests)
+  Evidence: 44d7b5c, 388 passed (pnpm -C web test), RED seen first (controls module missing), build ok, screenshots /tmp/claude-1000/legib/{d1440,d1366,m390}.png.
 
 ## Checks
 - TDD strict (project/session config). Runners: `uv run pytest -q`, `pnpm -C web test`, `pnpm -C web build`.
