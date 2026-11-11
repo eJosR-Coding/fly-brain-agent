@@ -7,7 +7,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from flybrain import tools
+from flybrain import experiments, tools
 from flybrain.atlas import Atlas, AtlasLoadError, load_atlas
 from flybrain.connectome import Connectome, ConnectomeError
 from flybrain.selections import SelectionStore
@@ -201,6 +201,27 @@ def build_server(
         return await asyncio.to_thread(
             tools.stimulate, atlas, store, sims, selection_id, rate_hz, duration_ms, trials,
             silence_selection_id, readout_selection_id,
+        )
+
+    @server.tool()
+    async def dose_response(
+        selection_id: str,
+        readout_selection_id: str,
+        rates_hz: list[float] = [10, 25, 50, 100, 200],  # noqa: B006 - pydantic copies the default
+        duration_ms: float = 300,
+        trials: int = 3,
+    ) -> dict:
+        """SIMULATION sweep (model): readout Hz vs stimulus rate, one sim per rate.
+
+        Returns per rate mean + 95% CI, `ec50_hz` (half-max, null if none), `chart_id`. Slow: run once.
+
+        Args:
+            selection_id: stimulated. readout_selection_id: measured.
+            rates_hz: <= 8 rates, 1..300. duration_ms: 100..1000. trials: 1..10.
+        """
+        return await asyncio.to_thread(
+            experiments.dose_response, atlas, store, sims, selection_id, readout_selection_id, list(rates_hz),
+            duration_ms, trials,
         )
 
     # the tool definitions are sent on EVERY model call: keep them lean (see the budget test)
