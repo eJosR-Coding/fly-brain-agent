@@ -349,11 +349,14 @@ must be a positive number; anything else stops startup with a one-line error.
 | `GET /brain/landmarks` | JSON computed from the data: centroids in micrometers (`central brain`, `optic lobe L/R`, `lamina L/R`), plus per side the lobe center, a robust lobe radius (80th percentile) and the outward lamina direction |
 | `GET /models` | `{"default", "models": [{"id", "provider", "available", "reason"?}]}`: the model picker's registry |
 | `POST /chat` | `text/event-stream`, body `{"message", "conversation_id"?, "model"?}`; `model` must be an available id from `/models`, else `422` listing them |
+| `GET /neurons/{row}` | one neuron by atlas row (the index the viewer uses): `root_id` (a string, it does not fit a JS number), `cell_type`, `cell_class`, `super_class`, `side`, `top_nt`, `position_um`, `region`, and with a connectome `partners: true` plus the top 5 `inputs` and `outputs` (`{row, cell_type, super_class, synapses}`) and `synapses_in` / `synapses_out` totals (`partners: false` and no lists without one); `404` for a row outside the atlas, `422` for a non-integer |
 | `GET /selections/{id}/indices` | row indices of a ticket, uint32 LE; 404 if unknown or expired |
 
 **Chat stream events** (`POST /chat`): `meta` `{conversation_id, model}`, `tool_call`
 `{id, tool, args}` (the tool started), `tool_result` `{id, tool, ok, ms}` (it finished, `ms`
-since its `tool_call`), `highlight` and `activity` as before, `answer_delta` `{text}` (final
+since its `tool_call`), `highlight` and `activity` as before, `path` `{selection_id, rows, synapses,
+bottleneck}` (after a successful `find_path`: the route as atlas rows in order, one synapse count
+per hop, and the weakest hop; omitted when the route has a neuron the atlas does not know), `answer_delta` `{text}` (final
 answer chunks, only from models that stream; a client drops any partial text when the next
 `tool_call` arrives), then `usage` `{calls, input_tokens, output_tokens, total_tokens}` (token
 counts of the turn, `null` when the provider reports none; sent before `answer`/`error` when the
@@ -425,6 +428,20 @@ Without a model, run the data and search endpoints only with
 - **Highlights**: when the agent finds neurons, the stream sends a `highlight` event with row
   indices (or a URL to fetch them as binary when the set is large); those points turn white
   and everything else stays grey. `clear` restores the base colors.
+- **Click to inspect**: hover a neuron and it gets a ring; click it (a press that moves more than a
+  few pixels is an orbit drag, not a click) and a neuron card opens next to it, fed by
+  `GET /neurons/{row}`: type, class, side, transmitter, position, region, synapse totals and the top
+  5 input and output partners. `show partners` lights the neuron and those partners; `Esc`, `x` or a
+  click on empty space closes it. The card is focusable and built with `textContent` only. Picking is
+  a raycast on the point cloud with a tolerance of a few screen pixels, taking the hit nearest the
+  pointer ray; the selection, click-vs-drag, card model and card placement are pure, tested
+  functions (`web/src/inspect.ts`).
+- **Paths as cables**: when the agent runs `find_path`, the `path` event draws the route as
+  glowing white cables between the neurons it passes through (`web/src/pathLayer.ts`). Cable width
+  grows with the log of the hop's synapses (clamped), each hop is labelled (`19 syn`, hidden on
+  small screens), and lights travel from source to target (static under `prefers-reduced-motion`).
+  The legend reads `path · 3 hops · bottleneck 5 syn`. The `clear` chip, a new selection or `new
+  chat` removes them.
 - **Look**: all styling lives in `web/src/style.css` as custom properties (colors, fonts, panel
   width, point size and opacity, highlight color); the three.js parameters are read from them
   in `web/src/theme.ts`.
@@ -458,7 +475,7 @@ Without a model, run the data and search endpoints only with
   `$`, none before the closing `$`, not followed by a digit, first `$` decides). A hostile-input
   corpus (script/img/svg/iframe, `javascript:` and `data:` URLs, `\href`, `\style`, `\htmlData`,
   200k inputs) is tested with jsdom.
-- Tests: `pnpm -C web test` (SSE parser, region and transmitter tones, label placement, orbit gate, binary decoding, chat stream, markdown parser and security corpus).
+- Tests: `pnpm -C web test` (SSE parser, region and transmitter tones, label placement, neuron picking and card model, path validation and cable geometry, orbit gate, binary decoding, chat stream, markdown parser and security corpus).
 
 ## Roadmap
 
