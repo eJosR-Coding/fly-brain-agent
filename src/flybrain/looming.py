@@ -157,7 +157,7 @@ def looming_escape(
     n = len(eye)
     notes.append(
         f"loom: theta=2*atan(l/v / time-to-collision), l/v={LOOM_L_OVER_V_MS:g} ms, collision {COLLISION_LEAD_MS:g} ms "
-        f"after the end, {FULL_FIELD_DEG:g} deg = whole eye; equal drive = sum of rate x active time over photoreceptors"
+        f"after the end, {FULL_FIELD_DEG:g} deg = whole eye; equal drive = sum of rate x active time over driven cells"
     )
     extra = {}
     if input == "photoreceptors":
