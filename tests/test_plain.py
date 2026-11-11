@@ -14,11 +14,11 @@ brain_motor_neuron MBON mAL hygrosensory ocellar pars_intercerebralis LHCENT opt
 thermosensory ALIN ALON LOP>ME MBIN ME.LOP TPN LO.LOP neck_motor_neuron""".split()
 ALL_SUPER = ["optic", "central", "sensory", "visual_projection", "ascending", "descending",
              "sensory_ascending", "visual_centrifugal", "motor", "endocrine"]
-ALL_NT = ["acetylcholine", "glutamate", "gaba", "dopamine", "serotonin", "octopamine"]
+ALL_NT = ["acetylcholine", "glutamate", "gaba", "dopamine", "serotonin", "octopamine", "histamine", "tyramine"]
 
 
 def info(**kw):
-    return {"cell_type": None, "cell_class": None, "super_class": None, "top_nt": None, **kw}
+    return {"cell_type": None, "cell_class": None, "super_class": None, "top_nt": None, "known_nt": None, **kw}
 
 
 def test_glossary_is_packaged_json_with_every_section():
@@ -73,3 +73,31 @@ def test_missing_everything_still_gives_a_sentence_and_never_crashes():
     assert plain_description(info()) == "A neuron with no annotation in this atlas."
     out = plain_description(info(cell_class="never_heard_of_it", top_nt="mystery"))
     assert out and "None" not in out
+
+
+def test_known_transmitter_beats_the_prediction_and_notes_a_disagreement():
+    out = plain_description(info(cell_type="KCab", cell_class="Kenyon_Cell", super_class="central",
+                                 known_nt="acetylcholine", top_nt="dopamine"))
+    assert "known to use acetylcholine" in out and "predicted to use" not in out
+    assert "machine prediction says dopamine" in out
+    agree = plain_description(info(super_class="central", known_nt="gaba", top_nt="gaba"))
+    assert "known to use GABA" in agree and "machine prediction" not in agree
+
+
+def test_photoreceptor_histamine_is_inhibitory_and_the_model_follows_top_nt():
+    out = plain_description(info(cell_type="R1-6", cell_class="visual", super_class="sensory",
+                                 known_nt="histamine", top_nt="gaba"))
+    assert "histamine" in out and "chloride" in out and "inhibitory there" in out
+    assert "machine prediction says GABA" in out
+    # when the prediction flips the sign, say how the model treats it
+    odd = plain_description(info(super_class="sensory", known_nt="histamine", top_nt="serotonin"))
+    assert "model follows the prediction and treats it as excitatory" in odd
+
+
+def test_without_known_nt_the_line_says_predicted():
+    assert "predicted to use glutamate" in plain_description(info(super_class="central", top_nt="glutamate"))
+
+
+def test_lateral_horn_centrifugal_wording_asserts_no_direction():
+    out = plain_description(info(cell_class="LHCENT", super_class="central"))
+    assert "links the lateral horn with other brain areas" in out

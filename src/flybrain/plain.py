@@ -45,14 +45,36 @@ def _what_it_is(cell_type, cell_class, super_class) -> str | None:
     return g["super_class"].get(super_class)
 
 
+def _model_polarity(top_nt: str) -> str:
+    """The Shiu et al. LIF model: GABA and glutamate inhibit, every other transmitter excites."""
+    return "inhibitory" if top_nt in ("gaba", "glutamate") else "excitatory"
+
+
+def _transmitter_sentence(known_nt: str | None, top_nt: str | None) -> str | None:
+    """Known (literature) transmitter first; FlyWire's prediction only as a flagged disagreement."""
+    nts = glossary()["nt"]
+    known, top = nts.get(known_nt or ""), nts.get(top_nt or "")
+    if known:
+        out = f"It is known to use {known['label']}{known['tail']}."
+        if top and top_nt != known_nt:
+            out += f" (FlyWire's machine prediction says {top['label']}.)"
+            if _model_polarity(top_nt) != known["polarity"]:
+                out += f" The model follows the prediction and treats it as {_model_polarity(top_nt)}."
+        return out
+    if top:
+        note = f" (the model treats it as {_model_polarity(top_nt)})" if top["polarity"] == "modulatory" or top_nt == "glutamate" else ""
+        return f"It is predicted to use {top['label']}{top['tail']}{note}."
+    return None
+
+
 def plain_description(info: dict, output_super_class: str | None = None) -> str:
     """1-3 sentences for a non-specialist: what it is, what its transmitter does, its strongest output.
 
-    `info` has cell_type / cell_class / super_class / top_nt (any may be None).
+    `info` has cell_type / cell_class / super_class / top_nt / known_nt (any may be None).
     """
     g = glossary()
     what = _what_it_is(info.get("cell_type"), info.get("cell_class"), info.get("super_class"))
-    nt = g["nt"].get(info.get("top_nt") or "")
+    nt = _transmitter_sentence(info.get("known_nt"), info.get("top_nt"))
     target = g["super_class_target"].get(output_super_class or "")
     if what is None and nt is None:
         return "A neuron with no annotation in this atlas."

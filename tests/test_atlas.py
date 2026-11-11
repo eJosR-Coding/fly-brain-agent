@@ -228,3 +228,21 @@ def test_numeric_looking_cell_types_do_not_break_filters(tmp_path):
     row = "1\t1000\t2000\t100\tcentral\tCX\t123\tacetylcholine\tleft\tintrinsic"
     atlas = load_atlas(write_tsv(tmp_path, [HEADER, row]))
     assert len(atlas.find(cell_type="12")) == 1
+
+
+def test_known_nt_is_loaded_as_its_first_real_transmitter(tmp_path):
+    from conftest import HEADER, _tiny_rows
+    from flybrain.atlas import load_atlas
+
+    cases = ["acetylcholine; sNPF; acetylcholine, sNPF", "gaba-negative", "acetylcholine-negative, glutamate-negative",
+             "histamine; acetylcholine, histamine", "gaba, nitric oxide", "sNPF", ""]
+    rows = _tiny_rows()[:len(cases)]
+    lines = [HEADER + "\tknown_nt"] + [f"{r}\t{c}" for r, c in zip(rows, cases)]
+    path = tmp_path / "k.tsv"
+    path.write_text("\n".join(lines) + "\n")
+    got = load_atlas(path).neurons["known_nt"].tolist()
+    assert got == ["acetylcholine", None, None, "histamine", "gaba", None, None]
+
+
+def test_known_nt_is_optional_in_the_file(tiny_atlas):
+    assert tiny_atlas.neurons["known_nt"].isna().all()

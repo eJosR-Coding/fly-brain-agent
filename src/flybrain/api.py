@@ -545,7 +545,7 @@ def create_app(
             "root_id": str(int(rec["root_id"])),  # string: a root_id does not fit a JS number
             "cell_type": text_at(row, "cell_type"), "cell_class": text_at(row, "cell_class"),
             "super_class": text_at(row, "super_class"), "side": text_at(row, "side"),
-            "top_nt": text_at(row, "top_nt"),
+            "top_nt": text_at(row, "top_nt"), "known_nt": text_at(row, "known_nt"),
             "position_um": [float(rec["x_um"]), float(rec["y_um"]), float(rec["z_um"])],
             "region": REGION_CODES[int(np.frombuffer(app.state.regions, dtype=np.uint8)[row])],
         }
