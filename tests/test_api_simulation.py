@@ -112,7 +112,8 @@ def test_frames_endpoints(tiny_tsv_path, svc):
     rec = svc.get(sim_id)
     assert meta == {"simulation_id": sim_id, "bin_ms": 1.0, "n_bins": 100, "n_rows": rec.n_rows, "duration_ms": 100.0,
                     "stimulus": {"neurons": 1, "rate_hz": 300.0, "duration_ms": 100.0, "trials": 1}, "trials": 1,
-                    "active_count": rec.active_count, "active_hz": 1.0}
+                    "active_count": rec.active_count, "active_hz": 1.0, "compare_id": None,
+                    "silenced_rows": None, "readout": None}
     assert meta["active_count"] == active  # same "> 1 Hz" count the stimulate summary reports
     assert frames.headers["content-type"] == "application/octet-stream"
     raw = frames.content
@@ -153,5 +154,80 @@ def test_chat_emits_an_activity_event_after_the_highlight(tiny_tsv_path, svc):
     act = dict(events)["activity"]
     rec = svc.get(act["simulation_id"])
     assert act == {"simulation_id": rec.id, "n_bins": rec.n_bins, "bin_ms": rec.bin_ms,
-                   "active_count": rec.active_count, "active_hz": 1.0}
+                   "active_count": rec.active_count, "active_hz": 1.0, "compare_id": None}
     assert rec.active_count is not None and rec.active_count <= rec.n_rows  # spiked at least once >= active > 1 Hz
+
+
+# --- comparison runs (VL4) and rows metadata (VL5) -----------------------------------------
+
+
+def compare_run(client, **extra):
+    epg = client.get("/neurons/search", params={"cell_type": "EPG"}).json()["selection_id"]
+    pen = client.get("/neurons/search", params={"cell_type": "PEN_a"}).json()["selection_id"]
+    body = {"selection_id": orn_ticket(client), "silence_selection_id": epg, "readout_selection_id": pen, **BODY, **extra}
+    return client.post("/simulate", json=body)
+
+
+def test_simulate_with_silencing_exposes_both_recordings(tiny_tsv_path, svc):
+    with TestClient(create_app(atlas_path=tiny_tsv_path, simulation=svc)) as client:
+        r = compare_run(client)
+        assert r.status_code == 200
+        meta = client.get(f"/simulations/{r.json()['simulation_id']}").json()
+        base_meta = client.get(f"/simulations/{meta['compare_id']}").json()
+        base_frames = client.get(f"/simulations/{meta['compare_id']}/frames")
+    assert meta["compare_id"].startswith("sim_") and base_meta["compare_id"] is None
+    assert meta["silenced_rows"] == [60] and base_meta["silenced_rows"] is None
+    assert meta["readout"]["label"] == "PEN_a" and len(meta["readout"]["hz"]) == meta["n_bins"]
+    assert len(base_frames.content) == 4 * base_meta["n_rows"] + base_meta["n_rows"] * base_meta["n_bins"]
+
+
+def test_plain_meta_has_null_comparison_fields(tiny_tsv_path, svc):
+    with TestClient(create_app(atlas_path=tiny_tsv_path, simulation=svc)) as client:
+        sim_id = client.post("/simulate", json={"selection_id": orn_ticket(client), **BODY}).json()["simulation_id"]
+        meta = client.get(f"/simulations/{sim_id}").json()
+    assert meta["compare_id"] is None and meta["silenced_rows"] is None and meta["readout"] is None
+
+
+def test_simulate_accepts_a_silence_preset_and_rejects_both(tiny_tsv_path, svc):
+    with TestClient(create_app(atlas_path=tiny_tsv_path, simulation=svc)) as client:
+        both = client.post("/simulate", json={"selection_id": orn_ticket(client), "silence_preset": "sugar",
+                                              "silence_selection_id": "sel_x", **BODY})
+        unknown = client.post("/simulate", json={"selection_id": orn_ticket(client), "silence_preset": "nope", **BODY})
+    assert both.status_code == 422 and "silence_preset" in both.json()["detail"]
+    assert unknown.status_code == 422 and "Unknown preset" in unknown.json()["detail"]
+
+
+def test_simulations_rows_lists_cell_type_and_super_class(tiny_tsv_path, svc):
+    with TestClient(create_app(atlas_path=tiny_tsv_path, simulation=svc)) as client:
+        sim_id = client.post("/simulate", json={"selection_id": orn_ticket(client), **BODY}).json()["simulation_id"]
+        everything = client.get(f"/simulations/{sim_id}/rows")
+        subset = client.get(f"/simulations/{sim_id}/rows", params={"rows": "62,61,5000"})
+        missing = client.get("/simulations/sim_nope/rows")
+        bad = client.get(f"/simulations/{sim_id}/rows", params={"rows": "a,b"})
+    rec = svc.get(sim_id)
+    assert [r["row"] for r in everything.json()] == [int(x) for x in rec.rows]
+    assert subset.json() == [{"row": 61, "cell_type": "T4a", "super_class": "optic"},
+                             {"row": 62, "cell_type": "ORN_DA1", "super_class": "sensory"}]
+    assert missing.status_code == 404 and bad.status_code == 422
+
+
+def test_activity_event_carries_the_compare_id(tiny_tsv_path, svc):
+    def silence_then_stimulate(msgs):
+        last = msgs[-1]
+        if last.type == "human":
+            return call("search_neurons", {"cell_type": "ORN_DA1"})
+        if last.type == "tool" and "simulation_id" not in text_of(last) and "ORN_DA1" in text_of(last):
+            sid = json.loads(text_of(last))["selection_id"]
+            return call("search_neurons", {"cell_type": "EPG"}, "c2")
+        if last.type == "tool" and "simulation_id" not in text_of(last):
+            epg = json.loads(text_of(last))["selection_id"]
+            orn = next(json.loads(text_of(m))["selection_id"] for m in msgs if m.type == "tool")
+            return call("stimulate", {"selection_id": orn, "silence_selection_id": epg, "rate_hz": 300,
+                                      "duration_ms": 100, "trials": 1}, "c3")
+        return AIMessage(content="done")
+
+    client = TestClient(create_app(atlas_path=tiny_tsv_path, model=fn_model(silence_then_stimulate), simulation=svc))
+    with client:
+        events = parse_sse(client.post("/chat", json={"message": "silence EPG"}).text)
+    act = dict(events)["activity"]
+    assert act["compare_id"] == svc.get(act["simulation_id"]).compare_id and act["compare_id"]

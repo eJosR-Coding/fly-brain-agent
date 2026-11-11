@@ -208,3 +208,39 @@ def test_the_server_exposes_both_tools_and_runs_stimulate(tiny_atlas, sims):
     out = call("stimulate", {"selection_id": sid, "rate_hz": 300, "duration_ms": 100, "trials": 1})
     assert out["simulation_id"].startswith("sim_") and out["active_neurons"] >= 1
     assert "simulation" in {t.name: t for t in asyncio.run(server.list_tools())}["stimulate"].description.lower()
+
+
+# --- comparison recordings (VL4) ---------------------------------------------------------
+
+
+def test_silencing_keeps_the_baseline_recording_and_links_it(tiny_atlas, store, sims):
+    epg = ticket(tiny_atlas, store, cell_type="EPG")
+    pen = ticket(tiny_atlas, store, cell_type="PEN_a")
+    out = run(tiny_atlas, store, sims, silence_selection_id=epg, readout_selection_id=pen)
+    rec = sims.get(out["simulation_id"])
+    assert rec.compare_id is not None and rec.compare_id != rec.id
+    base = sims.get(rec.compare_id)
+    assert base.compare_id is None and base.bin_ms == rec.bin_ms and base.n_bins == rec.n_bins
+    assert base.stimulus == rec.stimulus and base.trials == rec.trials
+    assert 0 in base.rows and 0 not in rec.rows  # PEN row 0 only fires when EPG is not silenced
+    assert list(rec.silenced_rows) == [60] and base.silenced_rows is None
+
+
+def test_recordings_carry_the_readout_trace_in_hz(tiny_atlas, store, sims):
+    epg = ticket(tiny_atlas, store, cell_type="EPG")
+    pen = ticket(tiny_atlas, store, cell_type="PEN_a")
+    out = run(tiny_atlas, store, sims, silence_selection_id=epg, readout_selection_id=pen)
+    rec = sims.get(out["simulation_id"])
+    base = sims.get(rec.compare_id)
+    assert rec.readout["label"] == "PEN_a" and rec.readout["neurons"] == 60
+    assert len(rec.readout["hz"]) == rec.n_bins == len(base.readout["hz"])
+    assert max(base.readout["hz"]) > 0 and max(rec.readout["hz"]) == 0
+    # the trace is the group's mean rate: averaged over its bins it matches the reported mean
+    dur_s = rec.duration_ms / 1000
+    mean_hz = sum(base.readout["hz"]) * (rec.bin_ms / 1000) / dur_s
+    assert mean_hz == pytest.approx(out["readout_change"]["baseline_mean_hz"], rel=0.05, abs=0.1)
+
+
+def test_plain_runs_have_no_comparison_fields(tiny_atlas, store, sims):
+    rec = sims.get(run(tiny_atlas, store, sims)["simulation_id"])
+    assert rec.compare_id is None and rec.silenced_rows is None and rec.readout is None
