@@ -19,3 +19,5 @@ Every agent result should be visible in the 3D viewer, not only read: inspect an
 ## Progress / evidence
 - After VL5: pytest 492, vitest 347. Not done: a viewer button that triggers a compare run (the API supports it; the diff is reachable from chat answers); charts hidden on phone widths.
 - Engram mirror: pending (mem_save blocked by hook/auto-mode in this session).
+
+- Review VL3-VL5 (2026-11-11): 4 slices (209/351/385/715 lines), all granted, approved, acknowledged. Follow-ups: baseline id can dangle after LRU eviction (tools.py:523); silenced_rows null ambiguity (api.py:333); player mode logic untested (player.ts:148); stale load race in main.ts:67; readout trace ignores quiet rows (charts.ts:47).
