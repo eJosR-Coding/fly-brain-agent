@@ -45,6 +45,7 @@ class LIFParams:
     dt: float = 0.1  # ms, clock (Brian2 default)
 
 
+MAX_SCHEDULE_RATE_HZ = 10_000.0  # one kick per 0.1 ms tick; tools clamp tighter (T3)
 MAX_BINS = 200  # time bins per run; a finer request is refused instead of silently blown up
 
 
@@ -98,6 +99,61 @@ class SimResult:
         dense = np.zeros((self.frames.shape[1], len(self.counts)), dtype=np.int32)
         dense[:, self.active_rows] = self.frames.T
         return dense
+
+
+class StimulusSchedule:
+    """Piecewise-constant Poisson drive: segments `(start_ms, end_ms, rows, rate_hz)`.
+
+    A neuron is driven at `rate_hz` while `start_ms <= t < end_ms`. Segments may overlap and
+    rates for the same neuron then ADD UP (two 150 Hz segments = one 300 Hz drive). Segment
+    order, row order and duplicate rows do not matter: the canonical form (`key`) sorts them, so
+    equal schedules compare, hash and cache the same. Bounds against a simulator (row range,
+    duration, dt multiples) are checked in `Simulation.run_schedule`.
+    """
+
+    __slots__ = ("segments",)
+
+    def __init__(self, segments) -> None:
+        canon = []
+        for seg in segments:
+            try:
+                start, end, rows, rate = seg
+                start, end, rate = float(start), float(end), float(rate)
+                rows = np.unique(np.asarray(list(rows), dtype=np.int64))
+            except (TypeError, ValueError):
+                raise SimulationError(f"segment must be (start_ms, end_ms, rows, rate_hz), got {seg!r}") from None
+            if not np.isfinite(start) or start < 0:
+                raise SimulationError(f"segment start_ms must be >= 0, got {start}")
+            if not np.isfinite(end) or not start < end:
+                raise SimulationError(f"segment needs start_ms < end_ms, got {start} and {end}")
+            if not len(rows):
+                raise SimulationError("segment rows must not be empty")
+            if rows[0] < 0:
+                raise SimulationError(f"segment rows must be >= 0, got {int(rows[0])}")
+            if not np.isfinite(rate) or not 0 <= rate <= MAX_SCHEDULE_RATE_HZ:
+                raise SimulationError(f"segment rate_hz must be within 0..{MAX_SCHEDULE_RATE_HZ:g}, got {rate}")
+            canon.append((start, end, tuple(int(r) for r in rows), rate))
+        if not canon:
+            raise SimulationError("a schedule needs at least one segment")
+        self.segments = tuple(sorted(canon))
+
+    @property
+    def key(self) -> tuple:
+        """Canonical hashable form (used in cache keys)."""
+        return self.segments
+
+    @property
+    def end_ms(self) -> float:
+        return max(seg[1] for seg in self.segments)
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, StimulusSchedule) and self.segments == other.segments
+
+    def __hash__(self) -> int:
+        return hash(self.segments)
+
+    def __repr__(self) -> str:
+        return f"StimulusSchedule({len(self.segments)} segments, to {self.end_ms:g} ms)"
 
 
 def _steps(ms: float, dt: float, what: str) -> int:
@@ -243,6 +299,51 @@ class Simulation:
             raise SimulationError(f"rate_hz must be within 0..{1000.0 / p.dt:g}, got {rate_hz}")
         if isinstance(trials, bool) or not isinstance(trials, int) or trials < 1:
             raise SimulationError(f"trials must be an int >= 1, got {trials!r}")
+        n_steps, bin_steps, n_bins = self._timeline(duration_ms, bin_ms, max_bins)
+        p_event = rate_hz * p.dt / 1000.0
+        epochs = [(0, n_steps, stim, np.full(len(stim), p_event))] if len(stim) and p_event > 0 else []
+        return self._execute(stim, epochs, n_steps, trials, seed, silenced, bin_steps, n_bins, bin_ms, duration_ms)
+
+    def run_schedule(self, schedule: StimulusSchedule, duration_ms: float = 1000.0, trials: int = 1,
+                     seed: int = 0, silence_rows=None, bin_ms: float | None = None,
+                     max_bins: int = MAX_BINS) -> SimResult:
+        """Like `run`, but the Poisson drive follows `schedule` (per-neuron, per-window rates).
+
+        Each segment must fit in `duration_ms` and sit on dt multiples. Per tick only the neurons
+        whose windows are open draw random numbers (precomputed active sets, one per stretch of
+        ticks with the same drive). A one-segment full-length schedule gives bit-identical
+        results to `run` with the same seed. Every row named by a segment is a Poisson target
+        (no refractory period), even outside its window, like `stim_rows` in `run`.
+        """
+        p = self.params
+        silenced = np.zeros(self.n, dtype=bool)
+        silenced[self._rows(silence_rows, "silenced")] = True
+        if isinstance(trials, bool) or not isinstance(trials, int) or trials < 1:
+            raise SimulationError(f"trials must be an int >= 1, got {trials!r}")
+        n_steps, bin_steps, n_bins = self._timeline(duration_ms, bin_ms, max_bins)
+        if schedule.end_ms > duration_ms + 1e-9:
+            raise SimulationError(f"schedule runs to {schedule.end_ms:g} ms, past duration_ms={duration_ms:g}")
+        segs = []  # (first step, end step, rows, rate)
+        for start, end, rows, rate in schedule.segments:
+            a, b = round(start / p.dt), round(end / p.dt)
+            if abs(a * p.dt - start) > 1e-6 or abs(b * p.dt - end) > 1e-6:
+                raise SimulationError(f"segment times must be multiples of {p.dt} ms, got {start}..{end}")
+            segs.append((a, b, self._rows(rows, "stimulus"), rate))
+        stim = np.unique(np.concatenate([s[2] for s in segs]))
+        cuts = sorted({0, n_steps} | {x for s in segs for x in s[:2] if x <= n_steps})
+        epochs = []
+        for a, b in zip(cuts, cuts[1:]):
+            rate = np.zeros(self.n)
+            for sa, sb, rows, r in segs:
+                if sa <= a and b <= sb:
+                    rate[rows] += r
+            on = np.flatnonzero(rate > 0)
+            if len(on):
+                epochs.append((a, b, on, rate[on] * p.dt / 1000.0))
+        return self._execute(stim, epochs, n_steps, trials, seed, silenced, bin_steps, n_bins, bin_ms, duration_ms)
+
+    def _timeline(self, duration_ms, bin_ms, max_bins) -> tuple[int, int | None, int]:
+        p = self.params
         n_steps = _steps(duration_ms, p.dt, "duration_ms")
         bin_steps = _steps(bin_ms, p.dt, "bin_ms") if bin_ms is not None else None
         n_bins = -(-n_steps // bin_steps) if bin_steps else 0
@@ -251,11 +352,14 @@ class Simulation:
                 f"at most {max_bins} bins per run, got {n_bins} (bin_ms={bin_ms}, duration_ms={duration_ms}); "
                 "use a coarser bin_ms"
             )
+        return n_steps, bin_steps, n_bins
 
+    def _execute(self, stim, epochs, n_steps, trials, seed, silenced, bin_steps, n_bins, bin_ms, duration_ms):
+        """Run the trials. `epochs` = [(first step, end step, rows, per-tick event prob per row)]."""
         trial_counts = np.zeros((trials, self.n), dtype=np.int32)
         events: list[np.ndarray] = []  # per trial: unique (bin * n + row) keys and their counts
         for t, rng in enumerate(np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(trials)):
-            self._trial(stim, rate_hz, n_steps, rng, silenced, trial_counts[t], events if bin_steps else None, bin_steps)
+            self._trial(stim, epochs, n_steps, rng, silenced, trial_counts[t], events if bin_steps else None, bin_steps)
         counts = trial_counts.sum(axis=0, dtype=np.int64)
         active = frames = None
         if bin_steps:
@@ -276,7 +380,7 @@ class Simulation:
         frames[slot, bins] = np.minimum(cnt, np.iinfo(np.uint16).max)
         return active, frames
 
-    def _trial(self, stim, rate_hz, n_steps, rng, silenced, counts, events, bin_steps) -> None:
+    def _trial(self, stim, epochs, n_steps, rng, silenced, counts, events, bin_steps) -> None:
         p, n = self.params, self.n
         v = np.full(n, p.v0)
         g = np.zeros(n)
@@ -285,7 +389,8 @@ class Simulation:
         rfc[stim] = 0
         left = np.zeros(n, dtype=np.int16)  # refractory ticks remaining
         kick = p.w_syn * p.f_poi
-        p_event = rate_hz * p.dt / 1000.0
+        epochs = list(epochs)  # consumed front to back as ticks advance
+        epoch = 0
         pending = [np.empty(0, dtype=np.int64)] * self._delay  # spikes waiting for their delay
         trial_keys: list[np.ndarray] = []
         for k in range(n_steps):
@@ -297,8 +402,11 @@ class Simulation:
             slot = k % self._delay
             self._deliver(pending[slot], g, ready)  # spikes of tick k - delay arrive now
             pending[slot] = spikes[~silenced[spikes]]
-            if len(stim) and p_event > 0:
-                v[stim[rng.random(len(stim)) < p_event]] += kick
+            while epoch < len(epochs) and epochs[epoch][1] <= k:
+                epoch += 1
+            if epoch < len(epochs) and epochs[epoch][0] <= k:
+                _, _, rows, p_ev = epochs[epoch]
+                v[rows[rng.random(len(rows)) < p_ev]] += kick
             if len(spikes):
                 v[spikes] = p.v_rst
                 g[spikes] = 0.0

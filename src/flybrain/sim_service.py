@@ -149,6 +149,32 @@ class SimulationService:
             self.cache_hits += 1
             return self._run_cache[key][0], True
         res = sim.run(stim_rows, rate_hz, duration_ms, trials, seed=seed, silence_rows=silence_rows, bin_ms=bin_ms)
+        self._cache_put(key, res)
+        return res, False
+
+    def run_schedule(self, schedule, duration_ms: float = 1000.0, trials: int = 1, seed: int = 0,
+                     silence_rows=None, bin_ms: float | None = None):
+        """`Simulation.run_schedule` through the same result cache; returns (SimResult, cache_hit).
+
+        The key holds the schedule's canonical form, so equal schedules hit and any changed
+        segment misses. It is tagged apart from `run` keys: a constant run and its equivalent
+        one-segment schedule are separate entries. Same locking and read-only rules as `run`.
+        """
+        sim = self.simulation()
+        key = (
+            "schedule", sim.fingerprint, schedule.key,
+            np.unique(np.asarray(list(silence_rows) if silence_rows is not None else [], dtype=np.int64)).tobytes(),
+            float(duration_ms), int(trials), int(seed), None if bin_ms is None else float(bin_ms),
+        )
+        if key in self._run_cache:
+            self._run_cache.move_to_end(key)
+            self.cache_hits += 1
+            return self._run_cache[key][0], True
+        res = sim.run_schedule(schedule, duration_ms, trials, seed=seed, silence_rows=silence_rows, bin_ms=bin_ms)
+        self._cache_put(key, res)
+        return res, False
+
+    def _cache_put(self, key: tuple, res) -> None:
         size = _result_bytes(res)
         if size <= self.max_cache_bytes:
             self._run_cache[key] = (res, size)
@@ -156,7 +182,6 @@ class SimulationService:
             while len(self._run_cache) > self.max_cached_runs or self._run_cache_bytes > self.max_cache_bytes:
                 _, (_, freed) = self._run_cache.popitem(last=False)
                 self._run_cache_bytes -= freed
-        return res, False
 
     def add(self, rows, frames, bin_ms: float, duration_ms: float, trials: int, stimulus: dict,
             active_count: int | None = None, compare_id: str | None = None, silenced_rows=None,
