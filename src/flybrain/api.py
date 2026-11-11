@@ -75,6 +75,30 @@ def _short(value):
     return value
 
 
+def path_payload(data, row_index: RowIndex) -> dict | None:
+    """A successful find_path result as {selection_id, rows, synapses, bottleneck}, or None.
+
+    rows are atlas rows in route order, synapses has one count per hop (len(rows) - 1). A path with
+    a neuron the atlas does not know, or without a single hop, is not drawable, so it gives None.
+    """
+    if not isinstance(data, dict) or data.get("found") is not True:
+        return None
+    path = data.get("path")
+    if not isinstance(path, list) or len(path) < 2 or not all(isinstance(p, dict) for p in path):
+        return None
+    try:
+        rows = row_index.positions([p["root_id"] for p in path])
+        synapses = [int(p["synapses_from_previous"]) for p in path[1:]]
+        bottleneck = int(data["min_hop_synapses"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    if (rows < 0).any():
+        return None
+    sid = data.get("selection_id")
+    return {"selection_id": sid if isinstance(sid, str) else "", "rows": [int(r) for r in rows],
+            "synapses": synapses, "bottleneck": bottleneck}
+
+
 def _sse(event: str, data: dict) -> ServerSentEvent:
     return ServerSentEvent(event=event, data=data)
 
@@ -433,6 +457,16 @@ def create_app(
         return _sse("activity", {"simulation_id": rec.id, "n_bins": rec.n_bins, "bin_ms": rec.bin_ms,
                                 "active_count": rec.active_count, "active_hz": ACTIVE_HZ})
 
+    def _path(tool: str, content: str) -> ServerSentEvent | None:
+        """find_path also becomes a path event: the route as atlas rows, for the cables."""
+        if tool != "find_path":
+            return None
+        try:
+            payload = path_payload(json.loads(content), app.state.row_index)
+        except ValueError:
+            return None
+        return None if payload is None else _sse("path", payload)
+
     @app.post("/chat", response_class=EventSourceResponse)
     async def chat(
         req: ChatRequest, picked: Annotated[str | None, Depends(chosen_model)]
@@ -468,6 +502,9 @@ def create_app(
                         hl = None if ev["error"] else _highlight(ev["content"], seen)
                         if hl is not None:
                             yield hl
+                        route = None if ev["error"] else _path(ev["tool"], ev["content"])
+                        if route is not None:
+                            yield route
                         act = None if ev["error"] else _activity(ev["content"])
                         if act is not None:
                             yield act
