@@ -27,10 +27,10 @@ export function parsePathEvent(d: unknown, pointCount: number | null): PathPaylo
   };
 }
 
-/** Cable width in px: grows with the log of the hop's synapses, clamped so thin and fat hops both stay readable. */
+/** Cable width in px: a fine thread (1 px) that thickens subtly with the log of the hop's synapses, up to 2.5 px. */
 export function hopWidth(synapses: number): number {
   const s = Math.max(1, synapses);
-  return Math.min(9, Math.max(2.5, 1.8 + 1.0 * Math.log(s)));
+  return Math.min(2.5, Math.max(1, 0.9 + 0.2 * Math.log(s)));
 }
 
 export const hopLabel = (synapses: number): string => `${synapses.toLocaleString("en-US")} syn`;

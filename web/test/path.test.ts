@@ -35,9 +35,10 @@ describe("hopWidth", () => {
     expect(hopWidth(50)).toBeLessThan(hopWidth(500));
     expect(hopWidth(0)).toBe(hopWidth(1));
     expect(hopWidth(1e9)).toBe(hopWidth(1e12));
-    expect(hopWidth(1)).toBeGreaterThanOrEqual(2.5);
-    expect(hopWidth(1e12)).toBeLessThanOrEqual(9);
-    expect(hopWidth(19)).toBeGreaterThan(hopWidth(5) + 1); // visibly thicker, not a rounding difference
+    expect(hopWidth(1)).toBeGreaterThanOrEqual(1);
+    expect(hopWidth(1)).toBeLessThanOrEqual(1.2); // fine threads, not ropes
+    expect(hopWidth(1e12)).toBeLessThanOrEqual(2.5);
+    expect(hopWidth(19)).toBeGreaterThan(hopWidth(5) + 0.2); // visibly thicker, not a rounding difference
   });
 });
 

@@ -29,7 +29,7 @@ export interface PathLayerOptions {
 /** Seconds the light takes from source to target, and how many lights ride the route at once. */
 const FLOW_SECONDS = 3.2;
 const LIGHTS = 3;
-const GLOW_WIDTH = 4; // the faint underlay is this many times wider than the core cable
+const GLOW_WIDTH = 3; // the faint underlay is this many times wider than the core cable
 
 export function createPathLayer({ parent, positions, labels, reducedMotion }: PathLayerOptions): PathLayer {
   const group = new THREE.Group();
@@ -105,14 +105,14 @@ export function createPathLayer({ parent, positions, labels, reducedMotion }: Pa
       if (!path) return;
       const hops = buildHops(path, positions);
       for (const h of hops) {
-        cable(h.from, h.to, h.width * GLOW_WIDTH, 0.22); // soft halo
+        cable(h.from, h.to, h.width * GLOW_WIDTH, 0.16); // soft halo
         cable(h.from, h.to, h.width, 0.9); // the core
       }
       routeRaw = routeVertices(path, positions);
       route = routeRaw.map((v) => new THREE.Vector3(...v));
       const last = routeRaw.length - 1;
       // nodes: source and target stand out; the neurons in between are smaller
-      dots(routeRaw, routeRaw.map((_, i) => (i === 0 || i === last ? 18 : 12)), 1);
+      dots(routeRaw, routeRaw.map((_, i) => (i === 0 || i === last ? 9 : 6)), 1);
       hopLabels = hops.map((h, i) => {
         const el = document.createElement("div");
         el.className = i % 2 ? "path-label below" : "path-label"; // alternate sides so neighbours do not collide
@@ -121,7 +121,7 @@ export function createPathLayer({ parent, positions, labels, reducedMotion }: Pa
         return { el, mid: new THREE.Vector3(...h.mid) };
       });
       if (!reducedMotion) {
-        const [pts] = dots(new Array(LIGHTS).fill(routeRaw[0]), new Array(LIGHTS).fill(26), 1);
+        const [pts] = dots(new Array(LIGHTS).fill(routeRaw[0]), new Array(LIGHTS).fill(13), 1);
         lights = pts;
       }
     },
