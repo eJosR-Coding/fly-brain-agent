@@ -16,7 +16,7 @@ experiments return instantly; the viewer stops using the GPU while nothing chang
       neurons, served by the API and `describe_neuron`; one plain line atop the inspector card;
       plain captions under charts; the agent ends results with a one-line plain summary.
       (route: delegated writer, 4+ files)
-- [ ] T2 simulation result cache keyed by resolved row sets + parameters + seed (not ticket ids).
+- [x] T2 simulation result cache keyed by resolved row sets + parameters + seed (not ticket ids).
       (route: delegated writer)
 - [ ] T3 render on demand: draw only when the camera, animation, highlight or data changes.
       (route: delegated writer)
@@ -42,3 +42,6 @@ ask-on-risk; one PR per task.
   captions), prompt line. RED: tests/test_plain.py collection error, 10 failing web tests, prompt test.
   GREEN: `uv run pytest -q` 642 passed; `pnpm -C web test` 398 passed; `pnpm -C web build` ok.
   Screenshot /tmp/claude-1000/legib/plain.png: plain line renders under the title (13px Inter, #fff on #050505).
+- T2 done 2026-11-11 (delegated writer, branch feat/sim-cache). Commit 215c064. RED: tests/test_sim_cache.py 15 failed
+  (no SimulationService.run). GREEN: `uv run pytest -q` 667 passed (25 new). Cache: LRU 32 entries + 300 MB byte
+  budget on SimulationService.run; output gets `cached` (stimulate) / `cached_runs` (dose_response, screen).

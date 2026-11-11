@@ -535,10 +535,11 @@ def stimulate(
 
     t0 = time.perf_counter()
     with sims.exclusive():
-        sim = sims.simulation()  # lazy load; SimulationUnavailable says what to download/build
-        res = sim.run(stim, rate, duration, n_trials, seed=seed, silence_rows=silence, bin_ms=bin_ms)
-        base = (sim.run(stim, rate, duration, n_trials, seed=seed, bin_ms=bin_ms)
-                if silence is not None else None)
+        sims.simulation()  # lazy load; SimulationUnavailable says what to download/build
+        res, hit = sims.run(stim, rate, duration, n_trials, seed=seed, silence_rows=silence, bin_ms=bin_ms)
+        base, base_hit = (sims.run(stim, rate, duration, n_trials, seed=seed, bin_ms=bin_ms)
+                          if silence is not None else (None, True))
+        cached = hit and base_hit
     runtime = time.perf_counter() - t0
 
     rates = res.rate_hz
@@ -600,5 +601,8 @@ def stimulate(
     if lit > RUNAWAY_ACTIVE:
         out["warning"] = _runaway_warning(lit, len(stim), len(atlas.neurons))
     out["runtime_s"] = round(runtime, 1)
+    out["cached"] = cached
+    if cached:
+        notes.append("served from the simulation cache (same rows, parameters and seed as an earlier run)")
     out["note"] = "; ".join([*notes, SIM_NOTE])
     return out

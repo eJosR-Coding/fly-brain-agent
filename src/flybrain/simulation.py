@@ -125,6 +125,18 @@ class Simulation:
         # exact integral of the g drive over one step (solution of the coupled linear ODEs)
         self._drive = (self._decay_g - self._decay_v) / (1.0 - p.t_mbr / p.tau)
 
+    @property
+    def fingerprint(self) -> tuple:
+        """Cheap identity of the loaded weights + params: a different matrix never shares cached runs."""
+        if getattr(self, "_fp", None) is None:
+            self._fp = (
+                self.n, self.n_edges, self.params,
+                float(self._counts.sum(dtype=np.float64)),
+                int(self._indices.sum(dtype=np.int64)),
+                int(self._indptr.sum(dtype=np.int64)),
+            )
+        return self._fp
+
     # -- construction ------------------------------------------------------------------
 
     @classmethod
