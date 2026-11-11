@@ -24,5 +24,6 @@ Every agent result should be visible in the 3D viewer, not only read: inspect an
 - Engram mirror: pending (mem_save blocked by hook/auto-mode in this session).
 
 - Review VL3-VL5 follow-ups (all five DONE): baseline kept while a compared run lives (pair eviction), `silenced_truncated` flag (silenced_rows is [] for none, null + flag for too many), player modes extracted to `viewPlan`/`modeLegend` (tested), latest-wins recording loads (`activityLoader.ts`), quiet readout rows kept in the raster. Commits `fix(api): keep baselines while compared runs live and flag truncated silenced rows`, `fix(web): latest-wins recordings, testable player modes and quiet readout rows`.
-- After the bench: pytest 553, vitest 373 (see the final run).
+- After the bench: pytest 553, vitest 385.
+- [x] Collapsible tool activity: one disclosure per assistant turn (collapsed by default, live summary `running screen · 3/8 · 6 s`, final `Used 3 tools · 14.2 s` or `3 tools · 1 failed`, preference in localStorage, 180 ms transition, none under reduced motion). Commit `feat(web): collapsible tool activity in chat answers`; RED: `Cannot find module '../src/toolTrace'`; captures v9-tools-colapsado.png, v9-tools-abierto.png.
 - Review VL3-VL5 (2026-11-11): 4 slices (209/351/385/715 lines), all granted, approved, acknowledged. Follow-ups: baseline id can dangle after LRU eviction (tools.py:523); silenced_rows null ambiguity (api.py:333); player mode logic untested (player.ts:148); stale load race in main.ts:67; readout trace ignores quiet rows (charts.ts:47).

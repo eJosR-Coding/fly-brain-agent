@@ -238,6 +238,23 @@ body.has-charts #key { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .msg, .msg.tool[data-state="running"] .dot { animation: none; }
 }
+.msg.trace { white-space: normal; margin-bottom: -6px; }
+.trace-sum { display: flex; align-items: center; gap: 8px; max-width: 100%; padding: 4px 0; background: transparent; border: 0; color: var(--muted);
+  font: 400 12px var(--font-mono); font-variant-numeric: tabular-nums; cursor: pointer; text-align: left; }
+.trace-sum:hover { color: var(--fg); }
+.trace-sum:focus-visible { outline: 1px solid var(--fg); outline-offset: 2px; }
+.trace-sum .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--fg); }
+.trace[data-running="1"] .trace-sum .dot { animation: run-pulse 1.2s ease-in-out infinite; }
+.trace-chev { flex: none; transition: transform 180ms ease; }
+.trace[data-open="1"] .trace-chev { transform: rotate(180deg); }
+.trace-body { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 180ms ease, opacity 180ms ease; }
+.trace[data-open="1"] .trace-body { grid-template-rows: 1fr; opacity: 1; }
+.trace-inner { min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 20px; padding-top: 8px; }
+.trace[data-open="1"] .trace-inner { padding-bottom: 14px; }
+@media (prefers-reduced-motion: reduce) {
+  .trace-body, .trace-chev { transition: none; }
+  .trace[data-running="1"] .trace-sum .dot { animation: none; }
+}
 .msg.hl { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 0;
   font: 400 12px/normal var(--font-mono); color: var(--muted); }
 .msg.hl .sel { color: var(--dimmer); }

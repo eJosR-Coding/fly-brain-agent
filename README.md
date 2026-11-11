@@ -569,6 +569,7 @@ Without a model, run the data and search endpoints only with
   `$`, none before the closing `$`, not followed by a digit, first `$` decides). A hostile-input
   corpus (script/img/svg/iframe, `javascript:` and `data:` URLs, `\href`, `\style`, `\htmlData`,
   200k inputs) is tested with jsdom.
+- **Tool trace**: every tool, highlight, path, activity and chart line of a turn sits in one disclosure above the answer, collapsed by default (`Used 3 tools · 14.2 s`, `3 tools · 1 failed`, live `running screen · 3/8 · 6 s`). The open/closed choice is remembered in `localStorage` (the app works without it); the transition is skipped under `prefers-reduced-motion`.
 - Tests: `pnpm -C web test` (SSE parser, region and transmitter tones, label placement, neuron picking and card model, path validation and cable geometry, orbit gate, binary decoding, chat stream, markdown parser and security corpus).
 
 ## Roadmap
