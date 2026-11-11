@@ -42,27 +42,36 @@ export function rasterModel(
     .sort((x, y) => totals[y] - totals[x] || a.rows[x] - a.rows[y]);
   const chosen = new Set(byActivity.slice(0, Math.max(0, top)));
   const marked = new Set(opts.emphasize?.rows ?? []);
-  const label = (i: number) => (marked.has(a.rows[i]) ? opts.emphasize!.label : (typeOf(a.rows[i]) ?? "unknown"));
+  const label = (r: number) => (marked.has(r) ? opts.emphasize!.label : (typeOf(r) ?? "unknown"));
+  const recorded = new Map<number, number>(Array.from(a.rows, (r, i) => [r, i]));
+  const spikesOf = (i: number) => {
+    const spikes: { bin: number; count: number }[] = [];
+    for (let k = 0; k < a.nBins; k++) {
+      const c = a.counts[i * a.nBins + k];
+      if (c) spikes.push({ bin: k, count: c });
+    }
+    return spikes;
+  };
+  type Entry = { row: number; total: number; spikes: { bin: number; count: number }[] };
+  const entry = (i: number): Entry => ({ row: a.rows[i], total: totals[i], spikes: spikesOf(i) });
+  const entries: Entry[] = byActivity.filter((i) => chosen.has(i)).map(entry);
   if (opts.emphasize) {
-    byActivity.filter((i) => marked.has(a.rows[i]) && !chosen.has(i)).slice(0, MAX_EMPHASIZED).forEach((i) => chosen.add(i));
+    // the readout stays visible even when it is quiet: a neuron that never spiked is a flat row, not missing data
+    const extras = opts.emphasize.rows
+      .filter((r) => !entries.some((e) => e.row === r))
+      .sort((x, y) => (recorded.has(y) ? totals[recorded.get(y)!] : -1) - (recorded.has(x) ? totals[recorded.get(x)!] : -1) || x - y)
+      .slice(0, MAX_EMPHASIZED);
+    for (const r of extras) entries.push(recorded.has(r) ? entry(recorded.get(r)!) : { row: r, total: 0, spikes: [] });
   }
-  const rank = new Map(byActivity.map((i, r) => [i, r]));
-  const sorted = [...chosen].sort((x, y) => rank.get(x)! - rank.get(y)!);
-  const groupsByLabel = new Map<string, number[]>(); // insertion order = busiest first
-  for (const i of sorted) groupsByLabel.set(label(i), [...(groupsByLabel.get(label(i)) ?? []), i]);
+  entries.sort((x, y) => y.total - x.total || x.row - y.row);
+  const groupsByLabel = new Map<string, Entry[]>(); // insertion order = busiest first
+  for (const e of entries) groupsByLabel.set(label(e.row), [...(groupsByLabel.get(label(e.row)) ?? []), e]);
   const rows: RasterRow[] = [];
   const groups: RasterGroup[] = [];
   for (const [name, members] of groupsByLabel) {
-    const emphasized = opts.emphasize !== undefined && opts.emphasize !== null && members.some((i) => marked.has(a.rows[i]));
+    const emphasized = opts.emphasize !== undefined && opts.emphasize !== null && members.some((e) => marked.has(e.row));
     groups.push({ label: name, start: rows.length, end: rows.length + members.length, emphasized });
-    for (const i of members) {
-      const spikes: { bin: number; count: number }[] = [];
-      for (let k = 0; k < a.nBins; k++) {
-        const c = a.counts[i * a.nBins + k];
-        if (c) spikes.push({ bin: k, count: c });
-      }
-      rows.push({ row: a.rows[i], label: name, emphasized: marked.has(a.rows[i]), total: totals[i], spikes });
-    }
+    for (const e of members) rows.push({ row: e.row, label: name, emphasized: marked.has(e.row), total: e.total, spikes: e.spikes });
   }
   return { rows, groups, durationMs: a.nBins * a.binMs, binMs: a.binMs, nBins: a.nBins };
 }

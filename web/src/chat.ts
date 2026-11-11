@@ -1,8 +1,10 @@
 import { parseActivityEvent, type ActivityEvent } from "./activity";
+import { formatExperimentProgress, parseChart, parseProgress, type ExperimentChart, type ExperimentProgress } from "./experiments";
 import { renderMarkdown } from "./markdown";
 import { loadStoredModel, optionLabel, pickModel, saveStoredModel, type ModelList } from "./models";
 import { parsePathEvent, pathLegend, type PathPayload } from "./path";
 import { parseSSE } from "./sse";
+import { loadExpanded, saveExpanded, summarizeTools, type TraceTool } from "./toolTrace";
 
 export interface HighlightPayload {
   selection_id: string;
@@ -22,6 +24,10 @@ export interface ChatHandlers {
   onActivity(a: ActivityEvent): void;
   /** a find_path result: draw the route as cables */
   onPath?(p: PathPayload): void;
+  /** an experiment finished: plot its chart */
+  onChart?(c: ExperimentChart): void;
+  /** a long experiment advanced one step */
+  onProgress?(p: ExperimentProgress): void;
   /** tokens spent by the turn, sent just before the answer */
   onUsage?(u: Usage): void;
   onAnswer(text: string): void;
@@ -181,6 +187,17 @@ export async function streamChat(
           else h.onPath?.(p);
           break;
         }
+        case "chart": {
+          const c = parseChart(d);
+          if (typeof c === "string") h.onError(`ignored an invalid chart event: ${c}`);
+          else h.onChart?.(c);
+          break;
+        }
+        case "progress": {
+          const p = parseProgress(d);
+          if (p) h.onProgress?.(p);
+          break;
+        }
         case "usage": {
           const u = parseUsage(d);
           if (u) h.onUsage?.(u);
@@ -212,6 +229,8 @@ export interface ChatOptions {
   onActivity?: (a: ActivityEvent) => Promise<void> | void;
   /** a find_path route arrived (after the highlight of its neurons has been applied) */
   onPath?: (p: PathPayload) => Promise<void> | void;
+  /** an experiment chart arrived (dose-response curve, silencing screen) */
+  onChart?: (c: ExperimentChart) => void;
   /** "new chat" was pressed: drop whatever the old conversation put on the brain */
   onNewChat?: () => void;
   getPointCount?: () => number | null;
@@ -234,7 +253,7 @@ const FOLLOW_SLACK_PX = 48; // within this of the bottom still counts as "follow
 /** DOM wiring for the chat panel. */
 export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
   const {
-    onHighlight, onActivity = () => undefined, onPath = () => undefined, onNewChat = () => undefined, getPointCount = () => null,
+    onHighlight, onActivity = () => undefined, onPath = () => undefined, onChart = () => undefined, onNewChat = () => undefined, getPointCount = () => null,
     onStreaming = () => undefined, onModelChange = () => undefined,
   } = opts;
   root.innerHTML =
@@ -287,29 +306,105 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
   });
   log.appendChild(hint);
 
-  const add = (cls: string, text: string): HTMLElement => {
+  const add = (cls: string, text: string, parent: HTMLElement = log): HTMLElement => {
     hint.remove();
     const el = document.createElement("div");
     el.className = `msg ${cls}`;
     el.textContent = text;
-    log.appendChild(el);
+    parent.appendChild(el);
     follow();
     syncNewChat();
     return el;
   };
 
   // live tool lines: running (pulsing dot, counting up) -> done / failed
-  interface Tool { el: HTMLElement; stat: HTMLElement; t0: number; finished: boolean }
+  interface Tool { el: HTMLElement; stat: HTMLElement; t0: number; finished: boolean; name: string; trace: TraceTool; progress?: string }
   const tools = new Map<string, Tool>();
   let anon = 0;
+  // one collapsible block per turn holds every tool, highlight, path, activity and chart line
+  let group: { root: HTMLElement; btn: HTMLButtonElement; label: HTMLElement; body: HTMLElement; inner: HTMLElement } | null = null;
+  let traceTools: TraceTool[] = [];
+  let groupCount = 0;
+  const NS = "http://www.w3.org/2000/svg";
+  const setOpen = (g: NonNullable<typeof group>, open: boolean) => {
+    g.root.dataset.open = open ? "1" : "0";
+    g.btn.setAttribute("aria-expanded", String(open));
+    g.body.toggleAttribute("inert", !open);
+  };
+  const ensureGroup = (): NonNullable<typeof group> => {
+    if (group) return group;
+    hint.remove();
+    const id = `trace-${++groupCount}`;
+    const root = document.createElement("div");
+    root.className = "msg trace";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "trace-sum";
+    btn.setAttribute("aria-controls", id);
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    dot.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.className = "trace-label";
+    const chev = document.createElementNS(NS, "svg");
+    chev.setAttribute("viewBox", "0 0 12 12");
+    chev.setAttribute("width", "12");
+    chev.setAttribute("height", "12");
+    chev.setAttribute("class", "trace-chev");
+    chev.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS(NS, "path");
+    path.setAttribute("d", "M2.5 4.5 6 8l3.5-3.5");
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", "currentColor");
+    path.setAttribute("stroke-width", "1.5");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    chev.appendChild(path);
+    btn.append(dot, label, chev);
+    const body = document.createElement("div");
+    body.className = "trace-body";
+    body.id = id;
+    const inner = document.createElement("div");
+    inner.className = "trace-inner";
+    body.appendChild(inner);
+    root.append(btn, body);
+    log.appendChild(root);
+    group = { root, btn, label, body, inner };
+    setOpen(group, loadExpanded());
+    btn.addEventListener("click", () => {
+      const open = root.dataset.open !== "1";
+      setOpen(group!, open);
+      saveExpanded(open);
+    });
+    follow();
+    syncNewChat();
+    return group;
+  };
+  const addTrace = (cls: string, text: string): HTMLElement => {
+    const g = ensureGroup();
+    const el = add(cls, text, g.inner);
+    refreshSummary();
+    return el;
+  };
+  const refreshSummary = () => {
+    if (!group) return;
+    group.label.textContent = summarizeTools(traceTools, performance.now()) || "Activity";
+    group.root.dataset.running = traceTools.some((t) => t.state === "running") ? "1" : "0";
+  };
+  const runningText = (t: Tool, now: number) =>
+    t.progress ? `${t.progress} \u00b7 ${Math.floor(Math.max(0, now - t.t0) / 1000)} s` : toolStatusText({ state: "running" }, now - t.t0);
   const tickTools = () => {
     const now = performance.now();
-    for (const t of tools.values()) if (!t.finished) t.stat.textContent = toolStatusText({ state: "running" }, now - t.t0);
+    for (const t of tools.values()) if (!t.finished) t.stat.textContent = runningText(t, now);
+    refreshSummary();
   };
   const finishTool = (t: Tool, state: "done" | "failed", ms: number) => {
     t.finished = true;
+    t.trace.state = state;
+    t.trace.ms = ms;
     t.el.dataset.state = state;
     t.stat.textContent = toolStatusText({ state, ms }, 0);
+    refreshSummary();
   };
 
   // streamed answer: plain deltas re-rendered with the safe markdown renderer, once per frame
@@ -345,6 +440,8 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
     usageEl = null;
     dropStream();
     tools.clear();
+    group = null;
+    traceTools = [];
     log.replaceChildren(hint);
     following = true;
     syncNewChat();
@@ -361,6 +458,8 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
     following = true;
     turnUsage = null;
     usageEl = null;
+    group = null; // each turn gets its own trace block
+    traceTools = [];
     add("user", text);
     onStreaming(true);
     // pending indicator: visible at once, until the first real event, so a slow provider never looks dead
@@ -380,7 +479,7 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
       onToolCall: (tool, args, id) => {
         settle();
         dropStream(); // text before a tool call was a preamble, not the answer
-        const el = add("tool", "");
+        const el = addTrace("tool", "");
         el.dataset.state = "running";
         const dot = document.createElement("span");
         dot.className = "dot";
@@ -392,7 +491,10 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
         stat.className = "tstat";
         stat.textContent = toolStatusText({ state: "running" }, 0);
         el.append(dot, call, stat);
-        tools.set(id ?? `anon-${anon++}`, { el, stat, t0: performance.now(), finished: false });
+        const trace: TraceTool = { name: tool, state: "running", ms: null, startedAt: performance.now() };
+        traceTools.push(trace);
+        tools.set(id ?? `anon-${anon++}`, { el, stat, t0: performance.now(), finished: false, name: tool, trace });
+        refreshSummary();
       },
       onToolResult: (id, ok, ms) => {
         const t = tools.get(id);
@@ -400,7 +502,7 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
       },
       onHighlight: (p) => {
         settle();
-        const el = add("hl", "");
+        const el = addTrace("hl", "");
         const lit = document.createElement("span");
         lit.textContent = `\u25CF lit ${p.total.toLocaleString("en-US")} neurons`;
         const sel = document.createElement("span");
@@ -411,7 +513,7 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
       },
       onPath: (p) => {
         settle();
-        const el = add("hl", "");
+        const el = addTrace("hl", "");
         const route = document.createElement("span");
         route.textContent = `\u2192 ${pathLegend(p)}`;
         const sel = document.createElement("span");
@@ -423,7 +525,7 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
       },
       onActivity: (a) => {
         settle();
-        const el = add("hl", "");
+        const el = addTrace("hl", "");
         const wave = document.createElement("span");
         wave.textContent = `\u25B6 activity \u00b7 ${(a.nBins * a.binMs) / 1000} s simulated`;
         const sel = document.createElement("span");
@@ -431,6 +533,25 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
         sel.textContent = a.simulationId;
         el.append(wave, sel);
         void Promise.resolve(onActivity(a)).catch((err) => add("error", `activity failed: ${(err as Error).message}`));
+      },
+      onProgress: (p) => {
+        for (const t of tools.values()) {
+          if (t.finished || t.name !== p.experiment) continue;
+          t.progress = formatExperimentProgress(p);
+          t.trace.progress = t.progress;
+          t.stat.textContent = runningText(t, performance.now());
+        }
+      },
+      onChart: (c) => {
+        settle();
+        const el = addTrace("hl", "");
+        const text = document.createElement("span");
+        text.textContent = c.kind === "screen" ? `\u25A4 screen chart \u00b7 ${c.rows.length} candidates` : `\u25A4 dose-response chart \u00b7 ${c.points.length} rates`;
+        const sel = document.createElement("span");
+        sel.className = "sel";
+        sel.textContent = c.id;
+        el.append(text, sel);
+        onChart(c);
       },
       onUsage: (u) => { turnUsage = u; },
       onAnswerDelta: (t) => {
@@ -455,7 +576,8 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
         settle();
         if (streamEl) paintStream(); // an interrupted stream keeps what arrived
         streamEl = null;
-        for (const t of tools.values()) if (!t.finished) { t.finished = true; t.el.dataset.state = "ended"; t.stat.textContent = ""; }
+        for (const t of tools.values()) if (!t.finished) { t.finished = true; t.trace.state = "ended"; t.el.dataset.state = "ended"; t.stat.textContent = ""; }
+        refreshSummary();
         tools.clear();
         input.disabled = send.disabled = false;
         running = false;

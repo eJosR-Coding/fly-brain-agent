@@ -7,7 +7,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from flybrain import tools
+from flybrain import experiments, silencing, tools
 from flybrain.atlas import Atlas, AtlasLoadError, load_atlas
 from flybrain.connectome import Connectome, ConnectomeError
 from flybrain.selections import SelectionStore
@@ -179,21 +179,21 @@ def build_server(
         selection_id: str,
         rate_hz: float = 100,
         duration_ms: float = 500,
-        trials: int = 3,
+        trials: int | None = None,
         silence_selection_id: str | None = None,
         readout_selection_id: str | None = None,
     ) -> dict:
         """Whole-brain SIMULATION: Poisson-drive a group, see who responds (LIF model, Shiu et al. 2024). A MODEL, not the living fly.
 
         Returns active count (> 1 Hz), top 10 responders, `top_non_sensory` (silencing candidates), readout
-        rates, a NEW `selection_id` of active neurons and a `simulation_id`. Silencing adds a baseline run (2x).
+        rates, a NEW `selection_id` of active neurons and a `simulation_id`. Silencing adds a baseline run (2x) and `readout_stats` (95% CI, p).
         Slow (~5 s/sim-s/trial): run once.
 
         Args:
             selection_id: neurons to stimulate.
             rate_hz: 1..300 (default 100).
             duration_ms: 100..1000 (default 500).
-            trials: averaged, 1..10 (default 3).
+            trials: averaged, 1..10 (default 3; 5 when silencing).
             silence_selection_id: optional; fire but pass nothing on.
             readout_selection_id: optional; rates to report.
         Out-of-range values are capped.
@@ -201,6 +201,52 @@ def build_server(
         return await asyncio.to_thread(
             tools.stimulate, atlas, store, sims, selection_id, rate_hz, duration_ms, trials,
             silence_selection_id, readout_selection_id,
+        )
+
+    @server.tool()
+    async def dose_response(
+        selection_id: str,
+        readout_selection_id: str,
+        rates_hz: list[float] = [10, 25, 50, 100, 200],  # noqa: B006 - pydantic copies the default
+        duration_ms: float = 300,
+        trials: int = 3,
+    ) -> dict:
+        """SIMULATION sweep (model): readout Hz vs stimulus rate, one sim per rate.
+
+        Returns per rate mean + 95% CI, `ec50_hz` (half-max, null if none), `chart_id`. Slow: run once.
+
+        Args:
+            selection_id: stimulated. readout_selection_id: measured.
+            rates_hz: <= 8 rates, 1..300. duration_ms: 100..1000. trials: 1..10.
+        """
+        return await asyncio.to_thread(
+            experiments.dose_response, atlas, store, sims, selection_id, readout_selection_id, list(rates_hz),
+            duration_ms, trials,
+        )
+
+    @server.tool()
+    async def silencing_screen(
+        selection_id: str,
+        readout_selection_id: str,
+        candidates: str = "top_non_sensory",
+        n: int = 8,
+        duration_ms: float = 300,
+        trials: int = 3,
+        rate_hz: float = 100,
+    ) -> dict:
+        """SIMULATION screen (model): silence each candidate neuron in turn, rank by effect on the readout.
+
+        Returns per candidate delta Hz + 95% CI, Welch p, Holm-adjusted `p_adj`, `significant`, a
+        `candidates_selection_id` and `chart_id`. Slow (n+1 runs): run once.
+
+        Args:
+            selection_id: stimulated. readout_selection_id: measured.
+            candidates: "top_non_sensory" (busiest non-sensory neurons in the baseline) or a ticket.
+            n: 1..12. duration_ms: 100..1000. trials: 1..10. rate_hz: 1..300.
+        """
+        return await asyncio.to_thread(
+            silencing.silencing_screen, atlas, store, sims, selection_id, readout_selection_id, candidates, n,
+            duration_ms, trials, rate_hz,
         )
 
     # the tool definitions are sent on EVERY model call: keep them lean (see the budget test)

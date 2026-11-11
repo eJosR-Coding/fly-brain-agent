@@ -72,3 +72,29 @@ def test_provider_timeout_before_our_deadline_is_an_ordinary_failure():
     graph = build_graph(fn_model(reply), [slow_lookup])
     events = _collect(graph, turn_timeout=60)
     assert events[-1] == {"type": "error", "message": "model call failed: read timed out"}
+
+
+def test_a_listed_tool_extends_the_deadline():
+    @tool
+    async def experiment(q: str) -> str:
+        """A long experiment tool (0.6 s here)."""
+        await asyncio.sleep(0.6)
+        return "ok"
+
+    def reply(messages):
+        if any(getattr(m, "type", "") == "tool" for m in messages):
+            return AIMessage(content="done")
+        return call("experiment", {"q": "x"})
+
+    graph = build_graph(fn_model(reply), [experiment])
+    cut = _collect(graph, turn_timeout=0.3)
+    assert cut[-1]["type"] == "error" and "took longer than 0.3 s" in cut[-1]["message"]
+    graph = build_graph(fn_model(reply), [experiment])
+    events = _collect(graph, turn_timeout=0.3, tool_extensions={"experiment": 5.0})
+    assert events[-1] == {"type": "answer", "text": "done"}
+
+
+def test_the_extension_does_not_apply_to_other_tools():
+    graph = build_graph(_model(), [slow_lookup])
+    events = _collect(graph, turn_timeout=0.3, tool_extensions={"experiment": 60.0})
+    assert events[-1]["type"] == "error" and "took longer than 0.3 s" in events[-1]["message"]

@@ -3,9 +3,9 @@ import {
   binAt, createPlayback, fillBrightness, formatTime, playLabel, scrub, summedBrightness, tick, togglePlay,
   type Activity, type Playback,
 } from "./activity";
-import { computeDiff, diffBrightness, diffLegend, diffShapes, meanHz, type Diff } from "./diff";
+import { computeDiff, diffBrightness, diffShapes, meanHz, type Diff } from "./diff";
 import { fillLatency, latencyGradientStops, latencyTicks } from "./latency";
-import { fallbackMode, modesFor, type ViewMode } from "./modes";
+import { modeLegend, modesFor, viewPlan, type ViewMode } from "./modes";
 import type { BrainScene } from "./scene";
 
 export interface Player {
@@ -128,41 +128,34 @@ export function createPlayer({ scene, root, reducedMotion, speed, onTime, onMode
 
   const applyMode = () => {
     if (!activity) return;
-    const wave = mode === "wave";
-    root.classList.toggle("static", !wave);
-    scaleEl.hidden = wave;
-    if (mode === "latency") renderScale(activity);
-    else if (mode === "diff") renderDiffKey();
+    const plan = viewPlan(mode, { hasDiff: diff !== null, reducedMotion: reducedMotion || !pb });
+    mode = plan.mode;
+    root.classList.toggle("static", plan.staticView);
+    scaleEl.hidden = plan.scale === "none";
+    if (plan.scale === "latency") renderScale(activity);
+    else if (plan.scale === "diffKey") renderDiffKey();
     for (const b of modesEl.querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.textContent === mode));
     cancelAnimationFrame(raf);
     raf = 0;
-    if (wave) {
-      scene.setActivity(activity.rows);
-      scene.setActivityShapes(null);
-      if (reducedMotion || !pb) {
-        summedBrightness(activity, values);
-        scene.setActivityFrame(values);
-        label.textContent = `summed over ${Math.round(activity.durationMs)} ms`;
-        onTime?.(null);
-        return;
-      }
-      draw();
-      run();
-      return;
-    }
-    if (mode === "diff" && diff) {
+    if (plan.rows === "diff" && diff) {
       scene.setActivity(diff.rows);
       diffBrightness(diff, diffValues);
       scene.setActivityFrame(diffValues);
       diffShapes(diff, shapeValues);
       scene.setActivityShapes(shapeValues);
     } else {
-      scene.setActivity(activity.rows); // back from the diff: the recorded rows, all dots
-      fillLatency(activity, values);
+      scene.setActivity(activity.rows); // the recorded rows, all dots
+      if (!plan.shapes) scene.setActivityShapes(null);
+      if (plan.mode === "latency") fillLatency(activity, values);
+      else summedBrightness(activity, values);
       scene.setActivityFrame(values);
-      scene.setActivityShapes(null);
     }
-    label.textContent = "";
+    if (plan.timeLabel === "playhead") {
+      draw();
+      run();
+      return;
+    }
+    label.textContent = plan.timeLabel === "summed" ? `summed over ${Math.round(activity.durationMs)} ms` : "";
     onTime?.(null);
   };
 
@@ -184,13 +177,9 @@ export function createPlayer({ scene, root, reducedMotion, speed, onTime, onMode
     },
     setMode(next) {
       if (!activity) return;
-      mode = fallbackMode(next, diff !== null);
+      mode = next;
       applyMode();
-      onMode?.(
-        mode,
-        mode === "latency" ? `latency · ${activity.nRows.toLocaleString("en-US")} neurons spiked`
-          : mode === "diff" && diff ? diffLegend(diff.lost, diff.gained, diffReadout) : null,
-      );
+      onMode?.(mode, modeLegend(mode, { nRows: activity.nRows, diff, readout: diffReadout }));
     },
     load(a, baseline = null) {
       cancelAnimationFrame(raf);

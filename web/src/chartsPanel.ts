@@ -1,5 +1,6 @@
 /** DOM glue for the charts panel: a spike raster and the readout trace, plain SVG. The shaping lives in charts.ts (tested). */
 import type { Activity } from "./activity";
+import { doseModel, doseTooltip, screenModel, type DoseChart, type ExperimentChart, type ScreenChart } from "./experiments";
 import {
   groupLabelLayout, linearScale, parseRowTypes, rasterModel, rasterTooltip, readoutSeries, smooth, smoothWindow, traceModel, tracePath,
   traceTooltip, type RasterModel, type TraceModel,
@@ -8,6 +9,10 @@ import {
 export interface ChartsPanel {
   /** Show a recording (and its baseline, for silenced runs). Fetches the cell types of the raster rows. */
   show(a: Activity, baseline: Activity | null): void;
+  /** Show an experiment chart (dose-response, screen); `onPick` receives the simulation id of a clicked screen row. */
+  showExperiment(c: ExperimentChart, onPick: (simulationId: string) => void): void;
+  /** Whether an experiment chart is held (the recording view offers a way back to it). */
+  readonly hasExperiment: boolean;
   clear(): void;
   /** Move the playhead (ms), or hide it with null. */
   setTime(ms: number | null): void;
@@ -36,6 +41,8 @@ export function createChartsPanel(root: HTMLElement): ChartsPanel {
   let current: { a: Activity; baseline: Activity | null } | null = null;
   let token = 0;
   let playheads: { line: SVGLineElement; x: (ms: number) => number }[] = [];
+  let experiment: { chart: ExperimentChart; onPick: (id: string) => void } | null = null;
+  let view: "recording" | "experiment" = "recording";
 
   const rasterBox = document.createElement("div");
   const traceBox = document.createElement("div");
@@ -48,7 +55,18 @@ export function createChartsPanel(root: HTMLElement): ChartsPanel {
     return h;
   };
   const traceTitle = title("readout · mean rate");
-  root.replaceChildren(title("raster · busiest neurons"), rasterBox, traceTitle, traceBox, tip);
+  const rasterTitle = title("raster · busiest neurons");
+  const expTitle = title("experiment");
+  const expBox = document.createElement("div");
+  const back = document.createElement("button");
+  back.type = "button";
+  back.className = "ch-back";
+  back.hidden = true;
+  back.addEventListener("click", () => {
+    view = "experiment";
+    sync();
+  });
+  root.replaceChildren(back, expTitle, expBox, rasterTitle, rasterBox, traceTitle, traceBox, tip);
 
   const showTip = (text: string, ev: PointerEvent) => {
     tip.textContent = text;
@@ -213,6 +231,135 @@ export function createChartsPanel(root: HTMLElement): ChartsPanel {
     traceBox.replaceChildren(...nodes);
   };
 
+  const note = (text: string) => {
+    const p = document.createElement("p");
+    p.className = "ch-note";
+    p.textContent = text;
+    return p;
+  };
+  const table = (head: string[], rows: string[][]) => {
+    const t = document.createElement("table");
+    t.className = "sr-only";
+    const h = t.createTHead().insertRow();
+    for (const c of head) h.insertCell().textContent = c;
+    const body = t.createTBody();
+    for (const r of rows) {
+      const tr = body.insertRow();
+      for (const c of r) tr.insertCell().textContent = c;
+    }
+    return t;
+  };
+
+  const drawDose = (c: DoseChart) => {
+    const H = 196;
+    const box = { left: 50, right: W - 70, top: 12, bottom: H - 40 };
+    const m = doseModel(c, box);
+    expTitle.textContent = `dose-response · ${c.readoutLabel} Hz vs ${c.stimulusLabel} rate`;
+    const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img",
+      "aria-label": `Dose-response: ${c.readoutLabel} mean rate at ${c.points.map((p) => `${p.rate} Hz`).join(", ")} stimulation` });
+    for (const t of m.yAxis.ticks) {
+      s.appendChild(svg("line", { x1: box.left, x2: box.right, y1: m.y(t), y2: m.y(t), class: "ch-grid" }));
+      s.appendChild(svg("text", { x: box.left - 8, y: m.y(t) + 4, "text-anchor": "end", class: "ch-text" }, String(t)));
+    }
+    let lastX = -Infinity;
+    for (const t of m.xTicks) {
+      if (t.x - lastX < 30) continue; // drop a label that would touch the previous one
+      lastX = t.x;
+      s.appendChild(svg("line", { x1: t.x, x2: t.x, y1: box.bottom, y2: box.bottom + 4, class: "ch-axis" }));
+      s.appendChild(svg("text", { x: t.x, y: box.bottom + 17, "text-anchor": "middle", class: "ch-text" }, String(t.rate)));
+    }
+    s.appendChild(svg("line", { x1: box.left, x2: box.right, y1: box.bottom, y2: box.bottom, class: "ch-axis" }));
+    s.appendChild(svg("text", { x: (box.left + box.right) / 2, y: H - 4, "text-anchor": "middle", class: "ch-text" }, "stimulus rate (Hz, log scale)"));
+    if (m.band) s.appendChild(svg("path", { d: m.band, class: "ch-band" }));
+    if (m.ec50) {
+      s.appendChild(svg("line", { x1: m.ec50.x, x2: m.ec50.x, y1: box.top, y2: box.bottom, class: "ch-ec50" }));
+      const right = m.ec50.x > box.right - 80;
+      // low on the plot, where a rising curve is not: the label never sits on a point or a whisker
+      s.appendChild(svg("text", { x: m.ec50.x + (right ? -5 : 5), y: box.bottom - 6, "text-anchor": right ? "end" : "start", class: "ch-text strong" }, m.ec50.label));
+    }
+    s.appendChild(svg("path", { d: m.points.map((p, i) => `${i ? "L" : "M"}${p.x},${p.y}`).join(" "), class: "ch-line", fill: "none" }));
+    for (const p of m.points) {
+      if (p.low !== null && p.high !== null) {
+        s.appendChild(svg("line", { x1: p.x, x2: p.x, y1: p.yLow, y2: p.yHigh, class: "ch-whisker" }));
+        for (const yy of [p.yLow, p.yHigh]) s.appendChild(svg("line", { x1: p.x - 3, x2: p.x + 3, y1: yy, y2: yy, class: "ch-whisker" }));
+      }
+      s.appendChild(svg("circle", { cx: p.x, cy: p.y, r: 4, class: "ch-dot" }));
+    }
+    const ring = svg("circle", { r: 7, class: "ch-hover", visibility: "hidden" });
+    s.appendChild(ring);
+    const over = svg("rect", { x: box.left - 8, y: box.top, width: box.right - box.left + 16, height: box.bottom - box.top, fill: "transparent" });
+    over.addEventListener("pointermove", (ev) => {
+      const r = s.getBoundingClientRect();
+      const px = ((ev.clientX - r.left) / r.width) * W;
+      const i = m.points.reduce((best, p, k) => (Math.abs(p.x - px) < Math.abs(m.points[best].x - px) ? k : best), 0);
+      ring.setAttribute("cx", String(m.points[i].x));
+      ring.setAttribute("cy", String(m.points[i].y));
+      ring.setAttribute("visibility", "visible");
+      showTip(doseTooltip(c.points[i], c.readoutLabel), ev);
+    });
+    over.addEventListener("pointerleave", () => {
+      ring.setAttribute("visibility", "hidden");
+      hideTip();
+    });
+    s.appendChild(over);
+    expBox.replaceChildren(
+      s,
+      note(`${c.trials} trial${c.trials === 1 ? "" : "s"} per rate · mean with 95% CI · model prediction, not a measurement`),
+      table(["rate (Hz)", `${c.readoutLabel} mean (Hz)`, "CI low", "CI high"], c.points.map((p) => [String(p.rate), String(p.mean), String(p.low ?? ""), String(p.high ?? "")])),
+    );
+  };
+
+  const drawScreen = (c: ScreenChart, onPick: (id: string) => void) => {
+    expTitle.textContent = `silencing screen · effect on ${c.readoutLabel} (Hz)`;
+    if (!c.rows.length) {
+      expBox.replaceChildren(note("no candidate neuron fired in the baseline"));
+      return;
+    }
+    const ROW = 18;
+    const m = screenModel(c, { left: 92, right: W - 24, top: 6, rowPx: ROW });
+    const s = svg("svg", { viewBox: `0 0 ${W} ${m.height}`, width: W, height: m.height, role: "group",
+      "aria-label": `Silencing screen: change in ${c.readoutLabel} rate when each of ${c.rows.length} neurons is silenced` });
+    for (const t of m.xTicks) {
+      s.appendChild(svg("line", { x1: t.x, x2: t.x, y1: 6, y2: m.axisY, class: "ch-grid" }));
+      s.appendChild(svg("text", { x: t.x, y: m.axisY + 16, "text-anchor": "middle", class: "ch-text" }, (t.value > 0 ? "+" : "") + t.value));
+    }
+    s.appendChild(svg("line", { x1: m.zeroX, x2: m.zeroX, y1: 6, y2: m.axisY, class: "ch-axis strong" }));
+    s.appendChild(svg("text", { x: 92 + (W - 24 - 92) / 2, y: m.height - 4, "text-anchor": "middle", class: "ch-text" }, "Δ readout Hz (silenced − baseline)"));
+    for (const r of m.rows) {
+      const g = svg("g", { class: "ch-row", tabindex: 0, role: "button", "aria-label": r.tooltip });
+      g.appendChild(svg("rect", { x: 0, y: r.y - ROW / 2, width: W, height: ROW, class: "ch-rowhit" }));
+      g.appendChild(svg("text", { x: 84, y: r.y + 4, "text-anchor": "end", class: "ch-text strong" }, r.label.length > 11 ? `${r.label.slice(0, 10)}…` : r.label));
+      g.appendChild(svg("line", { x1: r.xLow, x2: r.xHigh, y1: r.y, y2: r.y, class: "ch-whisker" }));
+      for (const xx of [r.xLow, r.xHigh]) g.appendChild(svg("line", { x1: xx, x2: xx, y1: r.y - 3, y2: r.y + 3, class: "ch-whisker" }));
+      g.appendChild(svg("circle", { cx: r.x, cy: r.y, r: 5, class: r.filled ? "ch-mark filled" : "ch-mark hollow" }));
+      g.addEventListener("pointermove", (ev) => showTip(r.tooltip, ev));
+      g.addEventListener("pointerleave", hideTip);
+      g.addEventListener("click", () => onPick(r.simulationId));
+      g.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          onPick(r.simulationId);
+        }
+      });
+      s.appendChild(g);
+    }
+    const legend = document.createElement("div");
+    legend.className = "ch-legend";
+    for (const [cls, text] of [["filled", "significant (Holm-corrected)"], ["hollow", "not significant"]] as const) {
+      const item = document.createElement("span");
+      const key = svg("svg", { width: 12, height: 12, viewBox: "0 0 12 12", "aria-hidden": "true" });
+      key.appendChild(svg("circle", { cx: 6, cy: 6, r: 4.5, class: `ch-mark ${cls}` }));
+      item.append(key, text);
+      legend.appendChild(item);
+    }
+    expBox.replaceChildren(
+      legend, s,
+      note(`${c.trials} trial${c.trials === 1 ? "" : "s"} per condition · whiskers are 95% CI · click a row to open its difference map · model prediction`),
+      table(["neuron", "row", "delta (Hz)", "CI low", "CI high", "p", "significant"],
+        c.rows.map((r) => [r.label, String(r.row), String(r.delta), String(r.low ?? ""), String(r.high ?? ""), String(r.p ?? ""), r.significant ? "yes" : "no"])),
+    );
+  };
+
   const render = async () => {
     if (!current || !isOpen) return;
     const { a, baseline } = current;
@@ -242,18 +389,40 @@ export function createChartsPanel(root: HTMLElement): ChartsPanel {
   };
 
   const sync = () => {
-    root.hidden = !(isOpen && current);
-    document.body.classList.toggle("has-charts", isOpen && current !== null);
-    if (!root.hidden) void render();
+    const has = view === "experiment" ? experiment !== null : current !== null;
+    root.hidden = !(isOpen && has);
+    document.body.classList.toggle("has-charts", isOpen && has);
+    const showExp = view === "experiment" && experiment !== null;
+    for (const el of [expTitle, expBox]) el.hidden = !showExp;
+    for (const el of [rasterTitle, rasterBox, traceTitle, traceBox]) el.hidden = showExp;
+    back.hidden = showExp || experiment === null;
+    back.textContent = experiment?.chart.kind === "screen" ? "← back to the screen chart" : "← back to the dose-response chart";
+    if (root.hidden) return;
+    if (showExp && experiment) {
+      playheads = [];
+      if (experiment.chart.kind === "screen") drawScreen(experiment.chart, experiment.onPick);
+      else drawDose(experiment.chart);
+    } else void render();
   };
 
   return {
     show(a, baseline) {
       current = { a, baseline };
+      view = "recording";
       sync();
+    },
+    showExperiment(c, onPick) {
+      experiment = { chart: c, onPick };
+      view = "experiment";
+      sync();
+    },
+    get hasExperiment() {
+      return experiment !== null;
     },
     clear() {
       current = null;
+      experiment = null;
+      view = "recording";
       token++;
       playheads = [];
       sync();

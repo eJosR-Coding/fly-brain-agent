@@ -30,8 +30,10 @@ from flybrain.agent_mcp import SERVER_NAME
 from flybrain.anatomy import NT_CODES, REGION_CODES, landmarks, nt_codes, region_codes
 from flybrain.atlas import RowIndex, load_atlas
 from flybrain.mcp_server import DEFAULT_ANNOTATIONS, build_server, load_connectome
+from flybrain.experiments import dose_response
 from flybrain.models import CHAT_MODEL_KWARGS, describe_models
 from flybrain.selections import SelectionStore, UnknownSelectionError
+from flybrain.silencing import silencing_screen
 from flybrain.sim_service import SimulationService, SimulationUnavailable, UnknownSimulationError
 from flybrain.tools import ACTIVE_HZ, load_presets, preset_selection, search_neurons, stimulate
 
@@ -39,6 +41,8 @@ BYTES_PER_POINT = 12  # 3 x float32
 MAX_MESSAGE_CHARS = 2000
 MAX_INLINE_INDICES = 5000  # bigger highlights are fetched as binary instead of inlined
 TURN_TIMEOUT_S = 90.0  # provider SDKs can retry 503s for minutes; cap the whole chat turn
+EXPERIMENT_TIMEOUT_S = 300.0  # extra turn time granted each time the model starts an experiment tool
+EXPERIMENT_TOOLS = ("dose_response", "silencing_screen")
 NEURON_PARTNERS = 5  # top partners per direction on the neuron card
 MAX_ARG_CHARS = 100  # tool args in events are cut to keep events small
 DEFAULT_CORS = "http://localhost:5173"  # Vite dev server
@@ -59,11 +63,33 @@ class SimulateRequest(BaseModel):
     selection_id: str | None = None
     rate_hz: float = 100
     duration_ms: float = 500
-    trials: StrictInt = 3
+    trials: StrictInt | None = None  # default: 3, or 5 when silencing
     readout_preset: str | None = None
     readout_selection_id: str | None = None
     silence_selection_id: str | None = None
     silence_preset: str | None = None
+
+
+class _ExperimentRequest(BaseModel):
+    """Shared by the no-LLM experiment endpoints: the stimulus and the readout, each a preset or a ticket."""
+
+    model_config = ConfigDict(extra="forbid")
+    preset: str | None = None
+    selection_id: str | None = None
+    readout_preset: str | None = None
+    readout_selection_id: str | None = None
+    duration_ms: float = 300
+    trials: StrictInt = 3
+
+
+class DoseResponseRequest(_ExperimentRequest):
+    rates_hz: list[float] = [10, 25, 50, 100, 200]
+
+
+class ScreenRequest(_ExperimentRequest):
+    candidates: str = "top_non_sensory"
+    n: StrictInt = 8
+    rate_hz: float = 100
 
 
 def _text_or_none(value) -> str | None:
@@ -130,6 +156,54 @@ def _resolve_turn_timeout(turn_timeout: float | None) -> float:
     return seconds
 
 
+def _resolve_experiment_timeout(experiment_timeout: float | None) -> float:
+    """Argument, else $FLYBRAIN_EXPERIMENT_TIMEOUT, else the default; a positive finite number of seconds."""
+    if experiment_timeout is not None:
+        value, source = experiment_timeout, "experiment_timeout"
+    elif os.environ.get("FLYBRAIN_EXPERIMENT_TIMEOUT"):
+        value, source = os.environ["FLYBRAIN_EXPERIMENT_TIMEOUT"], "FLYBRAIN_EXPERIMENT_TIMEOUT"
+    else:
+        return EXPERIMENT_TIMEOUT_S
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        seconds = math.nan
+    if not (math.isfinite(seconds) and seconds > 0):
+        raise ValueError(f"{source} must be a positive number of seconds, got {value!r}")
+    return seconds
+
+
+async def _with_progress(events, sims):
+    """Merge a turn's events with the progress of long experiments: yields ("event", ev) / ("progress", p).
+
+    Progress arrives from the simulation thread; it is queued on the event loop next to the turn's
+    own events, so the stream keeps its order. Closing this generator cancels the turn (which repairs
+    its thread, see stream_events).
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+    off = sims.subscribe(lambda p: loop.call_soon_threadsafe(queue.put_nowait, ("progress", p)))
+
+    async def pump() -> None:
+        try:
+            async for ev in events:
+                await queue.put(("event", ev))
+        finally:
+            await queue.put(("end", None))
+
+    task = asyncio.create_task(pump())
+    try:
+        while True:
+            kind, item = await queue.get()
+            if kind == "end":
+                break
+            yield kind, item
+    finally:
+        off()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 def create_app(
     atlas_path=None,
     model=None,
@@ -143,6 +217,7 @@ def create_app(
     model_factory=None,
     env=None,
     keep_turns: int | None = None,
+    experiment_timeout: float | None = None,
 ) -> FastAPI:
     """Build the app. ``model`` is a LangChain chat model; without one /chat reports an error.
 
@@ -220,6 +295,7 @@ def create_app(
 
     app = FastAPI(title="flybrain", lifespan=lifespan)
     app.state.turn_timeout = _resolve_turn_timeout(turn_timeout)
+    app.state.experiment_timeout = _resolve_experiment_timeout(experiment_timeout)
     app.state.keep_turns = keep = keep_turns_from_env() if keep_turns is None else keep_turns
     app.add_middleware(
         CORSMiddleware,
@@ -326,11 +402,14 @@ def create_app(
     @app.get("/simulations/{simulation_id}")
     def simulation_meta(simulation_id: str):
         rec = _record(simulation_id)
+        # [] = nothing was silenced; None + silenced_truncated = too many to list inline
+        listed = [] if rec.silenced_rows is None else rec.silenced_rows
+        truncated = len(listed) > max_inline_indices
+        silenced = None if truncated else listed.tolist() if hasattr(listed, "tolist") else listed
         return {"simulation_id": rec.id, "bin_ms": rec.bin_ms, "n_bins": rec.n_bins, "n_rows": rec.n_rows,
                 "duration_ms": rec.duration_ms, "stimulus": rec.stimulus, "trials": rec.trials,
                 "active_count": rec.active_count, "active_hz": ACTIVE_HZ, "compare_id": rec.compare_id,
-                "silenced_rows": None if rec.silenced_rows is None or len(rec.silenced_rows) > MAX_INLINE_INDICES
-                else rec.silenced_rows.tolist(), "readout": rec.readout}
+                "silenced_rows": silenced, "silenced_truncated": truncated, "readout": rec.readout}
 
     @app.get("/simulations/{simulation_id}/rows")
     def simulation_rows(simulation_id: str, rows: str | None = None):
@@ -385,6 +464,43 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(exc)) from None
         except (ValueError, TypeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    async def _run_experiment(fn, req: _ExperimentRequest, *args):
+        if req.preset is None and req.selection_id is None:
+            raise HTTPException(status_code=422, detail="give a preset or a selection_id")
+        if req.readout_preset is None and req.readout_selection_id is None:
+            raise HTTPException(status_code=422, detail="give a readout_preset or a readout_selection_id")
+        if not app.state.sims.available:
+            raise HTTPException(status_code=503, detail=_unavailable_message())
+        try:
+            sid = _ticket(req.preset, req.selection_id, "")
+            readout = _ticket(req.readout_preset, req.readout_selection_id, "readout_")
+            out = await asyncio.to_thread(fn, app.state.atlas, app.state.store, app.state.sims, sid, readout, *args)
+            return {**out, "chart": app.state.sims.get_chart(out["chart_id"])}
+        except SimulationUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+        except UnknownSelectionError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    @app.post("/experiments/dose_response")
+    async def experiment_dose_response(req: DoseResponseRequest):
+        """The dose_response tool without an LLM (viewer chip): the result plus its chart payload."""
+        return await _run_experiment(dose_response, req, req.rates_hz, req.duration_ms, req.trials)
+
+    @app.post("/experiments/screen")
+    async def experiment_screen(req: ScreenRequest):
+        """The silencing_screen tool without an LLM (viewer chip): the result plus its chart payload."""
+        return await _run_experiment(
+            silencing_screen, req, req.candidates, req.n, req.duration_ms, req.trials, req.rate_hz
+        )
+
+    @app.get("/experiments/progress")
+    def experiment_progress():
+        """{running, experiment, done, total} of the experiment in flight (the viewer polls it)."""
+        snap = app.state.sims.progress_snapshot()
+        return {"running": False} if snap is None else {"running": True, **snap}
 
     def _unavailable_message() -> str:
         try:
@@ -482,6 +598,16 @@ def create_app(
                                 "active_count": rec.active_count, "active_hz": ACTIVE_HZ,
                                 "compare_id": rec.compare_id})
 
+    def _chart(content: str) -> ServerSentEvent | None:
+        """An experiment result carrying a chart_id also becomes a chart event (the plot)."""
+        try:
+            data = json.loads(content)
+            chart_id = data.get("chart_id") if isinstance(data, dict) else None
+            chart = app.state.sims.get_chart(chart_id) if isinstance(chart_id, str) else None
+        except (ValueError, UnknownSimulationError):
+            return None
+        return None if chart is None else _sse("chart", chart)
+
     def _path(tool: str, content: str) -> ServerSentEvent | None:
         """find_path also becomes a path event: the route as atlas rows, for the cables."""
         if tool != "find_path":
@@ -514,15 +640,24 @@ def create_app(
             # stream_events never raises: failures arrive as an "error" event
             # aclosing: when the client leaves, the stream is closed right away (not at GC time)
             # so its finally block repairs the thread before the next turn.
-            async with aclosing(
-                stream_events(graph, req.message, conversation_id, max_steps, app.state.turn_timeout, used)
-            ) as events:
-                async for ev in events:
+            extensions = {name: app.state.experiment_timeout for name in EXPERIMENT_TOOLS}
+            running_experiment = False  # between an experiment tool's call and its result: progress belongs to this turn
+            async with aclosing(_with_progress(
+                stream_events(graph, req.message, conversation_id, max_steps, app.state.turn_timeout, used, extensions),
+                app.state.sims,
+            )) as merged:
+                async for kind, ev in merged:
+                    if kind == "progress":
+                        if running_experiment:
+                            yield _sse("progress", ev)
+                        continue
                     if ev["type"] == "tool_call":
+                        running_experiment = ev["tool"] in EXPERIMENT_TOOLS
                         yield _sse("tool_call", {"id": ev["id"], "tool": ev["tool"], "args": _short(ev["args"])})
                     elif ev["type"] == "answer_delta":
                         yield _sse("answer_delta", {"text": ev["text"]})
                     elif ev["type"] == "tool_result":
+                        running_experiment = False
                         yield _sse("tool_result", {"id": ev["id"], "tool": ev["tool"], "ok": not ev["error"], "ms": ev["ms"]})
                         hl = None if ev["error"] else _highlight(ev["content"], seen)
                         if hl is not None:
@@ -533,6 +668,9 @@ def create_app(
                         act = None if ev["error"] else _activity(ev["content"])
                         if act is not None:
                             yield act
+                        chart = None if ev["error"] else _chart(ev["content"])
+                        if chart is not None:
+                            yield chart
                     elif ev["type"] == "usage":
                         yield _sse("usage", {k: ev[k] for k in
                                              ("calls", "input_tokens", "output_tokens", "total_tokens")})

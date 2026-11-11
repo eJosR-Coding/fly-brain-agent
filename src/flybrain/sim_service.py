@@ -29,7 +29,8 @@ class SimulationUnavailable(RuntimeError):
     """The simulator cannot run here (weights missing); the message says how to fix it."""
 
 
-MAX_RESULTS = 10  # activity recordings kept (LRU), like selection tickets
+MAX_RESULTS = 24  # activity recordings kept (LRU); a silencing screen keeps 1 baseline + up to 12 silenced runs
+MAX_CHARTS = 12  # experiment charts kept (tiny dicts)
 
 
 class UnknownSimulationError(KeyError):
@@ -81,6 +82,9 @@ class SimulationService:
         self._expired: set[str] = set()
         self._record_lock = threading.Lock()
         self.max_results = max_results
+        self._charts: OrderedDict[str, dict] = OrderedDict()
+        self._listeners: list[Callable[[dict], None]] = []
+        self._progress: dict | None = None
 
     @classmethod
     def default(cls, atlas, max_results: int = MAX_RESULTS) -> "SimulationService":
@@ -124,8 +128,66 @@ class SimulationService:
                 None if readout is None else dict(readout),
             )
             while len(self._records) > self.max_results:
-                self._expired.add(self._records.popitem(last=False)[0])
+                self._evict_oldest()
             return sim_id
+
+    # -- experiment charts and progress -----------------------------------------------------
+
+    def add_chart(self, payload: dict) -> str:
+        """Keep a chart payload (dose-response curve, screen ranking) for the viewer; returns its id."""
+        with self._record_lock:
+            while True:
+                chart_id = f"chart_{secrets.token_hex(3)}"
+                if chart_id not in self._charts:
+                    break
+            self._charts[chart_id] = {**payload, "id": chart_id}
+            while len(self._charts) > MAX_CHARTS:
+                self._charts.popitem(last=False)
+            return chart_id
+
+    def get_chart(self, chart_id: str) -> dict:
+        with self._record_lock:
+            if chart_id not in self._charts:
+                raise UnknownSimulationError(f"unknown or expired chart {chart_id!r}; run the experiment again.")
+            self._charts.move_to_end(chart_id)
+            return self._charts[chart_id]
+
+    def subscribe(self, listener: Callable[[dict], None]) -> Callable[[], None]:
+        """Call `listener({experiment, done, total})` on every progress step (from the worker thread)."""
+        self._listeners.append(listener)
+
+        def unsubscribe() -> None:
+            if listener in self._listeners:
+                self._listeners.remove(listener)
+
+        return unsubscribe
+
+    def report_progress(self, experiment: str, done: int, total: int) -> None:
+        self._progress = {"experiment": experiment, "done": done, "total": total}
+        for listener in list(self._listeners):
+            try:
+                listener(dict(self._progress))
+            except Exception:  # noqa: BLE001 - a dead stream must never break a running experiment
+                pass
+
+    def finish_progress(self) -> None:
+        self._progress = None
+
+    def progress_snapshot(self) -> dict | None:
+        """The running experiment's {experiment, done, total}, or None when nothing long is running."""
+        return None if self._progress is None else dict(self._progress)
+
+    def _evict_oldest(self) -> None:
+        """Drop the least recently used recording, skipping baselines a silenced run still points at.
+
+        A baseline therefore lives exactly as long as the last run compared against it (the pair
+        expires together) and `compare_id` can never dangle. The runs that point at a baseline
+        are not baselines themselves, so there is always something else to evict.
+        """
+        needed = {r.compare_id for r in self._records.values() if r.compare_id is not None}
+        victim = next((i for i in self._records if i not in needed), next(iter(self._records)))
+        del self._records[victim]
+        self._expired.add(victim)
 
     def get(self, sim_id: str) -> ActivityRecord:
         with self._record_lock:
