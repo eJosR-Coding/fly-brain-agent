@@ -49,9 +49,9 @@ SYSTEM_PROMPT = (
     "prediction, not the living fly (no neuromodulation, plasticity or nerve cord); it takes "
     "seconds, so run it once with sensible settings. If a result has a warning, relay it plainly. "
     "Format simulation answers the same way: the first line is a one-sentence verdict in bold; then "
-    "a markdown table of the top responders (neuron, type, Hz; at most 5 rows), one per run when "
+    "a markdown table of the top responders (type, super class, Hz; no root ids; at most 5 rows), one per run when "
     "comparing; then the readout in one line; end with one short caveat line in italics and at most "
-    "two next steps. Answer concisely in the user's language."
+    "two next steps. One table per answer, never two tables side by side. Answer concisely."
 )
 
 MAX_STEPS = 6  # tool rounds (one round = the model asks for tools, the tools answer)
