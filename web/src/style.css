@@ -187,7 +187,7 @@ body.has-activity #key { bottom: 264px; }
 body.has-charts #key { display: none; }
 
 /* bottom-right status block */
-#status { position: fixed; right: calc(var(--panel-width) + 24px); bottom: 56px; width: 280px; margin: 0; padding: 0 0 0 12px;
+#status { position: fixed; right: calc(var(--panel-width) + 24px); top: 40px; width: 280px; /* top-right: the bottom rows hold chips */ margin: 0; padding: 0 0 0 12px;
   display: flex; flex-direction: column; gap: 10px; border-left: 1px solid var(--line);
   font: 400 12px/normal var(--font-mono); letter-spacing: 0.1px; }
 .status-row { display: flex; justify-content: space-between; align-items: center; }
@@ -201,13 +201,14 @@ body.has-charts #key { display: none; }
 #chat-head { height: 62px; flex: none; padding: 0 24px; display: flex; align-items: center; justify-content: space-between;
   border-bottom: 1px solid var(--line-soft); }
 #head-left { display: flex; align-items: center; gap: 14px; }
-#new-chat { font: 400 11px/normal var(--font-mono); letter-spacing: 1px; text-transform: uppercase; color: var(--muted);
+#new-chat { white-space: nowrap; flex: none; font: 400 11px/normal var(--font-mono); letter-spacing: 1px; text-transform: uppercase; color: var(--muted);
   background: transparent; border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 8px; cursor: pointer; }
 #new-chat:hover:not(:disabled) { color: var(--fg); border-color: var(--muted); }
 #new-chat:focus-visible { outline: 1px solid var(--fg); outline-offset: 2px; }
 #new-chat:disabled { opacity: .4; cursor: default; }
 #agent-label { font: 500 13px/normal var(--font-mono); letter-spacing: 1px; color: var(--fg); }
-#model { font: 400 11px/normal var(--font-mono); letter-spacing: 0.1px; color: var(--status-val); white-space: nowrap; }
+#model { font: 400 11px/normal var(--font-mono); letter-spacing: 0.1px; color: var(--status-val); white-space: nowrap;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; } /* long ids shrink, never push the header */
 #log { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: 24px; display: flex; flex-direction: column;
   justify-content: flex-start; gap: 20px; }
 #log::before { content: ""; margin-top: auto; } /* bottom-align short conversations, scroll long ones */
