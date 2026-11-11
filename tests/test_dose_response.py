@@ -157,7 +157,21 @@ def test_the_server_exposes_dose_response(tiny_atlas, sims):
     assert len(out["points"]) == 2 and out["chart_id"].startswith("chart_")
 
 
-def test_interval_lower_bounds_never_go_below_zero_hz(tiny_atlas, store, sims, orn, epg):
+def test_interval_lower_bounds_never_go_below_zero_hz(tiny_atlas, store, sims, orn, epg, monkeypatch):
+    raw_lows = []
+    real = experiments.summarize
+
+    def spy(values):
+        s = real(values)
+        raw_lows.append(s.ci_low)
+        return s
+
+    monkeypatch.setattr(experiments, "summarize", spy)
     out = dose(tiny_atlas, store, sims, orn, epg, rates_hz=[3, 6], duration_ms=100, trials=3)  # rare, noisy spikes
+    # the setup must really produce a negative raw bound, otherwise the clip is never exercised
+    assert any(v is not None and v < 0 for v in raw_lows)
+    clipped = [p for p, raw in zip(out["points"], raw_lows) if raw is not None and raw < 0]
+    assert clipped and all(p["ci_low"] == 0 and p["readout_mean_hz"] > 0 for p in clipped)
+    assert "clipped at 0 Hz" in out["note"]
     assert all(p["ci_low"] >= 0 for p in out["points"])
     assert all(p["ci_low"] <= p["readout_mean_hz"] <= p["ci_high"] for p in out["points"])
