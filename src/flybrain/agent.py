@@ -19,6 +19,8 @@ with ServerStoppedError instead of letting the model improvise without tools.
 """
 
 import asyncio
+import json
+import math
 import os
 import re
 import time
@@ -28,6 +30,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, MessagesState, StateGraph
+from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.prebuilt import ToolNode
 
 from flybrain.agent_mcp import ServerStoppedError, server_gone, stopped_error
@@ -71,11 +74,11 @@ def keep_turns_from_env(env=None) -> int:
     return value
 
 
-def _truncate_tool_result(msg: ToolMessage) -> ToolMessage:
+def _truncate_tool_result(msg: ToolMessage, limit: int = MAX_TOOL_CHARS) -> ToolMessage:
     content = msg.content
-    if not isinstance(content, str) or len(content) <= MAX_TOOL_CHARS:
+    if not isinstance(content, str) or len(content) <= limit:
         return msg
-    head = MAX_TOOL_CHARS - _TRUNC_RESERVE
+    head = limit - _TRUNC_RESERVE
     marker = f"\n... [truncated {len(content) - head} chars]"
     return msg.model_copy(update={"content": content[:head] + marker})
 
@@ -109,6 +112,76 @@ def compact_history(messages, keep_turns: int = DEFAULT_KEEP_TURNS) -> list:
         )
         if answer is not None and turn[-1] is answer:  # only a turn that ENDED in an answer
             out.append(answer)
+    return out
+
+
+DEFAULT_CONTEXT_BUDGET = 6000  # tokens per request (Groq's free tier allows 8000 per minute)
+MIN_CONTEXT_BUDGET = 1000
+TOOL_FLOOR_CHARS = 1000  # budget fitting never cuts a tool result of the current turn below this
+
+
+def context_budget_from_env(env=None) -> int:
+    """$FLYBRAIN_CONTEXT_BUDGET (an int >= 1000 tokens) or the default."""
+    raw = (os.environ if env is None else env).get("FLYBRAIN_CONTEXT_BUDGET")
+    if raw is None:
+        return DEFAULT_CONTEXT_BUDGET
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < MIN_CONTEXT_BUDGET:
+        raise ValueError(
+            f"FLYBRAIN_CONTEXT_BUDGET must be an integer >= {MIN_CONTEXT_BUDGET}, got {raw!r}"
+        )
+    return value
+
+
+def _message_chars(msg) -> int:
+    chars = len(msg.text)
+    calls = [*(getattr(msg, "tool_calls", None) or []), *(getattr(msg, "invalid_tool_calls", None) or [])]
+    if calls:
+        chars += len(json.dumps(calls, default=str))
+    return chars
+
+
+def estimate_tokens(messages, overhead_chars: int = 0) -> int:
+    """Rough token count: characters / 4 over the messages (tool-call args included) + overhead."""
+    return math.ceil((sum(_message_chars(m) for m in messages) + overhead_chars) / 4)
+
+
+def tool_definition_chars(tools) -> int:
+    """Size of the tool definitions as the provider receives them (measured once per graph)."""
+    return sum(len(json.dumps(convert_to_openai_tool(t))) for t in tools)
+
+
+def fit_to_budget(messages, budget: int, overhead_chars: int = 0) -> list:
+    """Shrink a (compacted) message list until its estimated tokens fit ``budget``.
+
+    ``overhead_chars`` is what also gets sent besides the messages (system prompt + tool
+    definitions). Steps: drop the oldest complete turn, whole (human, tool calls, results and
+    answer together, so pairing stays valid), never the current one; then cut the largest tool
+    results of the current turn, down to TOOL_FLOOR_CHARS each. If it still does not fit, the
+    rest is sent as is. Pure and idempotent; the input is never mutated.
+    """
+    out = list(messages)
+    over = lambda: estimate_tokens(out, overhead_chars) > budget  # noqa: E731
+    while over():
+        starts = [i for i, m in enumerate(out) if m.type == "human"]
+        if len(starts) < 2:
+            break
+        del out[starts[0] : starts[1]]
+    if not over():
+        return out
+    while over():
+        cuttable = [
+            (i, len(m.content)) for i, m in enumerate(out)
+            if isinstance(m, ToolMessage) and isinstance(m.content, str) and len(m.content) > TOOL_FLOOR_CHARS
+        ]
+        if not cuttable:
+            break
+        i, size = max(cuttable, key=lambda c: c[1])
+        excess = (estimate_tokens(out, overhead_chars) - budget) * 4
+        out[i] = _truncate_tool_result(out[i], max(TOOL_FLOOR_CHARS, size - excess))
     return out
 
 
@@ -165,18 +238,25 @@ def _reject_invalid_calls(state: MessagesState):
     return {"messages": replies}
 
 
-def build_graph(model, tools, checkpointer=None, keep_turns: int | None = None):
+def build_graph(
+    model, tools, checkpointer=None, keep_turns: int | None = None, context_budget: int | None = None
+):
     """Compile the explicit agent <-> tools loop for a chat model and tools.
 
     Pass a checkpointer (e.g. InMemorySaver) to get multi-turn memory per thread_id. The thread
     is stored whole, but the model only sees ``compact_history`` of it (``keep_turns`` recent
-    turns in full; default $FLYBRAIN_KEEP_TURNS or 3).
+    turns in full; default $FLYBRAIN_KEEP_TURNS or 3), then ``fit_to_budget`` keeps each request
+    (system prompt + tool definitions + messages) under ``context_budget`` estimated tokens
+    (default $FLYBRAIN_CONTEXT_BUDGET or 6000).
     """
     keep = keep_turns_from_env() if keep_turns is None else keep_turns
+    budget = context_budget_from_env() if context_budget is None else context_budget
+    overhead = len(SYSTEM_PROMPT) + tool_definition_chars(tools)
     model_with_tools = model.bind_tools(tools)
 
     async def call_model(state: MessagesState):
-        messages = [SystemMessage(SYSTEM_PROMPT), *compact_history(state["messages"], keep)]
+        fitted = fit_to_budget(compact_history(state["messages"], keep), budget, overhead)
+        messages = [SystemMessage(SYSTEM_PROMPT), *fitted]
         return {"messages": [await model_with_tools.ainvoke(messages)]}
 
     graph = StateGraph(MessagesState)
