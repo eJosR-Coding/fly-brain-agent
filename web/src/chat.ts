@@ -189,6 +189,11 @@ export async function streamChat(
   }
 }
 
+/** The "new chat" button only makes sense when a thread or any message exists and no turn runs. */
+export function newChatEnabled(s: { streaming: boolean; conversationId: string | null; messages: number }): boolean {
+  return !s.streaming && (s.conversationId !== null || s.messages > 0);
+}
+
 export const HINT = "Try: How many serotonin neurons are there?";
 const ARROW_UP = "M6.357 2.184q-.079 .012-.146 .06-.063 .044-2.012 1.993l-1.546 1.574q-.339 .337-.431 .467-.051 .079-.051 .184v.038q0 .222 .168 .39 .105 .105 .26 .137 .156 .032 .299-.019 .079-.026 .298-.241 .222-.216 1.276-1.267 1.469-1.469 1.482-1.469 .013 0 .013 3.183v2.796q0 .416 .032 .495 .034 .077 .111 .156 .079 .076 .174 .124 .099 .044 .216 .044 .117 0 .213-.044 .098-.048 .174-.124 .08-.079 .111-.156 .035-.079 .035-.495v-2.796q0-3.183 .013-3.183 .013 0 1.482 1.469 1.054 1.051 1.273 1.267 .222 .215 .301 .241 .143 .051 .299 .019 .155-.032 .26-.137 .168-.168 .168-.39v-.038q0-.105-.051-.184-.092-.13-.431-.479l-1.559-1.562q-1.952-1.961-2.015-1.993-.063-.035-.149-.06-.086-.026-.13-.026-.045 0-.137 .026z";
 
@@ -220,7 +225,9 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
     onStreaming = () => undefined, onModelChange = () => undefined,
   } = opts;
   root.innerHTML =
-    '<header id="chat-head"><span id="agent-label">agent</span><span id="model"></span></header>' +
+    '<header id="chat-head"><div id="head-left"><span id="agent-label">agent</span>' +
+    '<button id="new-chat" type="button" title="Clear the conversation and start a fresh thread" disabled>new chat</button></div>' +
+    '<span id="model"></span></header>' +
     '<div id="log" role="log" aria-live="polite" aria-label="conversation"></div>' +
     '<form id="form"><div id="picker" hidden><label for="model-select">model</label>' +
     '<select id="model-select" aria-label="Model for the next message"></select></div>' +
@@ -235,6 +242,13 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
   const select = root.querySelector<HTMLSelectElement>("#model-select")!;
   let conversationId: string | null = null;
   let chosen: string | null = null;
+  const newChat = root.querySelector<HTMLButtonElement>("#new-chat")!;
+  let running = false; // a turn is streaming
+  const syncNewChat = () => {
+    newChat.disabled = !newChatEnabled({
+      streaming: running, conversationId, messages: log.querySelectorAll(".msg").length,
+    });
+  };
   let following = true; // keep the log pinned to the bottom unless the user scrolled up
 
   log.addEventListener("scroll", () => {
@@ -267,6 +281,7 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
     el.textContent = text;
     log.appendChild(el);
     follow();
+    syncNewChat();
     return el;
   };
 
@@ -309,12 +324,26 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
     streamText = "";
   };
 
+  newChat.addEventListener("click", () => {
+    if (running) return;
+    conversationId = null; // the next message opens a fresh thread on the server
+    turnUsage = null;
+    usageEl = null;
+    dropStream();
+    tools.clear();
+    log.replaceChildren(hint);
+    following = true;
+    syncNewChat();
+    input.focus();
+  });
+
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const text = input.value.trim();
     if (!text) return;
     input.value = "";
     input.disabled = send.disabled = true;
+    running = true;
     following = true;
     turnUsage = null;
     usageEl = null;
@@ -332,7 +361,7 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
       thinking = null;
     };
     void streamChat(text, conversationId, {
-      onMeta: (id) => { conversationId = id; },
+      onMeta: (id) => { conversationId = id; syncNewChat(); },
       onToolCall: (tool, args, id) => {
         settle();
         dropStream(); // text before a tool call was a preamble, not the answer
@@ -402,6 +431,8 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
         for (const t of tools.values()) if (!t.finished) { t.finished = true; t.el.dataset.state = "ended"; t.stat.textContent = ""; }
         tools.clear();
         input.disabled = send.disabled = false;
+        running = false;
+        syncNewChat();
         onStreaming(false);
         input.focus();
       },

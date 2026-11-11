@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  formatThinking, formatToolCall, formatTokens, formatUsage, parseUsage, streamChat, toolStatusText,
+  formatThinking, formatToolCall, newChatEnabled, formatTokens, formatUsage, parseUsage, streamChat, toolStatusText,
   type ChatHandlers,
 } from "../src/chat";
 
@@ -290,5 +290,18 @@ describe("streamChat usage", () => {
     expect(log).toEqual(["answer:hi", "done"]);
     const { onUsage: _drop, ...bare } = h;
     await expect(streamChat("x", null, bare, f)).resolves.toBeUndefined();
+  });
+});
+
+describe("newChatEnabled", () => {
+  it("is off while a turn streams, whatever else is true", () => {
+    expect(newChatEnabled({ streaming: true, conversationId: "c1", messages: 4 })).toBe(false);
+  });
+  it("is off on an empty, untouched chat (nothing to reset)", () => {
+    expect(newChatEnabled({ streaming: false, conversationId: null, messages: 0 })).toBe(false);
+  });
+  it("is on once there is a thread or anything in the log", () => {
+    expect(newChatEnabled({ streaming: false, conversationId: "c1", messages: 0 })).toBe(true);
+    expect(newChatEnabled({ streaming: false, conversationId: null, messages: 2 })).toBe(true);
   });
 });
