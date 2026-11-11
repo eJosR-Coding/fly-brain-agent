@@ -9,6 +9,7 @@ import numpy as np
 
 from flybrain.atlas import Atlas, RowIndex, clean_filter
 from flybrain.connectome import Connectome, ConnectomeError
+from flybrain.plain import plain_description
 from flybrain.selections import SelectionStore
 from flybrain.stats import compare, summarize, verdict
 
@@ -112,7 +113,8 @@ def count_neurons(
 
 
 def describe_neuron(atlas: Atlas, root_id: int) -> dict:
-    return atlas.describe(root_id)  # atlas validates the id and words the errors
+    out = atlas.describe(root_id)  # atlas validates the id and words the errors
+    return {**out, "plain": plain_description(out)}
 
 
 def list_selection(
