@@ -149,7 +149,7 @@ def test_chat_emits_an_activity_event_after_the_highlight(tiny_tsv_path, svc):
     with client:
         events = parse_sse(client.post("/chat", json={"message": "give it a smell"}).text)
     names = [n for n, _ in events]
-    assert names == ["meta", "tool_call", "tool_result", "highlight", "tool_call", "tool_result", "highlight", "activity", "answer", "done"]
+    assert names == ["meta", "tool_call", "tool_result", "highlight", "tool_call", "tool_result", "highlight", "activity", "usage", "answer", "done"]
     act = dict(events)["activity"]
     rec = svc.get(act["simulation_id"])
     assert act == {"simulation_id": rec.id, "n_bins": rec.n_bins, "bin_ms": rec.bin_ms,

@@ -179,6 +179,7 @@ body.has-activity #key { bottom: 232px; }
 .msg.hl .sel { color: var(--dimmer); }
 .msg.answer { font: 400 15px/23px var(--font-ui); letter-spacing: 0; color: var(--text); }
 .msg.answer { white-space: normal; }
+.msg.usage { margin-top: -8px; font: 400 11px/16px var(--font-mono); letter-spacing: 0.1px; color: var(--dimmer); font-variant-numeric: tabular-nums; }
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
 .md p { margin: 0 0 10px; }

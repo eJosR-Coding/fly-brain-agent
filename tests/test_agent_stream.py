@@ -39,12 +39,12 @@ def test_tool_call_result_answer_in_order():
 
     graph = build_graph(fn_model(reply), [count_neurons], checkpointer=InMemorySaver())
     events = asyncio.run(collect(graph, "how many?"))
-    assert [e["type"] for e in events] == ["tool_call", "tool_result", "answer"]
+    assert [e["type"] for e in events] == ["tool_call", "tool_result", "usage", "answer"]
     assert events[0] == {"type": "tool_call", "id": "c1", "tool": "count_neurons", "args": {"cell_type": "PEN"}}
     assert (events[1]["id"], events[1]["tool"], events[1]["error"]) == ("c1", "count_neurons", False)
     assert isinstance(events[1]["ms"], int) and events[1]["ms"] >= 0
     assert json.loads(events[1]["content"])["count"] == 42
-    assert events[2]["text"] == "42 PEN"
+    assert events[3]["text"] == "42 PEN"
 
 
 def test_same_thread_remembers_previous_turn():
@@ -118,7 +118,8 @@ def test_server_stopped_becomes_error_event():
 def test_empty_reply_is_reported():
     graph = build_graph(fn_model(lambda m: AIMessage(content="")), [count_neurons], checkpointer=InMemorySaver())
     events = asyncio.run(collect(graph, "hi"))
-    assert events == [{"type": "answer", "text": "[no answer] the model returned an empty reply"}]
+    assert events[-1] == {"type": "answer", "text": "[no answer] the model returned an empty reply"}
+    assert [e["type"] for e in events] == ["usage", "answer"]
 
 
 class StatusError(Exception):
@@ -207,7 +208,7 @@ def test_final_answer_streams_as_deltas_then_the_full_answer():
                         checkpointer=InMemorySaver())
     events = asyncio.run(collect(graph, "q"))
     types = [e["type"] for e in events]
-    assert types[-1] == "answer" and set(types[:-1]) == {"answer_delta"}
+    assert types[-1] == "answer" and set(types[:-2]) == {"answer_delta"} and types[-2] == "usage"
     assert len(types) > 2
     assert "".join(e["text"] for e in events if e["type"] == "answer_delta").strip() == "one two three"
     assert events[-1]["text"].strip() == "one two three"
@@ -223,10 +224,11 @@ def test_tool_call_arguments_are_never_streamed_as_answer_text():
     events = asyncio.run(collect(graph, "q"))
     deltas = "".join(e["text"] for e in events if e["type"] == "answer_delta")
     assert "cell_type" not in deltas and deltas.strip() == "42 PEN"
-    assert [e["type"] for e in events if e["type"] != "answer_delta"] == ["tool_call", "tool_result", "answer"]
+    assert [e["type"] for e in events if e["type"] != "answer_delta"] == [
+        "tool_call", "tool_result", "usage", "answer"]
 
 
 def test_non_streaming_models_just_send_the_answer():
     graph = build_graph(fn_model(lambda m: AIMessage(content="plain")), [count_neurons],
                         checkpointer=InMemorySaver())
-    assert [e["type"] for e in asyncio.run(collect(graph, "q"))] == ["answer"]
+    assert [e["type"] for e in asyncio.run(collect(graph, "q"))] == ["usage", "answer"]

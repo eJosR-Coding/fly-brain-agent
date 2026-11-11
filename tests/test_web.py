@@ -24,7 +24,7 @@ def test_help_needs_no_model_or_key(capsys):
 
 
 def test_bad_model_setup_is_one_friendly_line(monkeypatch, capsys):
-    def boom(spec):
+    def boom(spec, **kw):
         raise ValueError("no key")
 
     monkeypatch.setattr("langchain.chat_models.init_chat_model", boom)
@@ -33,17 +33,38 @@ def test_bad_model_setup_is_one_friendly_line(monkeypatch, capsys):
     assert "could not set up model 'openai:x': no key" in err
 
 
+def test_default_model_is_built_to_fail_fast_on_rate_limits(monkeypatch):
+    seen = {}
+
+    def init(spec, **kwargs):
+        seen.update(spec=spec, kwargs=kwargs)
+        return object()
+
+    monkeypatch.setattr("langchain.chat_models.init_chat_model", init)
+    monkeypatch.setenv("FLYBRAIN_TURN_TIMEOUT", "abc")  # stop right after the model is built
+    web.main(["--model", "groq:x"])
+    assert seen == {"spec": "groq:x", "kwargs": {"max_retries": 1}}
+
+
 def test_bad_model_spec_is_rejected():
     with pytest.raises(SystemExit):
         web.parse_args(["--model", "nocolon"])
 
 
 def test_bad_turn_timeout_env_is_one_friendly_line(monkeypatch, capsys):
-    monkeypatch.setattr("langchain.chat_models.init_chat_model", lambda spec: object())
+    monkeypatch.setattr("langchain.chat_models.init_chat_model", lambda spec, **kw: object())
     monkeypatch.setenv("FLYBRAIN_TURN_TIMEOUT", "abc")
     assert web.main(["--model", "openai:x"]) == 1
     err = capsys.readouterr().err
     assert err.count("\n") == 1 and "FLYBRAIN_TURN_TIMEOUT" in err and "'abc'" in err
+
+
+def test_bad_keep_turns_env_is_one_friendly_line(monkeypatch, capsys):
+    monkeypatch.setattr("langchain.chat_models.init_chat_model", lambda spec, **kw: object())
+    monkeypatch.setenv("FLYBRAIN_KEEP_TURNS", "0")
+    assert web.main(["--model", "openai:x"]) == 1
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1 and "FLYBRAIN_KEEP_TURNS" in err
 
 
 def test_models_flag_and_env(monkeypatch):
@@ -61,7 +82,7 @@ def test_bad_models_list_is_rejected():
 
 def test_main_passes_the_resolved_registry_to_the_app(monkeypatch):
     seen = {}
-    monkeypatch.setattr("langchain.chat_models.init_chat_model", lambda spec: object())
+    monkeypatch.setattr("langchain.chat_models.init_chat_model", lambda spec, **kw: object())
     monkeypatch.setattr("flybrain.api.create_app", lambda **kw: seen.update(kw) or object())
     monkeypatch.setattr("uvicorn.run", lambda *a, **k: None)
     monkeypatch.delenv("FLYBRAIN_MODELS", raising=False)

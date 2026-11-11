@@ -124,3 +124,19 @@ def test_provider_errors_name_the_chosen_model(tiny_tsv_path):
     with TestClient(app) as client:
         events = parse_sse(chat(client, "hi", model="groq:fast").text)
     assert dict(events)["error"]["message"].startswith("model groq:fast hit its quota or rate limit")
+
+
+def test_models_picked_in_the_picker_are_built_to_fail_fast(tiny_tsv_path, monkeypatch):
+    seen = []
+
+    def init(spec, **kwargs):
+        seen.append((spec, kwargs))
+        return answering("from picker")
+
+    monkeypatch.setattr("langchain.chat_models.init_chat_model", init)
+    app = create_app(atlas_path=tiny_tsv_path, model=answering("from default"), model_name="google_genai:g",
+                     models=["google_genai:g", "groq:fast"], env=ENV)  # default factory
+    with TestClient(app) as client:
+        events = parse_sse(chat(client, "hi", model="groq:fast").text)
+    assert dict(events)["answer"] == {"text": "from picker"}
+    assert seen == [("groq:fast", {"max_retries": 1})]

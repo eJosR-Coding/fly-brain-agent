@@ -25,12 +25,12 @@ from langgraph.checkpoint.memory import InMemorySaver
 from mcp.shared.memory import create_connected_server_and_client_session
 from pydantic import BaseModel, ConfigDict, StrictInt, StringConstraints
 
-from flybrain.agent import MAX_STEPS, build_graph, stream_events
+from flybrain.agent import MAX_STEPS, build_graph, keep_turns_from_env, stream_events
 from flybrain.agent_mcp import SERVER_NAME
 from flybrain.anatomy import NT_CODES, REGION_CODES, landmarks, nt_codes, region_codes
 from flybrain.atlas import RowIndex, load_atlas
 from flybrain.mcp_server import DEFAULT_ANNOTATIONS, build_server, load_connectome
-from flybrain.models import describe_models
+from flybrain.models import CHAT_MODEL_KWARGS, describe_models
 from flybrain.selections import SelectionStore, UnknownSelectionError
 from flybrain.sim_service import SimulationService, SimulationUnavailable, UnknownSimulationError
 from flybrain.tools import ACTIVE_HZ, load_presets, preset_selection, search_neurons, stimulate
@@ -112,6 +112,7 @@ def create_app(
     models: list[str] | None = None,
     model_factory=None,
     env=None,
+    keep_turns: int | None = None,
 ) -> FastAPI:
     """Build the app. ``model`` is a LangChain chat model; without one /chat reports an error.
 
@@ -152,7 +153,8 @@ def create_app(
                 tools = await load_mcp_tools(session, server_name=SERVER_NAME)
                 app.state.tools = tools
                 app.state.checkpointer = InMemorySaver()
-                app.state.graph = build_graph(model, tools, checkpointer=app.state.checkpointer)
+                app.state.graph = build_graph(model, tools, checkpointer=app.state.checkpointer,
+                                                keep_turns=keep)
                 app.state.graphs[default_id] = app.state.graph
             yield
 
@@ -173,7 +175,7 @@ def create_app(
             return model_factory(model_id)
         from langchain.chat_models import init_chat_model
 
-        return init_chat_model(model_id)
+        return init_chat_model(model_id, **CHAT_MODEL_KWARGS)
 
     async def _graph_for(model_id: str):
         """The graph for an allowlisted id, built once (all share the checkpointer)."""
@@ -181,12 +183,14 @@ def create_app(
             graph = app.state.graphs.get(model_id)
             if graph is None:
                 chat_model = await asyncio.to_thread(_make_model, model_id)
-                graph = build_graph(chat_model, app.state.tools, checkpointer=app.state.checkpointer)
+                graph = build_graph(chat_model, app.state.tools, checkpointer=app.state.checkpointer,
+                                       keep_turns=keep)
                 app.state.graphs[model_id] = graph
             return graph
 
     app = FastAPI(title="flybrain", lifespan=lifespan)
     app.state.turn_timeout = _resolve_turn_timeout(turn_timeout)
+    app.state.keep_turns = keep = keep_turns_from_env() if keep_turns is None else keep_turns
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
@@ -432,6 +436,9 @@ def create_app(
                         act = None if ev["error"] else _activity(ev["content"])
                         if act is not None:
                             yield act
+                    elif ev["type"] == "usage":
+                        yield _sse("usage", {k: ev[k] for k in
+                                             ("calls", "input_tokens", "output_tokens", "total_tokens")})
                     elif ev["type"] == "answer":
                         yield _sse("answer", {"text": ev["text"]})
                     else:

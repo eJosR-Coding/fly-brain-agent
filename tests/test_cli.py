@@ -60,7 +60,8 @@ def wired(monkeypatch):
     """Fake model + fake MCP session + scripted ask: nothing real is ever reached."""
     state = {"ask": None, "enter": None, "init": None}
 
-    def init(model):
+    def init(model, **kwargs):
+        state["init_kwargs"] = kwargs
         if state["init"]:
             raise state["init"]
         return object()
@@ -81,6 +82,12 @@ def wired(monkeypatch):
     monkeypatch.setattr(cli, "build_graph", lambda model, tools: object())
     monkeypatch.setattr(cli, "ask", fake_ask)
     return state
+
+
+def test_model_is_built_to_fail_fast_on_rate_limits(wired):
+    wired["ask"] = "ok"
+    assert cli.main(["hi"]) == 0
+    assert wired["init_kwargs"] == {"max_retries": 1}  # no silent SDK backoff for minutes
 
 
 def test_happy_path_prints_the_answer(wired, capsys):
@@ -130,7 +137,7 @@ def test_unexpected_server_start_error_is_one_line(wired, capsys):
 
 
 def test_real_server_failing_to_start_is_reported_as_server_failure(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "init_chat_model", lambda model: object())  # no real provider
+    monkeypatch.setattr(cli, "init_chat_model", lambda model, **kw: object())  # no real provider
     monkeypatch.setenv("FLYBRAIN_ANNOTATIONS", str(tmp_path / "nope.tsv"))
     assert cli.main(["hi"]) == 1
     err = capsys.readouterr().err
