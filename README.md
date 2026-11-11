@@ -443,7 +443,22 @@ Without a model, run the data and search endpoints only with
   `prefers-reduced-motion`) pauses while you drag and for a few seconds after. Points nearer the
   camera are slightly brighter and larger, far ones dimmer (vertex shader, no extra passes). The
   `front` and `3/4` chips reset the camera.
-- Tests: `pnpm -C web test` (SSE parser, region and transmitter tones, label placement, orbit gate, binary decoding, chat stream).
+- **Rich answers**: the chat renders headings, lists (3 levels), task lists, GFM tables (alignment,
+  escaped pipes, cross tables with row headers, 200 x 20 cap, horizontal scroll), fenced and
+  indented code, blockquotes, rules, strikethrough and math (`$x$`, `\(x\)`, `$$x$$`, `\[x\]`).
+  Half-streamed constructs (an open fence, `$$` or table) stay plain text until they close.
+- **Security model**: model output is untrusted. `web/src/markdown.ts` parses to an AST and builds
+  DOM with `createElement` and text nodes only: no `innerHTML`, links and images are shown as text,
+  HTML in the answer is literal, alignment and layout come from fixed classes (never inline
+  styles), the code-block language label is a plain-text span restricted to a short alphanumeric
+  whitelist, and input is capped (20k chars, 2k per formula, 150 formulas, no regex backtracking).
+  Math is the only parsed-HTML path: KaTeX (`trust: false`, MathML output, `maxExpand`/`maxSize`
+  bounded) is passed through DOMPurify with a strict allow-list and inserted as a fragment; if
+  anything fails the source is shown as text. `$5 and $10` is not math (no space after the opening
+  `$`, none before the closing `$`, not followed by a digit, first `$` decides). A hostile-input
+  corpus (script/img/svg/iframe, `javascript:` and `data:` URLs, `\href`, `\style`, `\htmlData`,
+  200k inputs) is tested with jsdom.
+- Tests: `pnpm -C web test` (SSE parser, region and transmitter tones, label placement, orbit gate, binary decoding, chat stream, markdown parser and security corpus).
 
 ## Roadmap
 
