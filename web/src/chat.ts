@@ -1,4 +1,5 @@
 import { parseActivityEvent, type ActivityEvent } from "./activity";
+import { formatExperimentProgress, parseChart, parseProgress, type ExperimentChart, type ExperimentProgress } from "./experiments";
 import { renderMarkdown } from "./markdown";
 import { loadStoredModel, optionLabel, pickModel, saveStoredModel, type ModelList } from "./models";
 import { parsePathEvent, pathLegend, type PathPayload } from "./path";
@@ -22,6 +23,10 @@ export interface ChatHandlers {
   onActivity(a: ActivityEvent): void;
   /** a find_path result: draw the route as cables */
   onPath?(p: PathPayload): void;
+  /** an experiment finished: plot its chart */
+  onChart?(c: ExperimentChart): void;
+  /** a long experiment advanced one step */
+  onProgress?(p: ExperimentProgress): void;
   /** tokens spent by the turn, sent just before the answer */
   onUsage?(u: Usage): void;
   onAnswer(text: string): void;
@@ -181,6 +186,17 @@ export async function streamChat(
           else h.onPath?.(p);
           break;
         }
+        case "chart": {
+          const c = parseChart(d);
+          if (typeof c === "string") h.onError(`ignored an invalid chart event: ${c}`);
+          else h.onChart?.(c);
+          break;
+        }
+        case "progress": {
+          const p = parseProgress(d);
+          if (p) h.onProgress?.(p);
+          break;
+        }
         case "usage": {
           const u = parseUsage(d);
           if (u) h.onUsage?.(u);
@@ -212,6 +228,8 @@ export interface ChatOptions {
   onActivity?: (a: ActivityEvent) => Promise<void> | void;
   /** a find_path route arrived (after the highlight of its neurons has been applied) */
   onPath?: (p: PathPayload) => Promise<void> | void;
+  /** an experiment chart arrived (dose-response curve, silencing screen) */
+  onChart?: (c: ExperimentChart) => void;
   /** "new chat" was pressed: drop whatever the old conversation put on the brain */
   onNewChat?: () => void;
   getPointCount?: () => number | null;
@@ -234,7 +252,7 @@ const FOLLOW_SLACK_PX = 48; // within this of the bottom still counts as "follow
 /** DOM wiring for the chat panel. */
 export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
   const {
-    onHighlight, onActivity = () => undefined, onPath = () => undefined, onNewChat = () => undefined, getPointCount = () => null,
+    onHighlight, onActivity = () => undefined, onPath = () => undefined, onChart = () => undefined, onNewChat = () => undefined, getPointCount = () => null,
     onStreaming = () => undefined, onModelChange = () => undefined,
   } = opts;
   root.innerHTML =
@@ -299,12 +317,14 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
   };
 
   // live tool lines: running (pulsing dot, counting up) -> done / failed
-  interface Tool { el: HTMLElement; stat: HTMLElement; t0: number; finished: boolean }
+  interface Tool { el: HTMLElement; stat: HTMLElement; t0: number; finished: boolean; name: string; progress?: string }
   const tools = new Map<string, Tool>();
   let anon = 0;
+  const runningText = (t: Tool, now: number) =>
+    t.progress ? `${t.progress} \u00b7 ${Math.floor(Math.max(0, now - t.t0) / 1000)} s` : toolStatusText({ state: "running" }, now - t.t0);
   const tickTools = () => {
     const now = performance.now();
-    for (const t of tools.values()) if (!t.finished) t.stat.textContent = toolStatusText({ state: "running" }, now - t.t0);
+    for (const t of tools.values()) if (!t.finished) t.stat.textContent = runningText(t, now);
   };
   const finishTool = (t: Tool, state: "done" | "failed", ms: number) => {
     t.finished = true;
@@ -392,7 +412,7 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
         stat.className = "tstat";
         stat.textContent = toolStatusText({ state: "running" }, 0);
         el.append(dot, call, stat);
-        tools.set(id ?? `anon-${anon++}`, { el, stat, t0: performance.now(), finished: false });
+        tools.set(id ?? `anon-${anon++}`, { el, stat, t0: performance.now(), finished: false, name: tool });
       },
       onToolResult: (id, ok, ms) => {
         const t = tools.get(id);
@@ -431,6 +451,24 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
         sel.textContent = a.simulationId;
         el.append(wave, sel);
         void Promise.resolve(onActivity(a)).catch((err) => add("error", `activity failed: ${(err as Error).message}`));
+      },
+      onProgress: (p) => {
+        for (const t of tools.values()) {
+          if (t.finished || t.name !== p.experiment) continue;
+          t.progress = formatExperimentProgress(p);
+          t.stat.textContent = runningText(t, performance.now());
+        }
+      },
+      onChart: (c) => {
+        settle();
+        const el = add("hl", "");
+        const text = document.createElement("span");
+        text.textContent = c.kind === "screen" ? `\u25A4 screen chart \u00b7 ${c.rows.length} candidates` : `\u25A4 dose-response chart \u00b7 ${c.points.length} rates`;
+        const sel = document.createElement("span");
+        sel.className = "sel";
+        sel.textContent = c.id;
+        el.append(text, sel);
+        onChart(c);
       },
       onUsage: (u) => { turnUsage = u; },
       onAnswerDelta: (t) => {

@@ -15,6 +15,7 @@ import { createPlayer, type Player } from "./player";
 import { createChartsPanel, type ChartsPanel } from "./chartsPanel";
 import { mountInspector } from "./inspector";
 import { pathLegend } from "./path";
+import { formatExperimentProgress, parseChart, parseProgress, type ExperimentChart } from "./experiments";
 import { greyHex, keyRows, loadNt, ntTier, type Transmitters } from "./transmitters";
 import type { Theme } from "./theme";
 
@@ -26,6 +27,9 @@ const CHIPS: { label: string; params: Record<string, string> | null }[] = [
   { label: "PEN", params: { cell_type: "PEN" } },
   { label: "clear", params: null },
 ];
+
+/** Stimulus and readout of the experiment chips: sugar-sensing neurons -> MN9, like the sugar chip. */
+const EXPERIMENT_BODY = { preset: "sugar", readout_preset: "mn9" };
 
 /** The sugar experiment of the Shiu et al. 2024 example: 20 sugar-sensing neurons at 100 Hz, MN9 as readout. */
 const SUGAR_RUN = { preset: "sugar", readout_preset: "mn9", rate_hz: 100, duration_ms: 1000, trials: 3 };
@@ -41,6 +45,7 @@ let charts: ChartsPanel | null = null;
 let chartsChip: HTMLButtonElement | null = null;
 let simulating = false;
 let sugarChip: HTMLButtonElement | null = null;
+let experimentChips: HTMLButtonElement[] = [];
 let waveLegend = ""; // the legend line of the wave mode (restored when switching back to it)
 let pathShown = false; // cables are on screen (the legend shows their summary)
 /** Shared by chips and chat: whichever selection was requested last wins. */
@@ -92,7 +97,7 @@ function showActivity({ a, baseline }: { a: Activity; baseline: Activity | null 
 async function giveSugar(): Promise<void> {
   if (simulating || !player) return;
   simulating = true;
-  if (sugarChip) sugarChip.disabled = true;
+  for (const b of simChips()) b.disabled = true;
   latest.invalidate(); // a search finishing later must not replace the wave
   const started = performance.now();
   const pending = () => renderLegend(null, formatSimulating(SUGAR_RUN.duration_ms, (performance.now() - started) / 1000));
@@ -118,7 +123,74 @@ async function giveSugar(): Promise<void> {
   } finally {
     window.clearInterval(tick);
     simulating = false;
-    if (sugarChip) sugarChip.disabled = health?.simulation === false;
+    for (const b of simChips()) b.disabled = health?.simulation === false;
+  }
+}
+
+/** Chips that run the simulator (one at a time). */
+function simChips(): HTMLButtonElement[] {
+  return [...(sugarChip ? [sugarChip] : []), ...experimentChips];
+}
+
+/** Plot an experiment chart in the charts panel (opening it) and offer its rows' difference maps. */
+function showExperimentChart(c: ExperimentChart): void {
+  charts?.showExperiment(c, (simulationId) => {
+    void loadLatestActivity(activityLatest, () => loadWithBaseline(simulationId), (loaded) =>
+      showActivity(loaded, activityLegend(loaded.a.activeCount, loaded.a.nRows, null))).catch((e) =>
+      renderLegend(null, `could not open that run: ${(e as Error).message}`));
+  });
+  charts?.setOpen(true);
+  if (chartsChip) {
+    chartsChip.disabled = false;
+    chartsChip.classList.add("active");
+  }
+}
+
+/** The no-LLM experiment chips: the sugar -> MN9 dose-response sweep and the 8-candidate silencing screen. */
+async function runExperiment(path: "dose_response" | "screen", chip: HTMLButtonElement, label: string): Promise<void> {
+  if (simulating || !charts) return;
+  simulating = true;
+  for (const b of simChips()) b.disabled = true;
+  latest.invalidate();
+  const started = performance.now();
+  chip.textContent = `${label} · starting`;
+  let finished = false; // a poll still in flight must not overwrite the final legend
+  const poll = async () => {
+    if (finished) return;
+    try {
+      const res = await fetch("/api/experiments/progress");
+      const p = res.ok ? await res.json() : null;
+      const prog = p && p.running ? parseProgress(p) : null;
+      if (finished) return;
+      const secs = Math.floor((performance.now() - started) / 1000);
+      if (prog) chip.textContent = formatExperimentProgress(prog);
+      renderLegend(null, `${prog ? formatExperimentProgress(prog) : `${label} · starting`} · ${secs} s · model run on the whole brain`);
+    } catch {
+      /* the next tick tries again */
+    }
+  };
+  void poll();
+  const tick = window.setInterval(() => void poll(), 1000);
+  try {
+    const res = await fetch(`/api/experiments/${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(EXPERIMENT_BODY),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(typeof body.detail === "string" ? body.detail : `HTTP ${res.status}`);
+    const chart = parseChart(body.chart);
+    if (typeof chart === "string") throw new Error(`unexpected chart: ${chart}`);
+    showExperimentChart(chart);
+    renderLegend(null, `${label} done · ${body.runtime_s} s · ${chart.kind === "screen" ? `${body.significant_count} of ${body.candidates} significant after correction` : body.ec50_hz === null ? "no half-max rate" : `EC50 ${body.ec50_hz} Hz`}`);
+  } catch (e) {
+    renderLegend(null, `${label} failed: ${(e as Error).message}`);
+  } finally {
+    finished = true;
+    window.clearInterval(tick);
+    chip.textContent = label;
+    simulating = false;
+    for (const b of simChips()) b.disabled = health?.simulation === false;
   }
 }
 
@@ -166,6 +238,18 @@ function setupChips(): void {
   sugar.addEventListener("click", () => void giveSugar());
   sugarChip = sugar;
   $("chips").appendChild(sugar);
+  for (const [path, label, title] of [
+    ["dose_response", "dose", "sweep the sugar neurons from 10 to 200 Hz and plot MN9's response (dose-response curve, 3 trials per rate, ~20 s)"],
+    ["screen", "screen", "silence the 8 busiest non-sensory neurons one at a time and rank their effect on MN9 (3 trials each, ~40 s)"],
+  ] as const) {
+    const b = document.createElement("button");
+    b.className = "chip";
+    b.textContent = label;
+    b.title = title;
+    b.addEventListener("click", () => void runExperiment(path, b, label));
+    experimentChips.push(b);
+    $("chips").appendChild(b);
+  }
   for (const chip of CHIPS) {
     const b = document.createElement("button");
     b.className = "chip";
@@ -303,6 +387,7 @@ async function boot(): Promise<void> {
       await loadLatestActivity(activityLatest, () => loadWithBaseline(a.simulationId), (loaded) =>
         showActivity(loaded, activityLegend(loaded.a.activeCount, loaded.a.nRows, null)));
     },
+    onChart: showExperimentChart,
     getPointCount: () => pointCount,
     onModelChange: (id) => {
       selectedModel = id;
@@ -317,9 +402,11 @@ async function boot(): Promise<void> {
   void loadModels().then((list) => chat.setModels(list));
   void loadHealth().then(() => {
     renderStatus(chat.model);
-    if (sugarChip && health?.simulation === false) {
-      sugarChip.disabled = true;
-      sugarChip.title = "the simulator is not set up on this server (run flybrain-build-sim-weights)";
+    if (health?.simulation === false) {
+      for (const b of simChips()) {
+        b.disabled = true;
+        b.title = "the simulator is not set up on this server (run flybrain-build-sim-weights)";
+      }
     }
   });
   try {

@@ -165,6 +165,18 @@ body.has-activity #key { bottom: 264px; }
 .ch-dot { fill: var(--fg); stroke: #000; stroke-width: 2; pointer-events: none; }
 .ch-dot.dashed { fill: #000; stroke: var(--fg); }
 .ch-hover { fill: none; stroke: var(--fg); stroke-width: 1; pointer-events: none; }
+.ch-band { fill: var(--fg); fill-opacity: .14; stroke: none; }
+.ch-whisker { stroke: var(--fg); stroke-width: 1.5; }
+.ch-ec50 { stroke: var(--fg); stroke-width: 1; stroke-dasharray: 3 4; stroke-opacity: .8; }
+.ch-mark.filled { fill: var(--fg); stroke: #000; stroke-width: 2; }
+.ch-mark.hollow { fill: #000; stroke: var(--fg); stroke-width: 2; }
+.ch-rowhit { fill: transparent; }
+.ch-row { cursor: pointer; outline: none; }
+.ch-row:hover .ch-rowhit, .ch-row:focus-visible .ch-rowhit { fill: rgba(255, 255, 255, .08); }
+.ch-back { background: transparent; border: 0; padding: 0 0 6px; color: var(--muted); font: 400 12px var(--font-mono); cursor: pointer; }
+.ch-back:hover { color: var(--fg); }
+.ch-back[hidden] { display: none; }
+#charts [hidden] { display: none; }
 .ch-note { margin: 4px 0 0; color: var(--dim); }
 .ch-legend { display: flex; gap: 16px; margin-bottom: 4px; color: var(--text); }
 .ch-legend span { display: inline-flex; align-items: center; gap: 6px; }

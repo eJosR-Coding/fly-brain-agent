@@ -25,6 +25,8 @@ function recorder() {
     onHighlight: (p) => log.push(`hl:${p.total}`),
     onPath: (p) => log.push(`path:${p.rows.join(">")}:${p.bottleneck}`),
     onActivity: (a) => log.push(`activity:${a.simulationId}:${a.nBins}x${a.binMs}`),
+    onChart: (c) => log.push(`chart:${c.kind}:${c.id}`),
+    onProgress: (p) => log.push(`progress:${p.experiment}:${p.done}/${p.total}`),
     onUsage: (u) => log.push(`usage:${u.calls}:${u.inputTokens}:${u.outputTokens}:${u.totalTokens}`),
     onAnswer: (t) => log.push(`answer:${t}`),
     onError: (m) => log.push(`error:${m}`),
@@ -163,6 +165,26 @@ describe("streamChat activity events", () => {
   });
 });
 
+
+describe("streamChat experiment events", () => {
+  it("dispatches progress and chart events and rejects malformed ones", async () => {
+    const chart = '{"kind":"dose_response","id":"chart_1","points":[{"rate_hz":10,"mean_hz":1,"ci_low":0,"ci_high":2}]}';
+    const f = (async () =>
+      sseResponse([
+        'event: progress\ndata: {"experiment":"silencing_screen","done":3,"total":8}\n\n',
+        'event: progress\ndata: {"experiment":"silencing_screen","done":9,"total":8}\n\n',
+        `event: chart\ndata: ${chart}\n\n`,
+        'event: chart\ndata: {"kind":"pie"}\n\nevent: done\ndata: {}\n\n',
+      ])) as unknown as typeof fetch;
+    const { log, h } = recorder();
+    await streamChat("x", null, h, f);
+    expect(log[0]).toBe("progress:silencing_screen:3/8");
+    expect(log[1]).toBe("chart:dose_response:chart_1");
+    expect(log[2]).toMatch(/^error:ignored an invalid chart event: unknown chart kind/);
+    expect(log.length).toBe(4);
+    expect(log.at(-1)).toBe("done");
+  });
+});
 
 describe("streamChat model choice and live events", () => {
   it("posts the chosen model only when there is one", async () => {
