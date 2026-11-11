@@ -122,6 +122,12 @@ button, input { font-family: inherit; }
 #tl-modes .chip[aria-pressed="true"] { background: var(--fg); color: #000; border-color: var(--fg); position: relative; }
 #tl-scale { display: flex; flex-direction: column; gap: 4px; width: 220px; }
 #tl-scale[hidden] { display: none; }
+.diff-key { display: flex; gap: 14px; color: var(--text); }
+.k-item { display: inline-flex; align-items: center; gap: 6px; }
+.k-item i { display: inline-block; width: 10px; height: 10px; box-sizing: border-box; font-style: normal; line-height: 10px; text-align: center; }
+.k-ring { border: 1.5px solid var(--fg); border-radius: 50%; }
+.k-dot { background: var(--fg); border-radius: 50%; }
+.k-cross { color: var(--dim); font-size: 14px; }
 .scale-cap { color: var(--muted); }
 .scale-bar { height: 8px; border: 1px solid var(--line); border-radius: 1px; }
 .scale-ticks { display: flex; justify-content: space-between; color: var(--text); font-variant-numeric: tabular-nums; }

@@ -63,9 +63,12 @@ function renderActivityLegend(text: string): void {
   $("legend-selected").classList.add("on");
 }
 
-function showActivity(a: Activity, text: string): void {
+/** Show a recording; a silenced run also fetches its baseline so the difference map is available. */
+async function showActivity(a: Activity, text: string): Promise<void> {
   waveLegend = text;
-  player?.load(a);
+  let baseline: Activity | null = null;
+  if (a.compareId) baseline = await loadActivity(a.compareId).catch(() => null); // expired baseline: just no diff mode
+  player?.load(a, baseline);
   setActiveChip(null);
   renderActivityLegend(text);
 }
@@ -91,7 +94,7 @@ async function giveSugar(): Promise<void> {
     const sim = parseSimulation(body);
     if (typeof sim === "string") throw new Error(`unexpected simulation answer: ${sim}`);
     const activity = await loadActivity(sim.simulationId);
-    showActivity(activity, activityLegend(sim.active, activity.nRows, sim.readoutHz === null ? null : { label: "MN9", hz: sim.readoutHz }));
+    await showActivity(activity, activityLegend(sim.active, activity.nRows, sim.readoutHz === null ? null : { label: "MN9", hz: sim.readoutHz }));
     setActiveChip("give sugar");
   } catch (e) {
     renderLegend(null, `simulation failed: ${(e as Error).message}`);
@@ -276,7 +279,7 @@ async function boot(): Promise<void> {
     },
     onActivity: async (a) => {
       const activity = await loadActivity(a.simulationId);
-      showActivity(activity, activityLegend(activity.activeCount, activity.nRows, null));
+      await showActivity(activity, activityLegend(activity.activeCount, activity.nRows, null));
     },
     getPointCount: () => pointCount,
     onModelChange: (id) => {

@@ -9,7 +9,7 @@ import { buildRegionColors, regionPalette, hexToRgb, type Regions } from "./regi
 import { createOrbitGate, orbitDefault } from "./orbit";
 import { ntPalette, ntWeights, type Transmitters } from "./transmitters";
 import { pickNearest, pickThreshold } from "./inspect";
-import { dotTexture, ringTexture } from "./textures";
+import { crossSprite, dotTexture, ringSprite, ringTexture } from "./textures";
 import { createPathLayer } from "./pathLayer";
 import type { PathPayload } from "./path";
 
@@ -20,6 +20,8 @@ export interface BrainScene {
   setActivity(rows: Uint32Array | null): void;
   /** Per-row brightness (0..1, aligned with the rows given to setActivity) for the current frame. */
   setActivityFrame(values: Float32Array): void;
+  /** Sprite per activity row (0 dot, 1 ring, 2 cross; see diff.ts SHAPE); null goes back to all dots. */
+  setActivityShapes(shapes: Float32Array | null): void;
   /** Color the base points by region tone or by neurotransmitter tier. Ignored when that layer is unavailable. */
   setColorMode(mode: "regions" | "transmitters"): void;
   /** True when the transmitter layer loaded. */
@@ -168,32 +170,46 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
   const actGeometry = new THREE.BufferGeometry();
   actGeometry.setAttribute("position", positions);
   actGeometry.setAttribute("aBright", brightAttr);
+  const shapeAttr = new THREE.BufferAttribute(new Float32Array(count), 1);
+  shapeAttr.setUsage(THREE.DynamicDrawUsage);
+  actGeometry.setAttribute("aShape", shapeAttr);
   actGeometry.setIndex(actIndex);
   actGeometry.setDrawRange(0, 0);
   const glow = dotTexture(true);
+  const ringMap = ringSprite();
+  const crossMap = crossSprite();
   const actMaterial = new THREE.ShaderMaterial({
     uniforms: {
       uMap: { value: glow },
+      uRing: { value: ringMap },
+      uCross: { value: crossMap },
       uSize: { value: baseSize * theme.activitySizeScale },
       uScale: { value: 1 },
       uOpacity: { value: theme.activityOpacity },
     },
     vertexShader: `
       attribute float aBright;
+      attribute float aShape;
       uniform float uSize, uScale;
       varying float vB;
+      varying float vShape;
       void main() {
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
         vB = aBright;
-        gl_PointSize = max(uSize * uScale * (0.45 + 0.9 * aBright) / max(-mv.z, 1e-4), 1.0);
+        vShape = aShape;
+        // rings and crosses need a few pixels to stay legible
+        gl_PointSize = max(uSize * uScale * (0.45 + 0.9 * aBright) / max(-mv.z, 1e-4), aShape > 0.5 ? 8.0 : 1.0);
         gl_Position = projectionMatrix * mv;
       }`,
     fragmentShader: `
-      uniform sampler2D uMap;
+      uniform sampler2D uMap, uRing, uCross;
       uniform float uOpacity;
       varying float vB;
+      varying float vShape;
       void main() {
-        float a = texture2D(uMap, gl_PointCoord).a * vB * uOpacity;
+        float tex = vShape < 0.5 ? texture2D(uMap, gl_PointCoord).a
+          : (vShape < 1.5 ? texture2D(uRing, gl_PointCoord).a : texture2D(uCross, gl_PointCoord).a);
+        float a = tex * vB * uOpacity;
         if (a < 0.01) discard;
         gl_FragColor = vec4(vec3(1.0), a);
         #include <colorspace_fragment>
@@ -371,6 +387,8 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
     },
     setActivity(rows) {
       brightness.fill(0);
+      shapeAttr.array.fill(0);
+      shapeAttr.needsUpdate = true;
       const n = rows ? Math.min(rows.length, count) : 0;
       if (rows) (actIndex.array as Uint32Array).set(rows.subarray(0, n));
       actGeometry.setDrawRange(0, n);
@@ -382,6 +400,13 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
       const rows = actIndex.array as Uint32Array;
       scatterBrightness(brightness, rows.subarray(0, actGeometry.drawRange.count), values);
       brightAttr.needsUpdate = true;
+    },
+    setActivityShapes(shapes) {
+      const rows = actIndex.array as Uint32Array;
+      const n = actGeometry.drawRange.count;
+      shapeAttr.array.fill(0);
+      if (shapes) scatterBrightness(shapeAttr.array as Float32Array, rows.subarray(0, n), shapes);
+      shapeAttr.needsUpdate = true;
     },
     setColorMode(mode) {
       const useNt = mode === "transmitters" && ntColors !== null && ntSizes !== null;
@@ -415,6 +440,8 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
       actGeometry.dispose();
       actMaterial.dispose();
       glow.dispose();
+      ringMap.dispose();
+      crossMap.dispose();
       baseMaterial.dispose();
       dot.dispose();
       hlMaterial.dispose();

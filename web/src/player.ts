@@ -3,13 +3,14 @@ import {
   binAt, createPlayback, fillBrightness, formatTime, playLabel, scrub, summedBrightness, tick, togglePlay,
   type Activity, type Playback,
 } from "./activity";
+import { computeDiff, diffBrightness, diffLegend, diffShapes, meanHz, type Diff } from "./diff";
 import { fillLatency, latencyGradientStops, latencyTicks } from "./latency";
 import { fallbackMode, modesFor, type ViewMode } from "./modes";
 import type { BrainScene } from "./scene";
 
 export interface Player {
   /** Show a recording: animate it, or draw it as one still frame when motion is reduced. */
-  load(a: Activity): void;
+  load(a: Activity, baseline?: Activity | null): void;
   /** Switch between the wave and the static maps (latency). */
   setMode(mode: ViewMode): void;
   readonly mode: ViewMode;
@@ -36,8 +37,12 @@ export function createPlayer({ scene, root, reducedMotion, speed, onTime, onMode
   const scaleEl = root.querySelector<HTMLElement>("#tl-scale")!;
   let mode: ViewMode = "wave";
   let activity: Activity | null = null;
+  let diff: Diff | null = null;
+  let diffValues = new Float32Array(0);
+  let diffReadout: { label: string; before: number; after: number } | null = null;
   let pb: Playback | null = null;
   let values = new Float32Array(0);
+  let shapeValues = new Float32Array(0);
   let raf = 0;
   let last = 0;
 
@@ -87,7 +92,7 @@ export function createPlayer({ scene, root, reducedMotion, speed, onTime, onMode
   };
 
   const renderModes = (a: Activity) => {
-    const hasCompare = false; // the difference map joins in with its own commit
+    const hasCompare = diff !== null;
     modesEl.replaceChildren(
       ...modesFor(hasCompare).map((m) => {
         const b = document.createElement("button");
@@ -95,7 +100,9 @@ export function createPlayer({ scene, root, reducedMotion, speed, onTime, onMode
         b.className = "chip mode-btn";
         b.textContent = m;
         b.setAttribute("aria-pressed", String(m === mode));
-        b.title = m === "wave" ? "spikes over time" : "when each neuron fired first (static map)";
+        b.title = m === "wave" ? "spikes over time"
+          : m === "latency" ? "when each neuron fired first (static map)"
+          : "what the silencing lost (rings) and gained (dots) compared with the baseline run";
         b.addEventListener("click", () => api.setMode(m));
         return b;
       }),
@@ -103,15 +110,35 @@ export function createPlayer({ scene, root, reducedMotion, speed, onTime, onMode
     renderScale(a);
   };
 
+  const renderDiffKey = () => {
+    const item = (cls: string, text: string, glyph = "") => {
+      const el = document.createElement("span");
+      el.className = "k-item";
+      const mark = document.createElement("i");
+      mark.className = cls;
+      mark.textContent = glyph;
+      el.append(mark, text);
+      return el;
+    };
+    const key = document.createElement("div");
+    key.className = "diff-key";
+    key.append(item("k-ring", "lost"), item("k-dot", "gained"), item("k-cross", "silenced", "×"));
+    scaleEl.replaceChildren(key);
+  };
+
   const applyMode = () => {
     if (!activity) return;
     const wave = mode === "wave";
     root.classList.toggle("static", !wave);
-    scaleEl.hidden = mode !== "latency";
+    scaleEl.hidden = wave;
+    if (mode === "latency") renderScale(activity);
+    else if (mode === "diff") renderDiffKey();
     for (const b of modesEl.querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.textContent === mode));
     cancelAnimationFrame(raf);
     raf = 0;
     if (wave) {
+      scene.setActivity(activity.rows);
+      scene.setActivityShapes(null);
       if (reducedMotion || !pb) {
         summedBrightness(activity, values);
         scene.setActivityFrame(values);
@@ -123,8 +150,18 @@ export function createPlayer({ scene, root, reducedMotion, speed, onTime, onMode
       run();
       return;
     }
-    fillLatency(activity, values);
-    scene.setActivityFrame(values);
+    if (mode === "diff" && diff) {
+      scene.setActivity(diff.rows);
+      diffBrightness(diff, diffValues);
+      scene.setActivityFrame(diffValues);
+      diffShapes(diff, shapeValues);
+      scene.setActivityShapes(shapeValues);
+    } else {
+      scene.setActivity(activity.rows); // back from the diff: the recorded rows, all dots
+      fillLatency(activity, values);
+      scene.setActivityFrame(values);
+      scene.setActivityShapes(null);
+    }
     label.textContent = "";
     onTime?.(null);
   };
@@ -147,15 +184,33 @@ export function createPlayer({ scene, root, reducedMotion, speed, onTime, onMode
     },
     setMode(next) {
       if (!activity) return;
-      mode = fallbackMode(next, false);
+      mode = fallbackMode(next, diff !== null);
       applyMode();
-      onMode?.(mode, mode === "latency" ? `latency · ${activity.nRows.toLocaleString("en-US")} neurons spiked` : null);
+      onMode?.(
+        mode,
+        mode === "latency" ? `latency · ${activity.nRows.toLocaleString("en-US")} neurons spiked`
+          : mode === "diff" && diff ? diffLegend(diff.lost, diff.gained, diffReadout) : null,
+      );
     },
-    load(a) {
+    load(a, baseline = null) {
       cancelAnimationFrame(raf);
       raf = 0;
       activity = a;
       values = new Float32Array(a.nRows);
+      diff = null;
+      diffReadout = null;
+      if (baseline) {
+        try {
+          diff = computeDiff(baseline, a, a.silencedRows ?? []);
+          diffValues = new Float32Array(diff.rows.length);
+          shapeValues = new Float32Array(diff.rows.length);
+          if (a.readout && baseline.readout) {
+            diffReadout = { label: a.readout.label, before: meanHz(baseline.readout.hz), after: meanHz(a.readout.hz) };
+          }
+        } catch {
+          diff = null; // mismatched recordings: no difference map, the rest still works
+        }
+      }
       scene.setActivity(a.rows);
       root.hidden = false;
       document.body.classList.add("has-activity");
