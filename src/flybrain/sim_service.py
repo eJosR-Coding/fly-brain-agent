@@ -50,6 +50,7 @@ class ActivityRecord:
     duration_ms: float
     trials: int
     stimulus: dict
+    active_count: int | None = None  # neurons above ACTIVE_HZ (the number the stimulate summary reports)
 
     @property
     def n_bins(self) -> int:
@@ -104,7 +105,8 @@ class SimulationService:
         with self._run_lock:
             yield
 
-    def add(self, rows, frames, bin_ms: float, duration_ms: float, trials: int, stimulus: dict) -> str:
+    def add(self, rows, frames, bin_ms: float, duration_ms: float, trials: int, stimulus: dict,
+            active_count: int | None = None) -> str:
         with self._record_lock:
             while True:
                 sim_id = f"sim_{secrets.token_hex(3)}"
@@ -113,6 +115,7 @@ class SimulationService:
             self._records[sim_id] = ActivityRecord(
                 sim_id, np.asarray(rows, dtype="<u4"), np.asarray(frames, dtype=np.uint8),
                 float(bin_ms), float(duration_ms), int(trials), dict(stimulus),
+                None if active_count is None else int(active_count),
             )
             while len(self._records) > self.max_results:
                 self._expired.add(self._records.popitem(last=False)[0])

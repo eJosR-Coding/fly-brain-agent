@@ -32,7 +32,7 @@ from flybrain.atlas import RowIndex, load_atlas
 from flybrain.mcp_server import DEFAULT_ANNOTATIONS, build_server, load_connectome
 from flybrain.selections import SelectionStore, UnknownSelectionError
 from flybrain.sim_service import SimulationService, SimulationUnavailable, UnknownSimulationError
-from flybrain.tools import load_presets, preset_selection, search_neurons, stimulate
+from flybrain.tools import ACTIVE_HZ, load_presets, preset_selection, search_neurons, stimulate
 
 BYTES_PER_POINT = 12  # 3 x float32
 MAX_MESSAGE_CHARS = 2000
@@ -230,7 +230,8 @@ def create_app(
     def simulation_meta(simulation_id: str):
         rec = _record(simulation_id)
         return {"simulation_id": rec.id, "bin_ms": rec.bin_ms, "n_bins": rec.n_bins, "n_rows": rec.n_rows,
-                "duration_ms": rec.duration_ms, "stimulus": rec.stimulus, "trials": rec.trials}
+                "duration_ms": rec.duration_ms, "stimulus": rec.stimulus, "trials": rec.trials,
+                "active_count": rec.active_count, "active_hz": ACTIVE_HZ}
 
     @app.get("/simulations/{simulation_id}/frames")
     def simulation_frames(simulation_id: str):
@@ -327,7 +328,8 @@ def create_app(
             return None
         if rec is None:
             return None
-        return _sse("activity", {"simulation_id": rec.id, "n_bins": rec.n_bins, "bin_ms": rec.bin_ms})
+        return _sse("activity", {"simulation_id": rec.id, "n_bins": rec.n_bins, "bin_ms": rec.bin_ms,
+                                "active_count": rec.active_count, "active_hz": ACTIVE_HZ})
 
     @app.post("/chat", response_class=EventSourceResponse)
     async def chat(req: ChatRequest) -> AsyncIterable[ServerSentEvent]:
