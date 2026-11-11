@@ -248,8 +248,19 @@ def test_ordinary_tool_errors_still_go_back_to_the_model():
 
 def test_the_prompt_fixes_one_answer_layout_for_simulation_results():
     # same shape every time: verdict first, a small table, one caveat line, the runaway flag relayed
-    for phrase in ("first line", "markdown table", "at most 5 rows", "one short caveat line", "warning"):
+    for phrase in ("first line", "markdown table", "at most 5 rows", "one short caveat line", "warning",
+                   "no root ids"):
         assert phrase in SYSTEM_PROMPT
+
+
+def test_the_prompt_never_mentions_the_reply_language():
+    # live DeepSeek runs: "in the user's language" turned "Ilumina las neuronas..." into Portuguese and
+    # "(Spanish stays Spanish)" into Italian; with no language words it answered Spanish 3 of 3 times
+    assert "language" not in SYSTEM_PROMPT.lower() and "spanish" not in SYSTEM_PROMPT.lower()
+
+
+def test_the_prompt_forbids_side_by_side_tables():
+    assert "never two tables side by side" in SYSTEM_PROMPT
 
 
 def test_the_prompt_stays_small():
