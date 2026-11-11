@@ -3,7 +3,6 @@
 import pytest
 
 from flybrain.models import (
-    DEFAULT_EXTRA_MODELS,
     describe_models,
     parse_model_list,
     resolve_models,
@@ -24,11 +23,9 @@ def test_parse_model_list_rejects_malformed_ids(bad):
         parse_model_list(bad)
 
 
-def test_resolve_default_list_has_current_model_first_then_groq_defaults():
-    ids = resolve_models("google_genai:gemini-3.5-flash", None)
-    assert ids[0] == "google_genai:gemini-3.5-flash"
-    assert ids[1:] == DEFAULT_EXTRA_MODELS
-    assert all(m.startswith("groq:") for m in DEFAULT_EXTRA_MODELS)
+def test_resolve_default_list_is_the_default_then_the_given_catalog():
+    ids = resolve_models("google_genai:gemini-3.5-flash", None, ["groq:a", "google_genai:gemini-3.5-flash"])
+    assert ids == ["google_genai:gemini-3.5-flash", "groq:a"]
 
 
 def test_resolve_explicit_list_always_includes_the_default_first():

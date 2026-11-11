@@ -1,7 +1,7 @@
 """Provider errors become one readable line that names the model and the fix."""
 
 from flybrain.agent import friendly_model_error
-from flybrain.models import DEFAULT_EXTRA_MODELS
+from flybrain.models import CATALOG
 
 
 class NotFound(Exception):
@@ -29,9 +29,10 @@ def test_a_plain_404_about_something_else_is_not_mislabeled():
     assert friendly_model_error(NotFound("route /v1/foo not found"), "groq:x") is None
 
 
-def test_default_groq_models_are_the_ones_groq_still_serves():
-    # verified 2026-11-10 with the Groq models API on the user's key: the Llama 3 ids were gone
-    assert DEFAULT_EXTRA_MODELS == ["groq:openai/gpt-oss-120b", "groq:openai/gpt-oss-20b"]
+def test_catalog_has_no_retired_groq_llama_ids():
+    # verified 2026-11-10 with the Groq models API: the Llama 3 ids were gone
+    assert [m for m in CATALOG if m.startswith("groq:")] == [
+        "groq:openai/gpt-oss-120b", "groq:openai/gpt-oss-20b"]
 
 
 class TooLarge(Exception):
