@@ -14,8 +14,8 @@ from flybrain.experiments import MODEL_NOTE, _Progress, _r1
 from flybrain.selections import SelectionStore
 from flybrain.stats import ALPHA, compare, holm, summarize
 from flybrain.tools import (
-    ACTIVE_HZ, MAX_DURATION_MS, MAX_RATE_HZ, MAX_TRIALS, MIN_DURATION_MS, MIN_RATE_HZ, SENSORY_CLASSES, SIM_BINS,
-    SIM_NOTE, _clamp, _group_label, _int, _number, _readout_trace, _selection_rows, _text, _ticket,
+    ACTIVE_HZ, MAX_DURATION_MS, MAX_RATE_HZ, MAX_TRIALS, MIN_DURATION_MS, MIN_RATE_HZ, SIM_BINS,
+    SIM_NOTE, _clamp, _group_label, _int, _number, _readout_trace, _selection_rows, _text, _ticket, non_sensory_rows,
 )
 
 MAX_CANDIDATES = 12
@@ -27,9 +27,7 @@ def _candidates(atlas, store, mode, base, stim, readout, n, notes) -> np.ndarray
     """Candidate rows to silence, busiest in the baseline first, never the stimulus or the readout itself."""
     excluded = np.union1d(stim, readout)
     if mode == TOP_NON_SENSORY:
-        super_classes = atlas.neurons["super_class"].to_numpy()
-        pool = np.flatnonzero(base.rate_hz > ACTIVE_HZ)
-        pool = pool[~np.isin(super_classes[pool], SENSORY_CLASSES)]
+        pool = non_sensory_rows(atlas, np.flatnonzero(base.rate_hz > ACTIVE_HZ))
     elif isinstance(mode, str) and mode.startswith("sel_"):
         given = _selection_rows(atlas, store, mode)
         pool = given[base.rate_hz[given] > ACTIVE_HZ]

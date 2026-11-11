@@ -517,6 +517,13 @@ def _runaway_warning(lit: int, stimulated: int, total: int) -> str:
     )
 
 
+def non_sensory_rows(atlas: Atlas, rows) -> np.ndarray:
+    """The given atlas rows minus the sensory ones (the single definition both stimulate and the screen use)."""
+    rows = np.asarray(rows)
+    super_classes = atlas.neurons["super_class"].to_numpy()
+    return rows[~np.isin(super_classes[rows], SENSORY_CLASSES)]
+
+
 def stimulate(
     atlas: Atlas, store: SelectionStore, sims, selection_id, rate_hz=100, duration_ms=500, trials=None,
     silence_selection_id=None, readout_selection_id=None, seed: int = 0,
@@ -548,7 +555,7 @@ def stimulate(
     super_classes = atlas.neurons["super_class"].to_numpy()
     top = [{**item, "super_class": _text(super_classes[int(r)]), "rate_hz": round(float(rates[r]), 1)}
            for item, r in zip(_label(atlas, order), order)]
-    non_sensory = active[~np.isin(super_classes[active], SENSORY_CLASSES)]
+    non_sensory = non_sensory_rows(atlas, active)
     non_sensory = non_sensory[np.argsort(-rates[non_sensory], kind="stable")][:TOP_NON_SENSORY]
     top_non_sensory = [{**item, "super_class": _text(super_classes[int(r)]), "rate_hz": round(float(rates[r]), 1)}
                        for item, r in zip(_label(atlas, non_sensory), non_sensory)]

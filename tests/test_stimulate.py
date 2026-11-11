@@ -347,3 +347,9 @@ def test_a_silenced_run_warns_when_either_side_ran_away(tiny_atlas, store, sims,
     out = tools.stimulate(tiny_atlas, store, sims, stim, rate_hz=300, duration_ms=200, trials=2,
                           silence_selection_id=silence)
     assert "warning" in out
+
+
+def test_non_sensory_rows_drops_only_sensory_neurons(tiny_atlas):
+    # rows 0..59 PEN_a (central), 60 EPG (central), 61 T4a (optic), 62 ORN_DA1 (sensory)
+    assert tools.non_sensory_rows(tiny_atlas, np.array([0, 61, 62])).tolist() == [0, 61]
+    assert tools.non_sensory_rows(tiny_atlas, np.array([], dtype=int)).tolist() == []

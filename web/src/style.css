@@ -361,7 +361,8 @@ body.has-charts #key { display: none; }
 }
 
 @media (max-width: 720px) {
-  #stage { inset: 0 0 45vh 0; }
+  /* the brain is centered in the stage; ending it 120px higher keeps the SELECTION line clear of the point cloud */
+  #stage { inset: 0 0 calc(45vh + 120px) 0; }
   #chat { top: auto; width: auto; left: 0; height: 45vh; border-left: 0; border-top: 1px solid var(--line); }
   #status { display: none; }
   #legend { bottom: calc(45vh + 164px); left: 16px; }
