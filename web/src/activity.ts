@@ -12,7 +12,17 @@ export interface Activity {
   peak: number;
   /** neurons above 1 Hz mean rate (as the stimulate tool reports), when the backend sent it; the rows are every neuron that spiked at all */
   activeCount: number | null;
+  /** trials summed into `counts` (spikes per trial per second = count / trials / seconds) */
+  trials: number;
+  /** silenced runs: the id of the baseline recording to compare with */
+  compareId: string | null;
+  /** silenced runs: atlas rows whose outgoing synapses were silenced */
+  silencedRows: number[] | null;
+  /** readout group (e.g. MN9): its mean rate per time bin, in Hz */
+  readout: Readout | null;
 }
+
+export interface Readout { label: string; neurons: number; hz: number[] }
 
 /** Decode `GET /simulations/{id}/frames`: nRows uint32 LE row indices, then nRows * nBins uint8 counts. */
 export function decodeFrames(buffer: ArrayBuffer, nRows: number, nBins: number, binMs: number): Activity {
@@ -29,7 +39,8 @@ export function decodeFrames(buffer: ArrayBuffer, nRows: number, nBins: number, 
   const counts = new Uint8Array(buffer.slice(nRows * 4));
   let peak = 1;
   for (let i = 0; i < counts.length; i++) if (counts[i] > peak) peak = counts[i];
-  return { rows, counts, nRows, nBins, binMs, durationMs: nBins * binMs, peak, activeCount: null };
+  return { rows, counts, nRows, nBins, binMs, durationMs: nBins * binMs, peak, activeCount: null,
+    trials: 1, compareId: null, silencedRows: null, readout: null };
 }
 
 const TRAIL_DECAY = 0.6; // each bin after a spike keeps this share of the brightness
@@ -168,6 +179,8 @@ export interface ActivityEvent {
   binMs: number;
   /** neurons above 1 Hz, when the backend sends it */
   activeCount: number | null;
+  /** silenced runs: the baseline recording's id */
+  compareId: string | null;
 }
 
 /** Check the payload of the SSE `activity` event. */
@@ -176,7 +189,8 @@ export function parseActivityEvent(d: Record<string, unknown>): ActivityEvent | 
   if (typeof d.n_bins !== "number" || !Number.isInteger(d.n_bins) || d.n_bins < 1) return "n_bins is not a positive integer";
   if (typeof d.bin_ms !== "number" || !(d.bin_ms > 0)) return "bin_ms is not positive";
   const ac = typeof d.active_count === "number" && Number.isInteger(d.active_count) && d.active_count >= 0 ? d.active_count : null;
-  return { simulationId: d.simulation_id, nBins: d.n_bins, binMs: d.bin_ms, activeCount: ac };
+  const cmp = typeof d.compare_id === "string" && d.compare_id ? d.compare_id : null;
+  return { simulationId: d.simulation_id, nBins: d.n_bins, binMs: d.bin_ms, activeCount: ac, compareId: cmp };
 }
 
 async function ok(res: Response, what: string): Promise<Response> {
@@ -197,5 +211,19 @@ export async function loadActivity(id: string, fetchFn: typeof fetch = fetch, ba
   const buf = await (await ok(await fetchFn(`${base}/simulations/${id}/frames`), "simulation frames")).arrayBuffer();
   const a = decodeFrames(buf, meta.n_rows, meta.n_bins, meta.bin_ms);
   const ac = meta.active_count;
-  return { ...a, activeCount: typeof ac === "number" && Number.isInteger(ac) && ac >= 0 ? ac : null };
+  return { ...a, activeCount: typeof ac === "number" && Number.isInteger(ac) && ac >= 0 ? ac : null, ...parseComparison(meta) };
+}
+
+/** The optional comparison fields of a simulation meta; anything malformed is dropped, never fatal. */
+export function parseComparison(meta: Record<string, unknown>): Pick<Activity, "trials" | "compareId" | "silencedRows" | "readout"> {
+  const trials = typeof meta.trials === "number" && Number.isInteger(meta.trials) && meta.trials >= 1 ? meta.trials : 1;
+  const compareId = typeof meta.compare_id === "string" && meta.compare_id ? meta.compare_id : null;
+  const rows = meta.silenced_rows;
+  const silencedRows = Array.isArray(rows) && rows.every((r) => typeof r === "number" && Number.isInteger(r) && r >= 0) ? (rows as number[]) : null;
+  const ro = meta.readout as Record<string, unknown> | null | undefined;
+  const hz = ro && Array.isArray(ro.hz) && ro.hz.every((v) => typeof v === "number" && Number.isFinite(v)) ? (ro.hz as number[]) : null;
+  const readout = ro && hz && typeof ro.label === "string"
+    ? { label: ro.label, neurons: typeof ro.neurons === "number" ? ro.neurons : 0, hz }
+    : null;
+  return { trials, compareId, silencedRows, readout };
 }

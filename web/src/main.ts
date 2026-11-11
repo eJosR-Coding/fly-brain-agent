@@ -37,6 +37,7 @@ let selectedModel: string | null = null;
 let player: Player | null = null;
 let simulating = false;
 let sugarChip: HTMLButtonElement | null = null;
+let waveLegend = ""; // the legend line of the wave mode (restored when switching back to it)
 let pathShown = false; // cables are on screen (the legend shows their summary)
 /** Shared by chips and chat: whichever selection was requested last wins. */
 const latest = new Latest();
@@ -49,6 +50,7 @@ export function highlight(indices: ArrayLike<number>): void {
 }
 
 export function clearAll(): void {
+  waveLegend = "";
   brainScene?.setHighlight(null);
   brainScene?.setPath(null);
   pathShown = false;
@@ -62,6 +64,7 @@ function renderActivityLegend(text: string): void {
 }
 
 function showActivity(a: Activity, text: string): void {
+  waveLegend = text;
   player?.load(a);
   setActiveChip(null);
   renderActivityLegend(text);
@@ -312,6 +315,10 @@ async function boot(): Promise<void> {
       root: $("timeline"),
       reducedMotion: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true,
       speed: theme.playbackSpeed,
+      onMode: (_mode, legend) => {
+        if (legend !== null) renderActivityLegend(legend);
+        else if (waveLegend) renderActivityLegend(waveLegend);
+      },
     });
     mountInspector({
       stage: $("stage"),
