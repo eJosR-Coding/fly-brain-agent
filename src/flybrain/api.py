@@ -39,6 +39,7 @@ BYTES_PER_POINT = 12  # 3 x float32
 MAX_MESSAGE_CHARS = 2000
 MAX_INLINE_INDICES = 5000  # bigger highlights are fetched as binary instead of inlined
 TURN_TIMEOUT_S = 90.0  # provider SDKs can retry 503s for minutes; cap the whole chat turn
+NEURON_PARTNERS = 5  # top partners per direction on the neuron card
 MAX_ARG_CHARS = 100  # tool args in events are cut to keep events small
 DEFAULT_CORS = "http://localhost:5173"  # Vite dev server
 
@@ -363,6 +364,40 @@ def create_app(
         else:
             body["indices"] = _rows_for(sid)[0].tolist()
         return body
+
+    @app.get("/neurons/{row}")
+    def neuron_card(row: int):
+        """One neuron by atlas row (the index the viewer uses): identity, position and top partners."""
+        n = app.state.atlas.neurons
+        if not 0 <= row < len(n):
+            raise HTTPException(status_code=404, detail=f"no neuron at row {row}; rows run 0..{len(n) - 1}")
+        rec = n.iloc[row]
+
+        card = {
+            "row": row,
+            "root_id": str(int(rec["root_id"])),  # string: a root_id does not fit a JS number
+            "cell_type": text_at(row, "cell_type"), "cell_class": text_at(row, "cell_class"),
+            "super_class": text_at(row, "super_class"), "side": text_at(row, "side"),
+            "top_nt": text_at(row, "top_nt"),
+            "position_um": [float(rec["x_um"]), float(rec["y_um"]), float(rec["z_um"])],
+            "region": REGION_CODES[int(np.frombuffer(app.state.regions, dtype=np.uint8)[row])],
+        }
+        conn = app.state.connectome
+        card["partners"] = conn is not None
+        if conn is not None:
+            for key, direction in (("inputs", "in"), ("outputs", "out")):
+                rows, syn = conn.neighbors([row], direction)
+                card[key] = [
+                    {"row": int(r), "cell_type": text_at(int(r), "cell_type"), "super_class": text_at(int(r), "super_class"),
+                     "synapses": int(s)}
+                    for r, s in zip(rows[:NEURON_PARTNERS], syn[:NEURON_PARTNERS])
+                ]
+                card[f"synapses_{direction}"] = int(syn.sum())
+        return card
+
+    def text_at(r: int, field: str):
+        v = app.state.atlas.neurons[field].iat[r]
+        return None if v is None or v != v else str(v)
 
     def _highlight(content: str, seen: set[str]) -> ServerSentEvent | None:
         """A tool result carrying a selection_id becomes a highlight (once per ticket)."""
