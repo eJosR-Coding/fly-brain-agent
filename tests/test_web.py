@@ -44,3 +44,26 @@ def test_bad_turn_timeout_env_is_one_friendly_line(monkeypatch, capsys):
     assert web.main(["--model", "openai:x"]) == 1
     err = capsys.readouterr().err
     assert err.count("\n") == 1 and "FLYBRAIN_TURN_TIMEOUT" in err and "'abc'" in err
+
+
+def test_models_flag_and_env(monkeypatch):
+    monkeypatch.delenv("FLYBRAIN_MODELS", raising=False)
+    assert web.parse_args([]).models is None
+    assert web.parse_args(["--models", "groq:a, groq:b"]).models == "groq:a,groq:b"
+    monkeypatch.setenv("FLYBRAIN_MODELS", "groq:c")
+    assert web.parse_args([]).models == "groq:c"
+
+
+def test_bad_models_list_is_rejected():
+    with pytest.raises(SystemExit):
+        web.parse_args(["--models", "groq:a,nocolon"])
+
+
+def test_main_passes_the_resolved_registry_to_the_app(monkeypatch):
+    seen = {}
+    monkeypatch.setattr("langchain.chat_models.init_chat_model", lambda spec: object())
+    monkeypatch.setattr("flybrain.api.create_app", lambda **kw: seen.update(kw) or object())
+    monkeypatch.setattr("uvicorn.run", lambda *a, **k: None)
+    monkeypatch.delenv("FLYBRAIN_MODELS", raising=False)
+    assert web.main(["--model", "google_genai:g", "--models", "groq:a"]) == 0
+    assert seen["models"] == ["google_genai:g", "groq:a"]

@@ -74,3 +74,14 @@ describe("versionLine", () => {
     expect(versionLine(null)).toBe("FlyWire v783 · loading");
   });
 });
+
+
+describe("deriveStatus with a picked model", () => {
+  it("shows the selected model instead of the server default", () => {
+    expect(deriveStatus(ON, false, "groq:fast").model).toBe("model: groq:fast");
+  });
+  it("is unchanged without a selection or without chat", () => {
+    expect(deriveStatus(ON, false, null).model).toBe("model: google_genai:gemini-3.5-flash");
+    expect(deriveStatus(OFF, false, "groq:fast").model).toBe("model: none");
+  });
+});

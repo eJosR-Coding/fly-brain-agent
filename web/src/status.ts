@@ -38,9 +38,9 @@ export function parseHealth(d: unknown): Health | null {
  * Rows for the status block. The agent (LangGraph) and the in-process MCP server exist only when a chat
  * model is configured, so both follow `health.chat`. `streaming` is true while an SSE turn is running.
  */
-export function deriveStatus(health: Health | null, streaming: boolean): StatusView {
+export function deriveStatus(health: Health | null, streaming: boolean, selected: string | null = null): StatusView {
   const agent = health === null ? "unknown" : health.chat ? "OK" : "off";
-  const model = health === null ? "unknown" : !health.chat ? "none" : (health.model ?? "unknown");
+  const model = health === null ? "unknown" : !health.chat ? "none" : (selected ?? health.model ?? "unknown");
   return {
     rows: [
       { key: "LangGraph", value: agent },

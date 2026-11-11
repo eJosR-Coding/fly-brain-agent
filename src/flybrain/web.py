@@ -6,6 +6,14 @@ import sys
 
 from flybrain.agent import MAX_STEPS
 from flybrain.cli import DEFAULT_MODEL, _model_spec, _one_line, _positive_int, _unwrap
+from flybrain.models import parse_model_list, resolve_models
+
+
+def _model_list(value: str) -> str:
+    try:
+        return ",".join(parse_model_list(value))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
 
 
 def parse_args(argv):
@@ -19,6 +27,14 @@ def parse_args(argv):
         type=_model_spec,
         default=os.environ.get("FLYBRAIN_MODEL", DEFAULT_MODEL),
         help="provider:model (default: $FLYBRAIN_MODEL or %(default)s)",
+    )
+    parser.add_argument(
+        "--models",
+        type=_model_list,
+        default=os.environ.get("FLYBRAIN_MODELS") or None,
+        help="comma-separated provider:model ids offered in the picker "
+        "(default: $FLYBRAIN_MODELS, else --model plus Groq tool-calling models); "
+        "each is usable only if its provider API key is set",
     )
     parser.add_argument(
         "--max-steps",
@@ -47,7 +63,8 @@ def main(argv=None) -> int:
         )
         return 1
     try:
-        app = create_app(model=model, max_steps=args.max_steps, model_name=args.model)
+        app = create_app(model=model, max_steps=args.max_steps, model_name=args.model,
+                         models=resolve_models(args.model, args.models))
     except ValueError as exc:  # e.g. a bad FLYBRAIN_TURN_TIMEOUT
         print(f"flybrain-web: {_one_line(exc)}", file=sys.stderr)
         return 1

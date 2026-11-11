@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatThinking, formatToolCall, streamChat, type ChatHandlers } from "../src/chat";
+import { formatThinking, formatToolCall, streamChat, toolStatusText, type ChatHandlers } from "../src/chat";
 
 function sseResponse(chunks: string[], status = 200): Response {
   const enc = new TextEncoder();
@@ -16,7 +16,9 @@ function recorder() {
   const log: string[] = [];
   const h: ChatHandlers = {
     onMeta: (id) => log.push(`meta:${id}`),
-    onToolCall: (t) => log.push(`tool:${t}`),
+    onToolCall: (t, _a, id) => log.push(id ? `tool:${t}#${id}` : `tool:${t}`),
+    onToolResult: (id, ok, ms) => log.push(`result:${id}:${ok ? "ok" : "fail"}:${ms}`),
+    onAnswerDelta: (t) => log.push(`delta:${t}`),
     onHighlight: (p) => log.push(`hl:${p.total}`),
     onActivity: (a) => log.push(`activity:${a.simulationId}:${a.nBins}x${a.binMs}`),
     onAnswer: (t) => log.push(`answer:${t}`),
@@ -153,5 +155,58 @@ describe("streamChat activity events", () => {
     await streamChat("x", null, h, f);
     expect(log[0]).toMatch(/^error:ignored an invalid activity event: n_bins/);
     expect(log.at(-1)).toBe("done");
+  });
+});
+
+
+describe("streamChat model choice and live events", () => {
+  it("posts the chosen model only when there is one", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const f = (async (_u: string, init: RequestInit) => {
+      bodies.push(JSON.parse(init.body as string));
+      return sseResponse(["event: done\ndata: {}\n\n"]);
+    }) as unknown as typeof fetch;
+    await streamChat("a", null, recorder().h, f, "/api", () => null, "groq:fast");
+    await streamChat("b", null, recorder().h, f);
+    expect(bodies[0]).toEqual({ message: "a", model: "groq:fast" });
+    expect(bodies[1]).toEqual({ message: "b" });
+  });
+
+  it("dispatches tool ids, tool results and answer deltas", async () => {
+    const f = (async () =>
+      sseResponse([
+        'event: tool_call\ndata: {"id":"c1","tool":"search","args":{}}\n\n',
+        'event: tool_result\ndata: {"id":"c1","tool":"search","ok":true,"ms":1234}\n\n',
+        'event: tool_result\ndata: {"id":"c2","tool":"x","ok":false,"ms":5}\n\n',
+        'event: answer_delta\ndata: {"text":"Hel"}\n\nevent: answer_delta\ndata: {"text":"lo"}\n\n',
+        'event: answer\ndata: {"text":"Hello"}\n\nevent: done\ndata: {}\n\n',
+      ])) as unknown as typeof fetch;
+    const { log, h } = recorder();
+    await streamChat("x", null, h, f);
+    expect(log).toEqual([
+      "tool:search#c1", "result:c1:ok:1234", "result:c2:fail:5", "delta:Hel", "delta:lo", "answer:Hello", "done",
+    ]);
+  });
+
+  it("ignores malformed tool_result and answer_delta payloads", async () => {
+    const f = (async () =>
+      sseResponse([
+        'event: tool_result\ndata: {"id":3,"ok":"yes","ms":"x"}\n\nevent: answer_delta\ndata: {"text":5}\n\nevent: done\ndata: {}\n\n',
+      ])) as unknown as typeof fetch;
+    const { log, h } = recorder();
+    await streamChat("x", null, h, f);
+    expect(log).toEqual(["done"]);
+  });
+});
+
+describe("toolStatusText", () => {
+  it("counts whole seconds while running", () => {
+    expect(toolStatusText({ state: "running" }, 0)).toBe("running · 0 s");
+    expect(toolStatusText({ state: "running" }, 4900)).toBe("running · 4 s");
+    expect(toolStatusText({ state: "running" }, -5)).toBe("running · 0 s");
+  });
+  it("shows one decimal when done or failed", () => {
+    expect(toolStatusText({ state: "done", ms: 12800 }, 0)).toBe("done · 12.8 s");
+    expect(toolStatusText({ state: "failed", ms: 120 }, 0)).toBe("failed · 0.1 s");
   });
 });

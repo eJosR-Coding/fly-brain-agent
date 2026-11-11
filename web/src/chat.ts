@@ -1,5 +1,6 @@
 import { parseActivityEvent, type ActivityEvent } from "./activity";
 import { renderMarkdown } from "./markdown";
+import { loadStoredModel, optionLabel, pickModel, saveStoredModel, type ModelList } from "./models";
 import { parseSSE } from "./sse";
 
 export interface HighlightPayload {
@@ -11,7 +12,11 @@ export interface HighlightPayload {
 
 export interface ChatHandlers {
   onMeta(conversationId: string): void;
-  onToolCall(tool: string, args: unknown): void;
+  /** a tool started; `id` ties it to its later result (absent on older backends) */
+  onToolCall(tool: string, args: unknown, id?: string): void;
+  onToolResult?(id: string, ok: boolean, ms: number): void;
+  /** a chunk of the final answer; `onAnswer` still delivers the full text */
+  onAnswerDelta?(text: string): void;
   onHighlight(p: HighlightPayload): void;
   onActivity(a: ActivityEvent): void;
   onAnswer(text: string): void;
@@ -25,6 +30,14 @@ export function formatThinking(seconds: number): string {
   const s = Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 0;
   const base = `agent is thinking \u00b7 ${s} s`;
   return s >= 20 ? `${base} \u00b7 the model provider may be slow` : base;
+}
+
+export type ToolState = { state: "running" } | { state: "done" | "failed"; ms: number };
+
+/** Live text of a tool line: whole seconds while running, one decimal once finished. */
+export function toolStatusText(t: ToolState, runningMs: number): string {
+  if (t.state === "running") return `running \u00b7 ${Math.floor(Math.max(0, runningMs) / 1000)} s`;
+  return `${t.state} \u00b7 ${(t.ms / 1000).toFixed(1)} s`;
 }
 
 export function formatToolCall(tool: string, args: unknown): string {
@@ -67,6 +80,7 @@ export async function streamChat(
   fetchFn: typeof fetch = fetch,
   base = "/api",
   getPointCount: () => number | null = () => null,
+  model: string | null = null,
 ): Promise<void> {
   let finished = false;
   const finish = () => {
@@ -76,8 +90,9 @@ export async function streamChat(
     }
   };
   try {
-    const body: { message: string; conversation_id?: string } = { message };
+    const body: { message: string; conversation_id?: string; model?: string } = { message };
     if (conversationId) body.conversation_id = conversationId;
+    if (model) body.model = model;
     const res = await fetchFn(`${base}/chat`, {
       method: "POST",
       headers: { "content-type": "application/json", accept: "text/event-stream" },
@@ -93,7 +108,15 @@ export async function streamChat(
         case "meta":
           if (typeof d.conversation_id === "string" && d.conversation_id) h.onMeta(d.conversation_id);
           break;
-        case "tool_call": h.onToolCall(String(d.tool), d.args); break;
+        case "tool_call": h.onToolCall(String(d.tool), d.args, typeof d.id === "string" ? d.id : undefined); break;
+        case "tool_result":
+          if (typeof d.id === "string" && typeof d.ok === "boolean" && typeof d.ms === "number") {
+            h.onToolResult?.(d.id, d.ok, d.ms);
+          }
+          break;
+        case "answer_delta":
+          if (typeof d.text === "string" && d.text) h.onAnswerDelta?.(d.text);
+          break;
         case "highlight": {
           const p = parseHighlight(d, getPointCount());
           if (typeof p === "string") h.onError(`ignored an invalid highlight: ${p}`);
@@ -128,22 +151,56 @@ export interface ChatOptions {
   getPointCount?: () => number | null;
   /** true while an SSE turn is running */
   onStreaming?: (streaming: boolean) => void;
+  /** the picked model changed (also fires once models are loaded) */
+  onModelChange?: (id: string | null) => void;
 }
 
-/** DOM wiring for the chat panel. Returns the element that shows the model label. */
-export function mountChat(root: HTMLElement, opts: ChatOptions): { model: HTMLElement } {
-  const { onHighlight, onActivity = () => undefined, getPointCount = () => null, onStreaming = () => undefined } = opts;
+export interface ChatHandle {
+  /** read-only model label in the header */
+  model: HTMLElement;
+  /** fill the picker from GET /models (null: hide it) */
+  setModels(list: ModelList | null): void;
+  selected(): string | null;
+}
+
+const FOLLOW_SLACK_PX = 48; // within this of the bottom still counts as "following the stream"
+
+/** DOM wiring for the chat panel. */
+export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
+  const {
+    onHighlight, onActivity = () => undefined, getPointCount = () => null,
+    onStreaming = () => undefined, onModelChange = () => undefined,
+  } = opts;
   root.innerHTML =
     '<header id="chat-head"><span id="agent-label">agent</span><span id="model"></span></header>' +
     '<div id="log" role="log" aria-live="polite" aria-label="conversation"></div>' +
-    '<form id="form"><div id="field"><input id="input" autocomplete="off" aria-label="Ask about the fly brain" placeholder="Ask about the fly brain\u2026" />' +
+    '<form id="form"><div id="picker" hidden><label for="model-select">model</label>' +
+    '<select id="model-select" aria-label="Model for the next message"></select></div>' +
+    '<div id="field"><input id="input" autocomplete="off" aria-label="Ask about the fly brain" placeholder="Ask about the fly brain\u2026" />' +
     '<button id="send" type="submit" aria-label="send"><svg viewBox="0 0 13 13" width="15" height="15" aria-hidden="true">' +
     `<path d="${ARROW_UP}" fill="currentColor"/></svg></button></div></form>`;
   const log = root.querySelector<HTMLElement>("#log")!;
   const form = root.querySelector<HTMLFormElement>("#form")!;
   const input = root.querySelector<HTMLInputElement>("#input")!;
   const send = root.querySelector<HTMLButtonElement>("#send")!;
+  const picker = root.querySelector<HTMLElement>("#picker")!;
+  const select = root.querySelector<HTMLSelectElement>("#model-select")!;
   let conversationId: string | null = null;
+  let chosen: string | null = null;
+  let following = true; // keep the log pinned to the bottom unless the user scrolled up
+
+  log.addEventListener("scroll", () => {
+    following = log.scrollHeight - log.scrollTop - log.clientHeight <= FOLLOW_SLACK_PX;
+  });
+  const follow = () => {
+    if (following) log.scrollTop = log.scrollHeight;
+  };
+
+  select.addEventListener("change", () => {
+    chosen = select.value || null;
+    if (chosen) saveStoredModel(chosen);
+    onModelChange(chosen);
+  });
 
   const hint = document.createElement("button");
   hint.type = "button";
@@ -161,8 +218,41 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): { model: HTMLEl
     el.className = `msg ${cls}`;
     el.textContent = text;
     log.appendChild(el);
-    log.scrollTop = log.scrollHeight;
+    follow();
     return el;
+  };
+
+  // live tool lines: running (pulsing dot, counting up) -> done / failed
+  interface Tool { el: HTMLElement; stat: HTMLElement; t0: number; finished: boolean }
+  const tools = new Map<string, Tool>();
+  let anon = 0;
+  const tickTools = () => {
+    const now = performance.now();
+    for (const t of tools.values()) if (!t.finished) t.stat.textContent = toolStatusText({ state: "running" }, now - t.t0);
+  };
+  const finishTool = (t: Tool, state: "done" | "failed", ms: number) => {
+    t.finished = true;
+    t.el.dataset.state = state;
+    t.stat.textContent = toolStatusText({ state, ms }, 0);
+  };
+
+  // streamed answer: plain deltas re-rendered with the safe markdown renderer, once per frame
+  let streamEl: HTMLElement | null = null;
+  let streamText = "";
+  let frame = 0;
+  const paintStream = () => {
+    frame = 0;
+    if (streamEl) {
+      streamEl.replaceChildren(renderMarkdown(streamText));
+      follow();
+    }
+  };
+  const dropStream = () => {
+    if (frame) cancelAnimationFrame(frame);
+    frame = 0;
+    streamEl?.remove();
+    streamEl = null;
+    streamText = "";
   };
 
   form.addEventListener("submit", (e) => {
@@ -171,30 +261,42 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): { model: HTMLEl
     if (!text) return;
     input.value = "";
     input.disabled = send.disabled = true;
+    following = true;
     add("user", text);
     onStreaming(true);
-    // pending indicator: visible until the first real event, so a slow provider never looks dead
+    // pending indicator: visible at once, until the first real event, so a slow provider never looks dead
     const started = performance.now();
     let thinking: HTMLElement | null = add("thinking", formatThinking(0));
     const tick = window.setInterval(() => {
       if (thinking) thinking.textContent = formatThinking((performance.now() - started) / 1000);
+      tickTools();
     }, 1000);
     const settle = () => {
-      window.clearInterval(tick);
       thinking?.remove();
       thinking = null;
     };
     void streamChat(text, conversationId, {
       onMeta: (id) => { conversationId = id; },
-      onToolCall: (tool, args) => {
+      onToolCall: (tool, args, id) => {
         settle();
+        dropStream(); // text before a tool call was a preamble, not the answer
         const el = add("tool", "");
-        const arrow = document.createElement("span");
-        arrow.className = "arrow";
-        arrow.textContent = "\u2192";
+        el.dataset.state = "running";
+        const dot = document.createElement("span");
+        dot.className = "dot";
+        dot.setAttribute("aria-hidden", "true");
         const call = document.createElement("span");
+        call.className = "call";
         call.textContent = formatToolCall(tool, args);
-        el.append(arrow, call);
+        const stat = document.createElement("span");
+        stat.className = "tstat";
+        stat.textContent = toolStatusText({ state: "running" }, 0);
+        el.append(dot, call, stat);
+        tools.set(id ?? `anon-${anon++}`, { el, stat, t0: performance.now(), finished: false });
+      },
+      onToolResult: (id, ok, ms) => {
+        const t = tools.get(id);
+        if (t && !t.finished) finishTool(t, ok ? "done" : "failed", ms);
       },
       onHighlight: (p) => {
         settle();
@@ -218,15 +320,60 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): { model: HTMLEl
         el.append(wave, sel);
         void Promise.resolve(onActivity(a)).catch((err) => add("error", `activity failed: ${(err as Error).message}`));
       },
-      onAnswer: (t) => { settle(); add("answer", "").append(renderMarkdown(t)); },
+      onAnswerDelta: (t) => {
+        settle();
+        if (!streamEl) streamEl = add("answer", "");
+        streamText += t;
+        if (!frame) frame = requestAnimationFrame(paintStream);
+      },
+      onAnswer: (t) => {
+        settle();
+        const el = streamEl ?? add("answer", "");
+        if (frame) cancelAnimationFrame(frame);
+        frame = 0;
+        streamEl = null;
+        streamText = "";
+        el.replaceChildren(renderMarkdown(t));
+        follow();
+      },
       onError: (m) => { settle(); add("error", m); },
       onDone: () => {
+        window.clearInterval(tick);
         settle();
+        if (streamEl) paintStream(); // an interrupted stream keeps what arrived
+        streamEl = null;
+        for (const t of tools.values()) if (!t.finished) { t.finished = true; t.el.dataset.state = "ended"; t.stat.textContent = ""; }
+        tools.clear();
         input.disabled = send.disabled = false;
         onStreaming(false);
         input.focus();
       },
-    }, fetch, "/api", getPointCount);
+    }, fetch, "/api", getPointCount, chosen);
   });
-  return { model: root.querySelector<HTMLElement>("#model")! };
+
+  return {
+    model: root.querySelector<HTMLElement>("#model")!,
+    selected: () => chosen,
+    setModels(list) {
+      select.replaceChildren();
+      if (list === null || list.models.length === 0) {
+        picker.hidden = true;
+        chosen = null;
+        onModelChange(null);
+        return;
+      }
+      for (const m of list.models) {
+        const o = document.createElement("option");
+        o.value = m.id;
+        o.textContent = optionLabel(m);
+        o.disabled = !m.available;
+        if (m.reason) o.title = m.reason;
+        select.appendChild(o);
+      }
+      chosen = pickModel(list, loadStoredModel());
+      if (chosen) select.value = chosen;
+      picker.hidden = false;
+      onModelChange(chosen);
+    },
+  };
 }

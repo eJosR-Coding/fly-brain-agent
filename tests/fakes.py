@@ -8,6 +8,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 class FnModel(GenericFakeChatModel):
     reply: object = None
     seen: list = []
+    disable_streaming: bool = True  # plain one-shot replies, like a provider that does not stream
 
     def bind_tools(self, tools, **kwargs):
         return self
