@@ -115,3 +115,56 @@ def test_empty_reply_is_reported():
     graph = build_graph(fn_model(lambda m: AIMessage(content="")), [count_neurons], checkpointer=InMemorySaver())
     events = asyncio.run(collect(graph, "hi"))
     assert events == [{"type": "answer", "text": "[no answer] the model returned an empty reply"}]
+
+
+class StatusError(Exception):
+    def __init__(self, text, status_code=None, code=None):
+        super().__init__(text)
+        if status_code is not None:
+            self.status_code = status_code
+        if code is not None:
+            self.code = code
+
+
+def failing_model(exc):
+    def reply(msgs):
+        raise exc
+
+    return fn_model(reply)
+
+
+def error_message(exc, model_name="groq:fast"):
+    graph = build_graph(failing_model(exc), [count_neurons], checkpointer=InMemorySaver())
+    events = asyncio.run(collect(graph, "q", model_name=model_name))
+    assert [e["type"] for e in events] == ["error"]
+    return events[0]["message"]
+
+
+def test_quota_errors_are_friendly():
+    for exc in (
+        StatusError("Error code: 429 - rate_limit_exceeded", status_code=429),
+        StatusError("429 RESOURCE_EXHAUSTED. You exceeded your current quota, limit: 20", code=429),
+        RuntimeError("Rate limit reached for model on tokens per day"),
+    ):
+        msg = error_message(exc)
+        assert msg.startswith("model groq:fast hit its quota or rate limit; switch model in the picker or retry later")
+        assert len(msg) < 300
+
+
+def test_auth_errors_are_friendly():
+    for exc in (
+        StatusError("Error code: 401 - invalid_api_key", status_code=401),
+        StatusError("403 PERMISSION_DENIED", code=403),
+        RuntimeError("API key not valid. Please pass a valid API key."),
+    ):
+        assert error_message(exc) == "model groq:fast: API key missing or invalid"
+
+
+def test_other_provider_errors_keep_the_generic_text():
+    assert error_message(RuntimeError("boom")) == "model call failed: boom"
+    assert error_message(StatusError("server error", status_code=500)) == "model call failed: server error"
+
+
+def test_friendly_text_without_a_model_name_says_the_model():
+    msg = error_message(StatusError("429", status_code=429), model_name=None)
+    assert msg.startswith("the model hit its quota or rate limit")

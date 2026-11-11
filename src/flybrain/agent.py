@@ -19,6 +19,7 @@ with ServerStoppedError instead of letting the model improvise without tools.
 """
 
 import asyncio
+import re
 import time
 from collections.abc import AsyncIterator
 
@@ -127,6 +128,30 @@ def build_graph(model, tools, checkpointer=None):
     return graph.compile(checkpointer=checkpointer)
 
 
+_QUOTA = re.compile(r"\b429\b|RESOURCE_EXHAUSTED|rate.?limit|quota|too many requests", re.I)
+_AUTH = re.compile(
+    r"\b40[13]\b|PERMISSION_DENIED|UNAUTHENTICATED|invalid.{0,12}api.?key|api.?key.{0,20}(invalid|not valid|missing)"
+    r"|incorrect api key|authentication",
+    re.I,
+)
+SHORT_CAUSE = 120
+
+
+def friendly_model_error(exc: BaseException, model_name: str | None = None) -> str | None:
+    """A readable message for quota/rate-limit and auth failures of a provider, else None."""
+    who = f"model {model_name}" if model_name else "the model"
+    reason = " ".join(str(exc).split()) or type(exc).__name__
+    status = next(
+        (v for v in (getattr(exc, "status_code", None), getattr(exc, "code", None)) if isinstance(v, int)), None
+    )
+    if status == 429 or _QUOTA.search(reason):
+        cause = reason if len(reason) <= SHORT_CAUSE else reason[:SHORT_CAUSE] + "…"
+        return f"{who} hit its quota or rate limit; switch model in the picker or retry later ({cause})"
+    if status in (401, 403) or _AUTH.search(reason):
+        return f"{who}: API key missing or invalid"
+    return None
+
+
 def _hard_stop(max_steps: int) -> str:
     rounds = f"{max_steps} tool round{'s' if max_steps != 1 else ''}"
     return f"[hard stop] reached {rounds} without a final answer"
@@ -210,6 +235,7 @@ async def stream_events(
     thread_id: str,
     max_steps: int = MAX_STEPS,
     turn_timeout: float | None = None,
+    model_name: str | None = None,
 ) -> AsyncIterator[dict]:
     """Run one turn and yield typed events (plain dicts) as the graph progresses.
 
@@ -221,6 +247,7 @@ async def stream_events(
     that last request never executes and the turn ends with the hard-stop error.
     ``turn_timeout`` (seconds) caps the whole turn: provider SDKs may retry 503s with
     backoff for minutes, so a slow turn ends with an ``error`` instead of silence.
+    ``model_name`` names the model in friendlier quota / auth error texts.
     """
     _check_max_steps(max_steps)
     config = {
@@ -273,7 +300,7 @@ async def stream_events(
                 failure = str(stopped_error(dead))
             else:
                 reason = " ".join(str(exc).split()) or type(exc).__name__
-                failure = f"model call failed: {reason}"
+                failure = friendly_model_error(exc, model_name) or f"model call failed: {reason}"
         if failure is None:
             if last_agent is None:
                 failure = NO_ANSWER
