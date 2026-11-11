@@ -265,6 +265,28 @@ The agent is an MCP client: `flybrain.agent_mcp` launches the server over stdio 
 adapter's default `get_tools()` opens a new session (a fresh server) per tool call, which
 would lose them. A test pins this behavior.
 
+### Token budget
+
+Every model call sends the system prompt (~230 tokens), the 10 tool definitions and the
+conversation. Free tiers (Groq) limit tokens per minute, so the agent keeps all three small:
+
+- **Tool definitions** are compact: about 6.5k characters (~1.6k tokens) in total, down from
+  12.3k. A test pins the budget (`TOOL_DEFS_BUDGET_CHARS` in `tests/test_mcp_server.py`), so
+  descriptions cannot creep back. Shared caveats (structural, not signal flow; a model, not the
+  living fly) live once in the system prompt.
+- **History sent to the model** is compacted by `compact_history`. The checkpointed thread
+  keeps everything; the model only sees the last `FLYBRAIN_KEEP_TURNS` user turns in full
+  (default 3, an integer >= 1; the current turn is always whole). Older turns shrink to the
+  question and the final answer: their tool calls and results are dropped together, so no tool
+  call is left without its result. In the kept window a single tool result over 4,000 characters
+  is cut with a `... [truncated N chars]` marker.
+- **Fail fast on rate limits.** Chat models are built with `max_retries=1`, so a 429 reaches the
+  friendly quota message in seconds instead of the SDK retrying silently until the turn limit.
+- **Usage per turn.** The server sums `usage_metadata` over every model call of the turn and
+  sends `usage` `{calls, input_tokens, output_tokens, total_tokens}` just before `answer`
+  (fields are `null` when the provider reports none). The web UI shows a dim line under the
+  answer, e.g. `4 calls · 18.2k tokens (15.9k in · 2.3k out)`, or `usage unavailable`.
+
 ## Core (no LLM needed)
 
 ```python
@@ -314,7 +336,9 @@ must be a positive number; anything else stops startup with a one-line error.
 `{id, tool, args}` (the tool started), `tool_result` `{id, tool, ok, ms}` (it finished, `ms`
 since its `tool_call`), `highlight` and `activity` as before, `answer_delta` `{text}` (final
 answer chunks, only from models that stream; a client drops any partial text when the next
-`tool_call` arrives), then `answer` `{text}` with the full text, `error` `{message}`, `done`.
+`tool_call` arrives), then `usage` `{calls, input_tokens, output_tokens, total_tokens}` (token
+counts of the turn, `null` when the provider reports none; sent before `answer`/`error` when the
+model was called), `answer` `{text}` with the full text, `error` `{message}`, `done`.
 
 **Binary contract.** `/brain/points` is `count * 12` bytes: float32, little-endian, `x y z`
 interleaved, in micrometers, in atlas row order. Decode with
