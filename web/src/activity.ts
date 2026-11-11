@@ -10,6 +10,8 @@ export interface Activity {
   durationMs: number;
   /** largest single count, at least 1 (brightness 1 = this many spikes in one bin) */
   peak: number;
+  /** neurons above 1 Hz mean rate (as the stimulate tool reports), when the backend sent it; the rows are every neuron that spiked at all */
+  activeCount: number | null;
 }
 
 /** Decode `GET /simulations/{id}/frames`: nRows uint32 LE row indices, then nRows * nBins uint8 counts. */
@@ -27,7 +29,7 @@ export function decodeFrames(buffer: ArrayBuffer, nRows: number, nBins: number, 
   const counts = new Uint8Array(buffer.slice(nRows * 4));
   let peak = 1;
   for (let i = 0; i < counts.length; i++) if (counts[i] > peak) peak = counts[i];
-  return { rows, counts, nRows, nBins, binMs, durationMs: nBins * binMs, peak };
+  return { rows, counts, nRows, nBins, binMs, durationMs: nBins * binMs, peak, activeCount: null };
 }
 
 const TRAIL_DECAY = 0.6; // each bin after a spike keeps this share of the brightness
@@ -84,7 +86,7 @@ export interface Playback {
 }
 
 export function createPlayback(durationMs: number, opts: { speed?: number; loop?: boolean } = {}): Playback {
-  return { timeMs: 0, playing: true, loop: opts.loop ?? true, durationMs, speed: opts.speed ?? 0.4 };
+  return { timeMs: 0, playing: true, loop: opts.loop ?? false, durationMs, speed: opts.speed ?? 0.4 };
 }
 
 /** Advance by `dtMs` of real time. */
@@ -107,6 +109,12 @@ export function scrub(p: Playback, fraction: number): Playback {
   return { ...p, timeMs: f * p.durationMs };
 }
 
+/** Button text: pause while running, replay on the final frame, play otherwise. */
+export function playLabel(p: Playback): "pause" | "play" | "replay" {
+  if (p.playing) return "pause";
+  return p.timeMs >= p.durationMs ? "replay" : "play";
+}
+
 export function binAt(timeMs: number, binMs: number, nBins: number): number {
   return Math.min(Math.max(Math.floor(timeMs / binMs), 0), nBins - 1);
 }
@@ -124,9 +132,12 @@ export function formatSimulating(durationMs: number, seconds: number): string {
   return `simulating ${Number.isInteger(sim) ? sim : sim.toFixed(1)} s of brain activity… · ${s} s`;
 }
 
-export function activityLegend(neurons: number, readout: { label: string; hz: number } | null): string {
-  const n = `activity · ${neurons.toLocaleString("en-US")} neuron${neurons === 1 ? "" : "s"}`;
-  return readout ? `${n} · ${readout.label} ${Math.round(readout.hz)} Hz` : n;
+/** `active` = neurons above 1 Hz (null when unknown), `spiked` = every neuron in the frames. */
+export function activityLegend(active: number | null, spiked: number, readout: { label: string; hz: number } | null): string {
+  const n = (v: number) => v.toLocaleString("en-US");
+  const counts = active === null ? `${n(spiked)} spiked` : `${n(active)} active > 1 Hz · ${n(spiked)} spiked`;
+  const base = `activity · ${counts}`;
+  return readout ? `${base} · ${readout.label} ${Math.round(readout.hz)} Hz` : base;
 }
 
 // --- wire contracts -----------------------------------------------------------------------
@@ -155,6 +166,8 @@ export interface ActivityEvent {
   simulationId: string;
   nBins: number;
   binMs: number;
+  /** neurons above 1 Hz, when the backend sends it */
+  activeCount: number | null;
 }
 
 /** Check the payload of the SSE `activity` event. */
@@ -162,7 +175,8 @@ export function parseActivityEvent(d: Record<string, unknown>): ActivityEvent | 
   if (typeof d.simulation_id !== "string" || !d.simulation_id) return "simulation_id is missing";
   if (typeof d.n_bins !== "number" || !Number.isInteger(d.n_bins) || d.n_bins < 1) return "n_bins is not a positive integer";
   if (typeof d.bin_ms !== "number" || !(d.bin_ms > 0)) return "bin_ms is not positive";
-  return { simulationId: d.simulation_id, nBins: d.n_bins, binMs: d.bin_ms };
+  const ac = typeof d.active_count === "number" && Number.isInteger(d.active_count) && d.active_count >= 0 ? d.active_count : null;
+  return { simulationId: d.simulation_id, nBins: d.n_bins, binMs: d.bin_ms, activeCount: ac };
 }
 
 async function ok(res: Response, what: string): Promise<Response> {
@@ -181,5 +195,7 @@ async function ok(res: Response, what: string): Promise<Response> {
 export async function loadActivity(id: string, fetchFn: typeof fetch = fetch, base = "/api"): Promise<Activity> {
   const meta = (await (await ok(await fetchFn(`${base}/simulations/${id}`), "simulation meta")).json()) as Record<string, number>;
   const buf = await (await ok(await fetchFn(`${base}/simulations/${id}/frames`), "simulation frames")).arrayBuffer();
-  return decodeFrames(buf, meta.n_rows, meta.n_bins, meta.bin_ms);
+  const a = decodeFrames(buf, meta.n_rows, meta.n_bins, meta.bin_ms);
+  const ac = meta.active_count;
+  return { ...a, activeCount: typeof ac === "number" && Number.isInteger(ac) && ac >= 0 ? ac : null };
 }

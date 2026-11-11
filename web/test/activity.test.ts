@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   activityLegend,
+  playLabel,
   binAt,
   createPlayback,
   decodeFrames,
@@ -118,13 +119,20 @@ describe("summedBrightness", () => {
 describe("playback", () => {
   it("starts playing at 0 and advances by dt * speed", () => {
     let p = createPlayback(1000, { speed: 0.5 });
-    expect(p).toMatchObject({ timeMs: 0, playing: true, loop: true, durationMs: 1000 });
+    expect(p).toMatchObject({ timeMs: 0, playing: true, loop: false, durationMs: 1000 });
     p = tick(p, 200);
     expect(p.timeMs).toBe(100);
   });
 
-  it("loops at the end", () => {
-    const p = tick({ ...createPlayback(1000, { speed: 1 }), timeMs: 950 }, 100);
+  it("plays once by default: stops on the final frame and stays there", () => {
+    let p = tick({ ...createPlayback(1000, { speed: 1 }), timeMs: 950 }, 100);
+    expect(p).toMatchObject({ timeMs: 1000, playing: false });
+    p = tick(p, 5000);
+    expect(p).toMatchObject({ timeMs: 1000, playing: false });
+  });
+
+  it("loops at the end only when asked", () => {
+    const p = tick({ ...createPlayback(1000, { speed: 1, loop: true }), timeMs: 950 }, 100);
     expect(p.timeMs).toBeCloseTo(50);
     expect(p.playing).toBe(true);
   });
@@ -142,6 +150,28 @@ describe("playback", () => {
     expect(p.playing).toBe(true);
     const done = togglePlay({ ...createPlayback(1000, { loop: false }), timeMs: 1000, playing: false });
     expect(done).toMatchObject({ timeMs: 0, playing: true });
+  });
+
+  it("replay after the end starts from t = 0 and plays again to the end", () => {
+    const ended = tick({ ...createPlayback(1000, { speed: 1 }), timeMs: 999 }, 10);
+    expect(playLabel(ended)).toBe("replay");
+    const again = togglePlay(ended);
+    expect(again).toMatchObject({ timeMs: 0, playing: true });
+    expect(tick(again, 400).timeMs).toBe(400);
+  });
+
+  it("the scrubber stays usable after the end: scrubbing back pauses on that frame", () => {
+    const ended = tick({ ...createPlayback(1000, { speed: 1 }), timeMs: 999 }, 10);
+    const back = scrub(ended, 0.25);
+    expect(back).toMatchObject({ timeMs: 250, playing: false });
+    expect(playLabel(back)).toBe("play");
+    expect(togglePlay(back)).toMatchObject({ timeMs: 250, playing: true });
+  });
+
+  it("labels the button pause / play / replay", () => {
+    expect(playLabel(createPlayback(1000))).toBe("pause");
+    expect(playLabel({ ...createPlayback(1000), playing: false, timeMs: 300 })).toBe("play");
+    expect(playLabel({ ...createPlayback(1000), playing: false, timeMs: 1000 })).toBe("replay");
   });
 
   it("scrub sets time from a 0..1 fraction (clamped) and keeps the play state", () => {
@@ -179,9 +209,14 @@ describe("text", () => {
   });
 
   it("formats the legend line, with the readout when there is one", () => {
-    expect(activityLegend(336, { label: "MN9", hz: 60.3 })).toBe("activity · 336 neurons · MN9 60 Hz");
-    expect(activityLegend(1, null)).toBe("activity · 1 neuron");
-    expect(activityLegend(2926, null)).toBe("activity · 2,926 neurons");
+    expect(activityLegend(336, 375, { label: "MN9", hz: 60.3 })).toBe("activity · 336 active > 1 Hz · 375 spiked · MN9 60 Hz");
+    expect(activityLegend(1, 1, null)).toBe("activity · 1 active > 1 Hz · 1 spiked");
+    expect(activityLegend(2926, 3000, null)).toBe("activity · 2,926 active > 1 Hz · 3,000 spiked");
+    expect(activityLegend(0, 12, null)).toBe("activity · 0 active > 1 Hz · 12 spiked");
+  });
+
+  it("without a backend count it only claims what it knows", () => {
+    expect(activityLegend(null, 375, null)).toBe("activity · 375 spiked");
   });
 });
 
@@ -202,7 +237,9 @@ describe("parseSimulation", () => {
 
 describe("parseActivityEvent", () => {
   it("validates the SSE payload", () => {
-    expect(parseActivityEvent({ simulation_id: "sim_1", n_bins: 100, bin_ms: 10 })).toEqual({ simulationId: "sim_1", nBins: 100, binMs: 10 });
+    expect(parseActivityEvent({ simulation_id: "sim_1", n_bins: 100, bin_ms: 10 })).toEqual({ simulationId: "sim_1", nBins: 100, binMs: 10, activeCount: null });
+    expect(parseActivityEvent({ simulation_id: "sim_1", n_bins: 100, bin_ms: 10, active_count: 336, active_hz: 1 })).toMatchObject({ activeCount: 336 });
+    expect(parseActivityEvent({ simulation_id: "sim_1", n_bins: 100, bin_ms: 10, active_count: "x" })).toMatchObject({ activeCount: null });
     expect(parseActivityEvent({ simulation_id: "sim_1", n_bins: 0, bin_ms: 10 })).toMatch(/n_bins/);
     expect(parseActivityEvent({ n_bins: 3, bin_ms: 10 })).toMatch(/simulation_id/);
   });
@@ -221,6 +258,15 @@ describe("loadActivity", () => {
     expect(Array.from(a.rows)).toEqual([7]);
     expect(a.binMs).toBe(5);
     expect(a.peak).toBe(3);
+    expect(a.activeCount).toBeNull();
+  });
+
+  it("carries the backend's active count (> 1 Hz) from the meta", async () => {
+    const f = (async (url: string) =>
+      url.endsWith("/frames")
+        ? new Response(wire([7], [[1, 3]]))
+        : Response.json({ bin_ms: 5, n_bins: 2, n_rows: 1, duration_ms: 10, active_count: 336, active_hz: 1 })) as unknown as typeof fetch;
+    expect((await loadActivity("sim_x", f)).activeCount).toBe(336);
   });
 
   it("surfaces the backend message on 404", async () => {
