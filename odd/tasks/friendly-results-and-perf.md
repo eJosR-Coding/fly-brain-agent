@@ -18,7 +18,7 @@ experiments return instantly; the viewer stops using the GPU while nothing chang
       (route: delegated writer, 4+ files)
 - [x] T2 simulation result cache keyed by resolved row sets + parameters + seed (not ticket ids).
       (route: delegated writer)
-- [ ] T3 render on demand: draw only when the camera, animation, highlight or data changes.
+- [x] T3 render on demand: draw only when the camera, animation, highlight or data changes.
       (route: delegated writer)
 - [ ] T4 small fixes from reviews: vacuous clip test (tests/test_dose_response.py:158), duplicated
       top_non_sensory helpers (silencing.py/tools.py), toolTrace DOM test (chat.ts:537), SELECTION
@@ -45,3 +45,7 @@ ask-on-risk; one PR per task.
 - T2 done 2026-11-11 (delegated writer, branch feat/sim-cache). Commit 215c064. RED: tests/test_sim_cache.py 15 failed
   (no SimulationService.run). GREEN: `uv run pytest -q` 667 passed (25 new). Cache: LRU 32 entries + 300 MB byte
   budget on SimulationService.run; output gets `cached` (stimulate) / `cached_runs` (dose_response, screen).
+- T3 done 2026-11-11 (delegated writer, branch perf/render-on-demand). Commit 8f66855. RED: renderScheduler test suite
+  failed (module missing). GREEN: `pnpm -C web test` 406 passed (8 new); `pnpm -C web build` ok. Playwright (swiftshader,
+  own ports): idle rAF callbacks in 2 s with orbit off: 31 before -> 0 after (orbit on: ~32 both, by design); highlight
+  after idle redraws then settles to 0; inspector card still follows a camera drag. Screenshots rod_*_highlight.png match.

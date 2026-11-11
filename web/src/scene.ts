@@ -12,6 +12,7 @@ import { pickNearest, pickThreshold } from "./inspect";
 import { crossSprite, dotTexture, ringSprite, ringTexture } from "./textures";
 import { createPathLayer } from "./pathLayer";
 import type { PathPayload } from "./path";
+import { createRenderScheduler } from "./renderScheduler";
 
 export interface BrainScene {
   /** Light up these row indices on the highlight layer (replaces any previous one); null or [] clears. */
@@ -43,6 +44,10 @@ export interface BrainScene {
   setPath(path: PathPayload | null): void;
   /** Stage-relative CSS pixels of a neuron right now, or null when it is behind the camera. */
   project(row: number): { x: number; y: number } | null;
+  /** Ask for a redraw. The scene only draws when asked (or while something animates), so call this after changing it from outside. */
+  requestRender(): void;
+  /** Runs after every drawn frame; returns an unsubscribe. */
+  onFrame(cb: () => void): () => void;
   dispose(): void;
 }
 
@@ -313,6 +318,7 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
     });
   };
 
+  let invalidate = () => {}; // bound to the scheduler below; setters and observers call it freely before that
   const camera = new THREE.PerspectiveCamera(45, 1, maxDim / 100, maxDim * 20);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
@@ -320,8 +326,9 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
   const reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
   const pathLayer = createPathLayer({ parent: world, positions: brain.positions, labels: labelsEl, reducedMotion: reduced });
   const gate = createOrbitGate(orbitDefault(reduced), theme.orbitResumeMs);
-  controls.addEventListener("start", () => gate.press());
-  controls.addEventListener("end", () => gate.release(performance.now()));
+  controls.addEventListener("start", () => { gate.press(); invalidate(); });
+  controls.addEventListener("end", () => { gate.release(performance.now()); invalidate(); });
+  controls.addEventListener("change", () => invalidate());
   const setView = (view: "home" | "front") => {
     const [x, y, z] = view === "front" ? homeCamera(maxDim * FIT, 0, 0) : homeCamera(maxDim * FIT, HOME_VIEW.azimuth, HOME_VIEW.elevation);
     camera.position.set(x, y, z);
@@ -340,6 +347,7 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
     actMaterial.uniforms.uScale.value = baseMaterial.uniforms.uScale.value;
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    invalidate();
   };
   const ro = new ResizeObserver(resize);
   ro.observe(container);
@@ -365,25 +373,34 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
     return { x: ((projected.x + 1) / 2) * container.clientWidth, y: ((1 - projected.y) / 2) * container.clientHeight };
   };
 
-  let raf = 0;
-  const loop = () => {
-    raf = requestAnimationFrame(loop);
-    controls.autoRotate = gate.active(performance.now());
-    controls.update();
-    const dist = camera.position.distanceTo(controls.target);
-    baseMaterial.uniforms.uNear.value = dist - radius;
-    baseMaterial.uniforms.uFar.value = dist + radius;
-    renderer.render(scene, camera);
-    placeAnatomyLabels(container.clientWidth, container.clientHeight);
-    pathLayer.update(performance.now(), camera, container.clientWidth, container.clientHeight);
-  };
-  loop();
+  // Draw on demand: a frame per change, and a running loop only while something animates.
+  const scheduler = createRenderScheduler({
+    schedule: (cb) => requestAnimationFrame(cb),
+    cancel: (id) => cancelAnimationFrame(id),
+    render: () => {
+      const now = performance.now();
+      const orbiting = gate.active(now);
+      controls.autoRotate = orbiting;
+      const moved = controls.update(); // true while the camera moves (drag, damping still settling, orbit)
+      const dist = camera.position.distanceTo(controls.target);
+      baseMaterial.uniforms.uNear.value = dist - radius;
+      baseMaterial.uniforms.uFar.value = dist + radius;
+      renderer.render(scene, camera);
+      placeAnatomyLabels(container.clientWidth, container.clientHeight);
+      pathLayer.update(now, camera, container.clientWidth, container.clientHeight);
+      // gate.enabled keeps the loop alive through the pause after a drag so the orbit can resume on its own
+      return moved || orbiting || gate.enabled || pathLayer.animating;
+    },
+  });
+  invalidate = () => scheduler.invalidate();
+  invalidate();
 
   return {
     setHighlight(indices) {
       const n = indices ? writeSelectionIndex(indexBuf, indices) : 0;
       hlGeometry.setDrawRange(0, n);
       indexAttr.needsUpdate = true;
+      invalidate();
     },
     setActivity(rows) {
       brightness.fill(0);
@@ -395,11 +412,13 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
       actIndex.needsUpdate = true;
       brightAttr.needsUpdate = true;
       baseMaterial.uniforms.uOpacity.value = theme.pointOpacity * (rows ? theme.activityDim : 1); // the wave stands out
+      invalidate();
     },
     setActivityFrame(values) {
       const rows = actIndex.array as Uint32Array;
       scatterBrightness(brightness, rows.subarray(0, actGeometry.drawRange.count), values);
       brightAttr.needsUpdate = true;
+      invalidate();
     },
     setActivityShapes(shapes) {
       const rows = actIndex.array as Uint32Array;
@@ -407,6 +426,7 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
       shapeAttr.array.fill(0);
       if (shapes) scatterBrightness(shapeAttr.array as Float32Array, rows.subarray(0, n), shapes);
       shapeAttr.needsUpdate = true;
+      invalidate();
     },
     setColorMode(mode) {
       const useNt = mode === "transmitters" && ntColors !== null && ntSizes !== null;
@@ -414,10 +434,12 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
       weightAttr.array.set(useNt ? ntSizes! : ones);
       colorAttr.needsUpdate = true;
       weightAttr.needsUpdate = true;
+      invalidate();
     },
     hasTransmitters: ntColors !== null,
     setOrbit(on) {
       gate.setEnabled(on);
+      invalidate();
     },
     get orbitOn() {
       return gate.enabled;
@@ -425,13 +447,15 @@ export function createScene(container: HTMLElement, brain: Brain, theme: Theme, 
     setView,
     element: renderer.domElement,
     pick,
-    setHover: (row) => placeMark(hoverMark, row),
-    setSelected: (row) => placeMark(selectMark, row),
+    setHover: (row) => { placeMark(hoverMark, row); invalidate(); },
+    setSelected: (row) => { placeMark(selectMark, row); invalidate(); },
     project,
-    setPath: (path) => pathLayer.set(path),
+    setPath: (path) => { pathLayer.set(path); invalidate(); },
+    requestRender: () => invalidate(),
+    onFrame: (cb) => scheduler.onFrame(cb),
     dispose() {
+      scheduler.dispose();
       pathLayer.dispose();
-      cancelAnimationFrame(raf);
       labelsEl.remove();
       ro.disconnect();
       controls.dispose();

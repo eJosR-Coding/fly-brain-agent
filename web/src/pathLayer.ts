@@ -9,6 +9,8 @@ import { dotTexture } from "./textures";
 export interface PathLayer {
   /** Draw this route (replacing any previous one); null removes it. */
   set(path: PathPayload | null): void;
+  /** True while the flowing lights move (needs a frame every tick). */
+  readonly animating: boolean;
   /** Per frame, after the scene rendered: move the traveling light and the hop labels. */
   update(now: number, camera: THREE.Camera, width: number, height: number): void;
   setResolution(width: number, height: number): void;
@@ -124,6 +126,9 @@ export function createPathLayer({ parent, positions, labels, reducedMotion }: Pa
         const [pts] = dots(new Array(LIGHTS).fill(routeRaw[0]), new Array(LIGHTS).fill(13), 1);
         lights = pts;
       }
+    },
+    get animating() {
+      return lights !== null && route.length > 0;
     },
     update(now, camera, width, height) {
       if (!route.length) return;

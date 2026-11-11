@@ -55,10 +55,9 @@ export function mountInspector(o: InspectorOptions): Inspector {
 
   let current: number | null = null; // row of the open card
   let token = 0; // newest request wins
-  let raf = 0;
+  let offFrame: (() => void) | null = null; // follows the camera only when the scene draws a frame
 
   const follow = () => {
-    raf = 0;
     if (current === null) return;
     const p = scene.project(current);
     card.style.visibility = p ? "visible" : "hidden";
@@ -66,7 +65,6 @@ export function mountInspector(o: InspectorOptions): Inspector {
       const pos = placeCard(p, { w: card.offsetWidth, h: card.offsetHeight }, { w: stage.clientWidth, h: stage.clientHeight }, { gap: 22, margin: 12 });
       card.style.transform = `translate(${Math.round(pos.left)}px, ${Math.round(pos.top)}px)`;
     }
-    raf = requestAnimationFrame(follow);
   };
 
   const close = () => {
@@ -77,8 +75,8 @@ export function mountInspector(o: InspectorOptions): Inspector {
     card.hidden = true;
     card.replaceChildren();
     scene.setSelected(null);
-    if (raf) cancelAnimationFrame(raf);
-    raf = 0;
+    offFrame?.();
+    offFrame = null;
     if (hadFocus) scene.element.focus?.();
   };
 
@@ -114,6 +112,7 @@ export function mountInspector(o: InspectorOptions): Inspector {
         card.append(b);
       }
     }
+    follow(); // new content, new size: re-place now (the next camera move would do it anyway)
   };
 
   const message = (text: string) => {
@@ -124,6 +123,7 @@ export function mountInspector(o: InspectorOptions): Inspector {
     x.addEventListener("click", close);
     head.append(el("h2", undefined, `neuron ${current ?? ""}`), x);
     card.replaceChildren(head, el("p", "nc-note", text));
+    follow();
   };
 
   async function open(row: number): Promise<void> {
@@ -132,7 +132,9 @@ export function mountInspector(o: InspectorOptions): Inspector {
     scene.setSelected(row);
     card.hidden = false;
     message("loading…");
-    if (!raf) raf = requestAnimationFrame(follow);
+    offFrame ??= scene.onFrame(follow);
+    follow();
+    scene.requestRender();
     try {
       const res = await fetchFn(`/api/neurons/${row}`);
       const body: unknown = await res.json().catch(() => null);
