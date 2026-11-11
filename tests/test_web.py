@@ -46,6 +46,14 @@ def test_bad_turn_timeout_env_is_one_friendly_line(monkeypatch, capsys):
     assert err.count("\n") == 1 and "FLYBRAIN_TURN_TIMEOUT" in err and "'abc'" in err
 
 
+def test_bad_keep_turns_env_is_one_friendly_line(monkeypatch, capsys):
+    monkeypatch.setattr("langchain.chat_models.init_chat_model", lambda spec: object())
+    monkeypatch.setenv("FLYBRAIN_KEEP_TURNS", "0")
+    assert web.main(["--model", "openai:x"]) == 1
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1 and "FLYBRAIN_KEEP_TURNS" in err
+
+
 def test_models_flag_and_env(monkeypatch):
     monkeypatch.delenv("FLYBRAIN_MODELS", raising=False)
     assert web.parse_args([]).models is None
