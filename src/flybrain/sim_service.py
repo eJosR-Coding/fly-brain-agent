@@ -51,6 +51,9 @@ class ActivityRecord:
     trials: int
     stimulus: dict
     active_count: int | None = None  # neurons above ACTIVE_HZ (the number the stimulate summary reports)
+    compare_id: str | None = None  # silenced runs: the id of the baseline recording (same stimulus and seed)
+    silenced_rows: np.ndarray | None = None  # silenced runs: atlas rows whose outgoing synapses were zeroed
+    readout: dict | None = None  # {"label", "neurons", "hz": mean rate of the readout group per bin}
 
     @property
     def n_bins(self) -> int:
@@ -106,7 +109,8 @@ class SimulationService:
             yield
 
     def add(self, rows, frames, bin_ms: float, duration_ms: float, trials: int, stimulus: dict,
-            active_count: int | None = None) -> str:
+            active_count: int | None = None, compare_id: str | None = None, silenced_rows=None,
+            readout: dict | None = None) -> str:
         with self._record_lock:
             while True:
                 sim_id = f"sim_{secrets.token_hex(3)}"
@@ -116,6 +120,8 @@ class SimulationService:
                 sim_id, np.asarray(rows, dtype="<u4"), np.asarray(frames, dtype=np.uint8),
                 float(bin_ms), float(duration_ms), int(trials), dict(stimulus),
                 None if active_count is None else int(active_count),
+                compare_id, None if silenced_rows is None else np.asarray(silenced_rows, dtype="<u4"),
+                None if readout is None else dict(readout),
             )
             while len(self._records) > self.max_results:
                 self._expired.add(self._records.popitem(last=False)[0])

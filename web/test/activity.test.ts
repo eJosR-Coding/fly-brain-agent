@@ -237,7 +237,7 @@ describe("parseSimulation", () => {
 
 describe("parseActivityEvent", () => {
   it("validates the SSE payload", () => {
-    expect(parseActivityEvent({ simulation_id: "sim_1", n_bins: 100, bin_ms: 10 })).toEqual({ simulationId: "sim_1", nBins: 100, binMs: 10, activeCount: null });
+    expect(parseActivityEvent({ simulation_id: "sim_1", n_bins: 100, bin_ms: 10 })).toEqual({ simulationId: "sim_1", nBins: 100, binMs: 10, activeCount: null, compareId: null });
     expect(parseActivityEvent({ simulation_id: "sim_1", n_bins: 100, bin_ms: 10, active_count: 336, active_hz: 1 })).toMatchObject({ activeCount: 336 });
     expect(parseActivityEvent({ simulation_id: "sim_1", n_bins: 100, bin_ms: 10, active_count: "x" })).toMatchObject({ activeCount: null });
     expect(parseActivityEvent({ simulation_id: "sim_1", n_bins: 0, bin_ms: 10 })).toMatch(/n_bins/);
@@ -293,5 +293,49 @@ describe("scatterBrightness", () => {
     const target = new Float32Array(3);
     scatterBrightness(target, Uint32Array.from([2]), Float32Array.from([0.25, 0.9, 0.9]));
     expect(Array.from(target)).toEqual([0, 0, 0.25]);
+  });
+});
+
+describe("comparison fields", () => {
+  it("decodeFrames defaults trials to 1 and the comparison fields to null", () => {
+    const a = decodeFrames(wire([5], [[1]]), 1, 1, 10);
+    expect(a.trials).toBe(1);
+    expect(a.compareId).toBeNull();
+    expect(a.silencedRows).toBeNull();
+    expect(a.readout).toBeNull();
+  });
+
+  it("loadActivity reads trials, compare_id, silenced_rows and the readout trace from the meta", async () => {
+    const f = (async (url: string) =>
+      url.endsWith("/frames")
+        ? new Response(wire([7], [[1, 3]]))
+        : Response.json({
+            bin_ms: 5, n_bins: 2, n_rows: 1, duration_ms: 10, trials: 3, compare_id: "sim_base", silenced_rows: [4, 9],
+            readout: { label: "MN9", neurons: 1, rows: [7], hz: [10.5, 20] },
+          })) as unknown as typeof fetch;
+    const a = await loadActivity("sim_x", f);
+    expect(a.trials).toBe(3);
+    expect(a.compareId).toBe("sim_base");
+    expect(a.silencedRows).toEqual([4, 9]);
+    expect(a.readout).toEqual({ label: "MN9", neurons: 1, rows: [7], hz: [10.5, 20] });
+  });
+
+  it("ignores malformed comparison fields instead of failing", async () => {
+    const f = (async (url: string) =>
+      url.endsWith("/frames")
+        ? new Response(wire([7], [[1, 3]]))
+        : Response.json({ bin_ms: 5, n_bins: 2, n_rows: 1, trials: "x", compare_id: 5, silenced_rows: "no", readout: { hz: "no" } })) as unknown as typeof fetch;
+    const a = await loadActivity("sim_x", f);
+    expect(a.trials).toBe(1);
+    expect(a.compareId).toBeNull();
+    expect(a.silencedRows).toBeNull();
+    expect(a.readout).toBeNull();
+  });
+
+  it("parseActivityEvent keeps the compare id", () => {
+    const e = parseActivityEvent({ simulation_id: "s", n_bins: 2, bin_ms: 5, compare_id: "sim_b" });
+    expect(typeof e === "string" ? e : e.compareId).toBe("sim_b");
+    const none = parseActivityEvent({ simulation_id: "s", n_bins: 2, bin_ms: 5 });
+    expect(typeof none === "string" ? none : none.compareId).toBeNull();
   });
 });

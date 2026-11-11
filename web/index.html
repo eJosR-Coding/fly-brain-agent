@@ -21,10 +21,13 @@
       <span class="legend-item" id="legend-selected"><i class="dot"></i><span id="legend-text"></span></span>
     </div>
     <div id="timeline" hidden>
+      <div id="tl-modes" role="group" aria-label="activity view"></div>
       <button id="tl-play" type="button" class="chip" aria-label="pause the activity">pause</button>
       <input id="tl-bar" type="range" min="0" max="100" value="0" step="1" aria-label="activity timeline" />
       <span id="tl-time">t = 0 ms</span>
+      <div id="tl-scale" hidden></div>
     </div>
+    <aside id="charts" hidden aria-label="activity charts"></aside>
     <div id="views"></div>
     <div id="chips"></div>
     <dl id="status"></dl>

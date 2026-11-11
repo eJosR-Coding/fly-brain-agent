@@ -441,6 +441,32 @@ def _group(atlas: Atlas, rates: np.ndarray, rows: np.ndarray) -> dict:
             "top": top}
 
 
+READOUT_ROWS_SHOWN = 20  # rows of the readout group listed with its trace (the viewer emphasizes them)
+
+
+def _readout_trace(atlas: Atlas, readout: np.ndarray, bin_ms: float, trials: int, description: str = ""):
+    """A function from a SimResult to {"label", "neurons", "rows", "hz"}: the readout group's mean rate per bin.
+
+    The label is the preset's name (preset tickets), else the shared cell type, else "readout".
+    """
+    types = {_text(atlas.neurons["cell_type"].iat[int(r)]) for r in readout}
+    if description.startswith("preset "):
+        label = description.removeprefix("preset ").strip().upper()
+    else:
+        label = next(iter(types)) if len(types) == 1 and None not in types else "readout"
+    shown = [int(r) for r in readout[:READOUT_ROWS_SHOWN]]
+
+    def trace(res) -> dict:
+        counts = np.zeros(res.frames.shape[1], dtype=np.float64)
+        keep = np.isin(res.active_rows, readout)
+        if keep.any():
+            counts = res.frames[keep].sum(axis=0, dtype=np.float64)
+        hz = counts / (len(readout) * trials * bin_ms / 1000.0)
+        return {"label": label, "neurons": int(len(readout)), "rows": shown, "hz": [round(float(v), 2) for v in hz]}
+
+    return trace
+
+
 def stimulate(
     atlas: Atlas, store: SelectionStore, sims, selection_id, rate_hz=100, duration_ms=500, trials=3,
     silence_selection_id=None, readout_selection_id=None, seed: int = 0,
@@ -459,7 +485,8 @@ def stimulate(
     with sims.exclusive():
         sim = sims.simulation()  # lazy load; SimulationUnavailable says what to download/build
         res = sim.run(stim, rate, duration, n_trials, seed=seed, silence_rows=silence, bin_ms=bin_ms)
-        base = sim.run(stim, rate, duration, n_trials, seed=seed) if silence is not None else None
+        base = (sim.run(stim, rate, duration, n_trials, seed=seed, bin_ms=bin_ms)
+                if silence is not None else None)
     runtime = time.perf_counter() - t0
 
     rates = res.rate_hz
@@ -501,9 +528,20 @@ def stimulate(
                 "change_pct": round(100 * (after - before) / before, 1) if before else None,
             }
         notes.append("silencing runs a baseline too, so it costs 2x the runtime (same random seed for both)")
-    frames = np.minimum(res.frames, 255).astype(np.uint8)
-    out["simulation_id"] = sims.add(res.active_rows, frames, bin_ms, duration, n_trials, out["stimulus"],
-                              active_count=len(active))
+    trace = (_readout_trace(atlas, readout, bin_ms, n_trials, store.get(readout_selection_id).description)
+             if readout is not None else None)
+    compare_id = None
+    if base is not None:  # keep the baseline too: the viewer draws the difference between the two
+        compare_id = sims.add(
+            base.active_rows, np.minimum(base.frames, 255).astype(np.uint8), bin_ms, duration, n_trials,
+            out["stimulus"], active_count=int((base.rate_hz > ACTIVE_HZ).sum()),
+            readout=None if trace is None else trace(base),
+        )
+    out["simulation_id"] = sims.add(
+        res.active_rows, np.minimum(res.frames, 255).astype(np.uint8), bin_ms, duration, n_trials, out["stimulus"],
+        active_count=len(active), compare_id=compare_id, silenced_rows=silence,
+        readout=None if trace is None else trace(res),
+    )
     out["runtime_s"] = round(runtime, 1)
     out["note"] = "; ".join([*notes, SIM_NOTE])
     return out

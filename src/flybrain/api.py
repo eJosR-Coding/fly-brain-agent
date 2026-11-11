@@ -63,6 +63,11 @@ class SimulateRequest(BaseModel):
     readout_preset: str | None = None
     readout_selection_id: str | None = None
     silence_selection_id: str | None = None
+    silence_preset: str | None = None
+
+
+def _text_or_none(value) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 def _short(value):
@@ -323,7 +328,25 @@ def create_app(
         rec = _record(simulation_id)
         return {"simulation_id": rec.id, "bin_ms": rec.bin_ms, "n_bins": rec.n_bins, "n_rows": rec.n_rows,
                 "duration_ms": rec.duration_ms, "stimulus": rec.stimulus, "trials": rec.trials,
-                "active_count": rec.active_count, "active_hz": ACTIVE_HZ}
+                "active_count": rec.active_count, "active_hz": ACTIVE_HZ, "compare_id": rec.compare_id,
+                "silenced_rows": None if rec.silenced_rows is None or len(rec.silenced_rows) > MAX_INLINE_INDICES
+                else rec.silenced_rows.tolist(), "readout": rec.readout}
+
+    @app.get("/simulations/{simulation_id}/rows")
+    def simulation_rows(simulation_id: str, rows: str | None = None):
+        """[{row, cell_type, super_class}] for the recorded rows (or only the comma-separated `rows` among them)."""
+        rec = _record(simulation_id)
+        wanted = [int(r) for r in rec.rows]
+        if rows is not None:
+            try:
+                asked = {int(x) for x in rows.split(",") if x.strip()}
+            except ValueError:
+                raise HTTPException(status_code=422, detail="rows must be comma-separated integers") from None
+            wanted = [r for r in wanted if r in asked]
+        n = app.state.atlas.neurons
+        cell_type, super_class = n["cell_type"].to_numpy(), n["super_class"].to_numpy()
+        return [{"row": r, "cell_type": _text_or_none(cell_type[r]), "super_class": _text_or_none(super_class[r])}
+                for r in wanted]
 
     @app.get("/simulations/{simulation_id}/frames")
     def simulation_frames(simulation_id: str):
@@ -351,9 +374,10 @@ def create_app(
         try:
             sid = _ticket(req.preset, req.selection_id, "")
             readout = _ticket(req.readout_preset, req.readout_selection_id, "readout_")
+            silence = _ticket(req.silence_preset, req.silence_selection_id, "silence_")
             return await asyncio.to_thread(
                 stimulate, app.state.atlas, app.state.store, app.state.sims, sid, req.rate_hz,
-                req.duration_ms, req.trials, req.silence_selection_id, readout,
+                req.duration_ms, req.trials, silence, readout,
             )
         except SimulationUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from None
@@ -455,7 +479,8 @@ def create_app(
         if rec is None:
             return None
         return _sse("activity", {"simulation_id": rec.id, "n_bins": rec.n_bins, "bin_ms": rec.bin_ms,
-                                "active_count": rec.active_count, "active_hz": ACTIVE_HZ})
+                                "active_count": rec.active_count, "active_hz": ACTIVE_HZ,
+                                "compare_id": rec.compare_id})
 
     def _path(tool: str, content: str) -> ServerSentEvent | None:
         """find_path also becomes a path event: the route as atlas rows, for the cables."""
