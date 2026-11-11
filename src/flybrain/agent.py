@@ -149,6 +149,8 @@ def friendly_model_error(exc: BaseException, model_name: str | None = None) -> s
         return f"{who} hit its quota or rate limit; switch model in the picker or retry later ({cause})"
     if status in (401, 403) or _AUTH.search(reason):
         return f"{who}: API key missing or invalid"
+    if "model_not_found" in reason or (status == 404 and "model" in reason.lower()):
+        return f"{who} is not available for this API key; pick another model in the picker"
     return None
 
 

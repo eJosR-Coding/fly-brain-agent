@@ -102,7 +102,7 @@ The picker next to the message box lists the models from `GET /models`.
 `--models` (or `FLYBRAIN_MODELS`) is a comma-separated list of `provider:model` ids; the
 default is `--model` plus these Groq models with tool use (checked on
 <https://console.groq.com/docs/tool-use>): `groq:openai/gpt-oss-120b`,
-`groq:llama-3.3-70b-versatile`, `groq:llama-3.1-8b-instant`.
+`groq:openai/gpt-oss-20b` (the Llama 3 ids were no longer served on Groq when checked on 2026-11-10; list yours with the Groq models API and pass them with `--models`).
 
 ```bash
 uv run --env-file .env flybrain-web --model google_genai:gemini-3.5-flash \
