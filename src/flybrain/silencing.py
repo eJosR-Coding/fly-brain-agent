@@ -15,7 +15,7 @@ from flybrain.selections import SelectionStore
 from flybrain.stats import ALPHA, compare, holm, summarize
 from flybrain.tools import (
     ACTIVE_HZ, MAX_DURATION_MS, MAX_RATE_HZ, MAX_TRIALS, MIN_DURATION_MS, MIN_RATE_HZ, SENSORY_CLASSES, SIM_BINS,
-    SIM_NOTE, _clamp, _group_label, _int, _label, _number, _readout_trace, _selection_rows, _text, _ticket,
+    SIM_NOTE, _clamp, _group_label, _int, _number, _readout_trace, _selection_rows, _text, _ticket,
 )
 
 MAX_CANDIDATES = 12
@@ -90,7 +90,6 @@ def silencing_screen(
         c = r["c"]
         results.append({
             "label": _text(atlas.neurons["cell_type"].iat[r["row"]]) or "unknown", "row": r["row"],
-            "root_id": _label(atlas, [r["row"]])[0]["root_id"],
             "delta_hz": _r1(c.delta), "ci_low": _r1(c.delta_ci_low), "ci_high": _r1(c.delta_ci_high),
             "p": None if c.p is None else float(f"{c.p:.3g}"),
             "p_adj": None if p_adj is None else float(f"{p_adj:.3g}"),

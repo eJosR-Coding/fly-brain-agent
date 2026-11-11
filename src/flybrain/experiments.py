@@ -83,15 +83,17 @@ def dose_response(
     stim = _selection_rows(atlas, store, selection_id)
     readout = _selection_rows(atlas, store, readout_selection_id)
 
-    points, t0 = [], time.perf_counter()
+    points, t0, clipped = [], time.perf_counter(), False
     with sims.exclusive():
         sim = sims.simulation()
         with _Progress(sims, "dose_response", len(rates)) as progress:
             for rate in rates:
                 res = sim.run(stim, rate, duration, n_trials, seed=seed)
                 s = summarize(res.group_trial_hz(readout))
+                low = None if s.ci_low is None else max(0.0, s.ci_low)  # a rate cannot be negative
+                clipped = clipped or (s.ci_low is not None and s.ci_low < 0)
                 points.append({
-                    "rate_hz": rate, "readout_mean_hz": _r1(s.mean), "ci_low": _r1(s.ci_low), "ci_high": _r1(s.ci_high),
+                    "rate_hz": rate, "readout_mean_hz": _r1(s.mean), "ci_low": _r1(low), "ci_high": _r1(s.ci_high),
                     "active_neurons": int((res.rate_hz > ACTIVE_HZ).sum()),
                 })
                 progress.step()
@@ -112,6 +114,8 @@ def dose_response(
         )
     elif len(points) > 1 and means[-1] > 1.1 * means[-2]:
         out["ec50_note"] = "still rising at the highest rate: the half-max rate is relative to the highest tested rate"
+    if clipped:
+        notes.append("interval lower bounds clipped at 0 Hz (a rate cannot be negative)")
     if n_trials < 2:
         notes.append("1 trial per rate: no confidence intervals")
     label = _group_label(atlas, readout, store.get(readout_selection_id).description)

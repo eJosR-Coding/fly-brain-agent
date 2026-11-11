@@ -155,3 +155,9 @@ def test_the_server_exposes_dose_response(tiny_atlas, sims):
     out = call("dose_response", {"selection_id": orn, "readout_selection_id": epg,
                                  "rates_hz": [10, 300], "duration_ms": 100, "trials": 2})
     assert len(out["points"]) == 2 and out["chart_id"].startswith("chart_")
+
+
+def test_interval_lower_bounds_never_go_below_zero_hz(tiny_atlas, store, sims, orn, epg):
+    out = dose(tiny_atlas, store, sims, orn, epg, rates_hz=[3, 6], duration_ms=100, trials=3)  # rare, noisy spikes
+    assert all(p["ci_low"] >= 0 for p in out["points"])
+    assert all(p["ci_low"] <= p["readout_mean_hz"] <= p["ci_high"] for p in out["points"])
