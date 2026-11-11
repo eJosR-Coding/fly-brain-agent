@@ -1,0 +1,159 @@
+{
+  "note": "Plain-English glossary for the viewer and the agent. Keys are FlyWire annotation values (v783). Where function is not well established the text describes where the cell is and what it connects, not what it does.",
+  "super_class": {
+    "optic": "A neuron inside the optic lobe, the visual processing area right behind the eye.",
+    "central": "A central-brain neuron (an interneuron that processes signals between other neurons).",
+    "sensory": "A sensory neuron that brings information from the outside world or the body into the brain.",
+    "visual_projection": "A neuron that carries visual information from the optic lobe into the central brain.",
+    "visual_centrifugal": "A neuron that sends signals from the central brain back out to the optic lobe.",
+    "ascending": "A neuron that carries signals up from the nerve cord (the fly's equivalent of a spinal cord) to the brain.",
+    "sensory_ascending": "A sensory neuron whose axon runs up the nerve cord to the brain.",
+    "descending": "A descending neuron: it carries commands from the brain down to the nerve cord, which controls the body.",
+    "motor": "A motor neuron that leaves the brain to drive a muscle.",
+    "endocrine": "A neuroendocrine neuron that releases hormone-like signals into the body."
+  },
+  "super_class_target": {
+    "optic": "an optic-lobe neuron, which processes visual signals",
+    "central": "another central-brain neuron",
+    "sensory": "a sensory neuron",
+    "visual_projection": "a visual projection neuron, which carries visual information into the central brain",
+    "visual_centrifugal": "a visual centrifugal neuron, which sends signals back to the optic lobe",
+    "ascending": "an ascending neuron, which carries signals up to the brain",
+    "sensory_ascending": "an ascending sensory neuron",
+    "descending": "a descending neuron, which carries commands to the body",
+    "motor": "a motor neuron, which drives a muscle",
+    "endocrine": "a neuroendocrine neuron, which releases hormone-like signals"
+  },
+  "neuropils": {
+    "LA": "lamina",
+    "ME": "medulla",
+    "LO": "lobula",
+    "LOP": "lobula plate"
+  },
+  "nt": {
+    "acetylcholine": {
+      "label": "acetylcholine",
+      "tail": ", the main excitatory transmitter in the fly brain, so it excites its targets",
+      "polarity": "excitatory"
+    },
+    "glutamate": {
+      "label": "glutamate",
+      "tail": ", which in the fly usually inhibits its targets",
+      "polarity": "inhibitory"
+    },
+    "gaba": {
+      "label": "GABA",
+      "tail": ", the main inhibitory transmitter in the fly brain, so it inhibits its targets",
+      "polarity": "inhibitory"
+    },
+    "histamine": {
+      "label": "histamine",
+      "tail": ", the main transmitter of fly photoreceptors; it opens chloride channels on its targets, so it is inhibitory there",
+      "polarity": "inhibitory"
+    },
+    "dopamine": {
+      "label": "dopamine",
+      "tail": ", a neuromodulator that tunes how its targets respond",
+      "polarity": "modulatory"
+    },
+    "serotonin": {
+      "label": "serotonin",
+      "tail": ", a neuromodulator that tunes how its targets respond",
+      "polarity": "modulatory"
+    },
+    "octopamine": {
+      "label": "octopamine",
+      "tail": ", a neuromodulator that tunes how its targets respond",
+      "polarity": "modulatory"
+    },
+    "tyramine": {
+      "label": "tyramine",
+      "tail": ", a neuromodulator related to octopamine that tunes how its targets respond",
+      "polarity": "modulatory"
+    }
+  },
+  "cell_class": {
+    "visual": "A photoreceptor: a light-sensing cell of the compound eye.",
+    "Kenyon_Cell": "A Kenyon cell, an intrinsic cell of the mushroom body, a brain structure involved in learning and memory.",
+    "CX": "A neuron of the central complex, a midline brain structure involved in navigation and steering.",
+    "mechanosensory": "A sensory neuron that responds to touch, vibration or stretch.",
+    "olfactory": "An olfactory sensory neuron: it detects odor molecules and sends them to the antennal lobe.",
+    "AN": "An ascending neuron: it carries signals from the nerve cord up into the brain.",
+    "ALPN": "An antennal lobe projection neuron: it relays smell information from the antennal lobe to higher brain centers.",
+    "LHLN": "A lateral horn local neuron: an interneuron that stays inside the lateral horn, a brain area that handles odor signals.",
+    "ALLN": "An antennal lobe local neuron: an interneuron that connects different parts of the antennal lobe, the first relay for smell.",
+    "gustatory": "A taste sensory neuron: it detects taste chemicals such as sugar, bitter compounds or water.",
+    "DAN": "A dopaminergic neuron: it releases dopamine, and many of these tell the mushroom body about reward or punishment during learning.",
+    "bilateral": "A visual-system neuron whose branches reach both sides of the brain.",
+    "TuBu": "A neuron that carries signals from the anterior optic tubercle to the bulb of the central complex, a navigation circuit.",
+    "unknown_sensory": "A sensory neuron whose sensory modality has not been identified.",
+    "brain_motor_neuron": "A motor neuron with its cell body in the brain; it leaves the brain to drive a muscle.",
+    "MBON": "A mushroom body output neuron: it reads out the mushroom body, where learned associations are stored, and passes the result on.",
+    "mAL": "A central-brain interneuron of the mAL group; its role is not summarised here.",
+    "hygrosensory": "A sensory neuron that detects humidity.",
+    "ocellar": "A neuron of the ocellar system, tied to the ocelli, the three simple eyes on top of the head.",
+    "pars_intercerebralis": "A neurosecretory cell from the pars intercerebralis, a brain cluster that releases hormones.",
+    "pars_lateralis": "A neurosecretory cell from the pars lateralis, a brain cluster that releases hormones.",
+    "LHCENT": "A lateral horn centrifugal neuron that links the lateral horn with other brain areas.",
+    "optic_lobes": "An optic-lobe neuron of mixed or unspecified type.",
+    "ALIN": "An antennal lobe input neuron: it brings signals into the antennal lobe from other brain areas.",
+    "ALON": "An antennal lobe output neuron: it carries signals out of the antennal lobe to other brain areas.",
+    "MBIN": "A mushroom body modulatory neuron of a non-dopamine type (APL and DPM here); it regulates activity inside the mushroom body.",
+    "TPN": "A small group of central-brain neurons (class TPN; type BiT here); its role is not summarised here.",
+    "neck_motor_neuron": "A motor neuron that drives a neck muscle."
+  },
+  "families": [
+    {
+      "pattern": "^CB0701$",
+      "text": "MN9, a motor neuron that moves the proboscis (the fly's feeding mouthpart) to feed."
+    },
+    {
+      "pattern": "^DNp01$",
+      "text": "The giant fiber, a descending neuron that triggers the escape jump."
+    },
+    {
+      "pattern": "^MBON",
+      "text": "A mushroom body output neuron (MBON): it reads out the mushroom body, where learned associations are stored."
+    },
+    {
+      "pattern": "^KC",
+      "text": "A Kenyon cell (KC), an intrinsic cell of the mushroom body, a brain structure involved in learning and memory."
+    },
+    {
+      "pattern": "^PAM\\d",
+      "text": "A PAM dopamine neuron: it feeds dopamine, mostly a reward-related signal, into the mushroom body."
+    },
+    {
+      "pattern": "^PPL\\d",
+      "text": "A PPL dopamine neuron: it feeds dopamine into the mushroom body and nearby areas, often a punishment-related signal."
+    },
+    {
+      "pattern": "^EPG",
+      "text": "An EPG compass neuron of the central complex: it tracks which way the fly is heading."
+    },
+    {
+      "pattern": "^PEN",
+      "text": "A PEN neuron of the central complex: it helps shift the heading signal when the fly turns."
+    },
+    {
+      "pattern": "^R1-6$",
+      "text": "An R1-R6 photoreceptor, the most common light-sensing cell of the fly eye."
+    },
+    {
+      "pattern": "^R7$",
+      "text": "An R7 photoreceptor, a color-sensing light cell of the eye (mostly ultraviolet)."
+    },
+    {
+      "pattern": "^R8$",
+      "text": "An R8 photoreceptor, a color-sensing light cell of the eye (blue or green)."
+    },
+    {
+      "pattern": "^ORN_",
+      "text": "An olfactory receptor neuron that detects specific odor molecules; the code after ORN_ names the antennal lobe glomerulus it feeds."
+    },
+    {
+      "pattern": "^LPLC2",
+      "text": "An LPLC2 neuron: it responds to looming (approaching) objects and feeds the escape circuit."
+    }
+  ]
+}
