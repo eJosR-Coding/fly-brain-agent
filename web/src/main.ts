@@ -11,6 +11,7 @@ import { readTheme } from "./theme";
 import { loadLandmarks, loadRegions, type Regions } from "./regions";
 import { activityLegend, formatSimulating, loadActivity, parseSimulation, type Activity } from "./activity";
 import { createPlayer, type Player } from "./player";
+import { mountInspector } from "./inspector";
 import { greyHex, keyRows, loadNt, ntTier, type Transmitters } from "./transmitters";
 import type { Theme } from "./theme";
 
@@ -294,6 +295,18 @@ async function boot(): Promise<void> {
       root: $("timeline"),
       reducedMotion: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true,
       speed: theme.playbackSpeed,
+    });
+    mountInspector({
+      stage: $("stage"),
+      scene: brainScene,
+      pointCount,
+      onShowPartners: (rows, label) => {
+        latest.invalidate();
+        highlight(rows);
+        setActiveChip(null);
+        renderLegend(null, label);
+        $("legend-selected").classList.add("on");
+      },
     });
     setupViewChips(brainScene, theme, ok(regions), ok(nt));
     $("version").textContent = versionLine(brain.meta.count);
