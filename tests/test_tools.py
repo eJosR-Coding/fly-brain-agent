@@ -201,3 +201,9 @@ def test_describe_neuron_unknown_id_is_readable(tiny_atlas):
 def test_describe_neuron_rejects_float_ids(tiny_atlas):
     with pytest.raises(TypeError, match="root_id must be an int"):
         tools.describe_neuron(tiny_atlas, 100.0)
+
+
+def test_describe_neuron_adds_a_short_plain_line(tiny_atlas):
+    out = tools.describe_neuron(tiny_atlas, 100)  # EPG
+    assert "heading" in out["plain"] and len(out["plain"]) < 400
+    assert out["cell_type"] == "EPG"  # the technical fields stay

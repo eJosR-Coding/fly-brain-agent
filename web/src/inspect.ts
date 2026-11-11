@@ -41,6 +41,8 @@ export interface NeuronCard {
   topNt: string | null;
   position: [number, number, number];
   region: string | null;
+  /** one or two plain-English sentences from the server; null when it sent none */
+  plain: string | null;
   /** null when the server has no connectome */
   partners: { inputs: Partner[]; outputs: Partner[]; synapsesIn: number; synapsesOut: number } | null;
 }
@@ -83,6 +85,7 @@ export function parseNeuronCard(d: unknown, pointCount: number | null): NeuronCa
     topNt: text(r.top_nt),
     position: [pos[0], pos[1], pos[2]],
     region: text(r.region),
+    plain: text(r.plain),
     partners:
       r.partners === true
         ? { inputs: partnerList(r.inputs), outputs: partnerList(r.outputs), synapsesIn: count(r.synapses_in), synapsesOut: count(r.synapses_out) }
@@ -93,12 +96,27 @@ export function parseNeuronCard(d: unknown, pointCount: number | null): NeuronCa
 export interface PartnerLine { row: number; text: string; syn: string }
 export interface CardView {
   title: string;
+  /** the plain-English line shown under the title */
+  plain: string | null;
   rows: { label: string; value: string }[];
   inputs: PartnerLine[];
   outputs: PartnerLine[];
   /** shown instead of the partner lists when the server cannot provide them */
   partnersNote: string | null;
 }
+
+/** Hover text for the technical labels on the card (plain words, nothing removed). */
+export const LABEL_TIPS: Record<string, string> = {
+  "root id": "The FlyWire identifier of this neuron's 3D reconstruction; it is unique and stable in this data release.",
+  class: "The FlyWire cell class: a coarse family this neuron was assigned to.",
+  region: "The broad brain region where the cell body (soma) sits.",
+  position: "Where the neuron sits in the brain volume, in micrometers (x, y, z).",
+  synapses: "Total synapses this neuron receives (in) and sends (out), counting every partner above the connectome threshold.",
+};
+export const PARTNER_TIPS: Record<string, string> = {
+  "top inputs": "The neurons that send the most synapses to this one, with the synapse count.",
+  "top outputs": "The neurons that receive the most synapses from this one, with the synapse count.",
+};
 
 const UNANNOTATED = "unannotated";
 const fmt = (n: number) => n.toLocaleString("en-US");
@@ -116,10 +134,10 @@ export function cardView(c: NeuronCard): CardView {
     syn: `${fmt(p.synapses)} syn`,
   });
   if (c.partners === null) {
-    return { title, rows, inputs: [], outputs: [], partnersNote: "partners need the connectome (not loaded on this server)" };
+    return { title, plain: c.plain, rows, inputs: [], outputs: [], partnersNote: "partners need the connectome (not loaded on this server)" };
   }
   rows.push({ label: "synapses", value: `${fmt(c.partners.synapsesIn)} in · ${fmt(c.partners.synapsesOut)} out` });
-  return { title, rows, inputs: c.partners.inputs.map(line), outputs: c.partners.outputs.map(line), partnersNote: null };
+  return { title, plain: c.plain, rows, inputs: c.partners.inputs.map(line), outputs: c.partners.outputs.map(line), partnersNote: null };
 }
 
 /**

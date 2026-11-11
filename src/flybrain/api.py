@@ -32,6 +32,7 @@ from flybrain.atlas import RowIndex, load_atlas
 from flybrain.mcp_server import DEFAULT_ANNOTATIONS, build_server, load_connectome
 from flybrain.experiments import dose_response
 from flybrain.models import CHAT_MODEL_KWARGS, describe_models
+from flybrain.plain import plain_description
 from flybrain.selections import SelectionStore, UnknownSelectionError
 from flybrain.silencing import silencing_screen
 from flybrain.sim_service import SimulationService, SimulationUnavailable, UnknownSimulationError
@@ -544,7 +545,7 @@ def create_app(
             "root_id": str(int(rec["root_id"])),  # string: a root_id does not fit a JS number
             "cell_type": text_at(row, "cell_type"), "cell_class": text_at(row, "cell_class"),
             "super_class": text_at(row, "super_class"), "side": text_at(row, "side"),
-            "top_nt": text_at(row, "top_nt"),
+            "top_nt": text_at(row, "top_nt"), "known_nt": text_at(row, "known_nt"),
             "position_um": [float(rec["x_um"]), float(rec["y_um"]), float(rec["z_um"])],
             "region": REGION_CODES[int(np.frombuffer(app.state.regions, dtype=np.uint8)[row])],
         }
@@ -559,6 +560,8 @@ def create_app(
                     for r, s in zip(rows[:NEURON_PARTNERS], syn[:NEURON_PARTNERS])
                 ]
                 card[f"synapses_{direction}"] = int(syn.sum())
+        out = card.get("outputs")
+        card["plain"] = plain_description(card, out[0]["super_class"] if out else None)
         return card
 
     def text_at(r: int, field: str):

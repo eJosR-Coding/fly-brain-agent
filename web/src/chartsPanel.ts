@@ -1,8 +1,8 @@
 /** DOM glue for the charts panel: a spike raster and the readout trace, plain SVG. The shaping lives in charts.ts (tested). */
 import type { Activity } from "./activity";
-import { doseModel, doseTooltip, screenModel, type DoseChart, type ExperimentChart, type ScreenChart } from "./experiments";
+import { doseCaption, doseModel, doseTooltip, screenCaption, screenModel, type DoseChart, type ExperimentChart, type ScreenChart } from "./experiments";
 import {
-  groupLabelLayout, linearScale, parseRowTypes, rasterModel, rasterTooltip, readoutSeries, smooth, smoothWindow, traceModel, tracePath,
+  groupLabelLayout, linearScale, parseRowTypes, rasterCaption, rasterModel, traceCaption, rasterTooltip, readoutSeries, smooth, smoothWindow, traceModel, tracePath,
   traceTooltip, type RasterModel, type TraceModel,
 } from "./charts";
 
@@ -138,7 +138,7 @@ export function createChartsPanel(root: HTMLElement): ChartsPanel {
       hideTip();
     });
     s.appendChild(over);
-    rasterBox.replaceChildren(s);
+    rasterBox.replaceChildren(plain(rasterCaption(m.rows.length, m.durationMs)), s);
   };
 
   const drawTrace = (m: TraceModel | null, label = "", windowMs = 0) => {
@@ -204,6 +204,7 @@ export function createChartsPanel(root: HTMLElement): ChartsPanel {
     s.appendChild(over);
     // legend for two or more series: a short stroke per series, solid or dashed (never colour)
     const nodes: Node[] = [s];
+    nodes.unshift(plain(traceCaption(label, m)));
     if (m.series.length > 1) {
       const legend = document.createElement("div");
       legend.className = "ch-legend";
@@ -231,6 +232,12 @@ export function createChartsPanel(root: HTMLElement): ChartsPanel {
     traceBox.replaceChildren(...nodes);
   };
 
+  const plain = (text: string) => {
+    const p = document.createElement("p");
+    p.className = "ch-plain";
+    p.textContent = text;
+    return p;
+  };
   const note = (text: string) => {
     const p = document.createElement("p");
     p.className = "ch-note";
@@ -303,7 +310,7 @@ export function createChartsPanel(root: HTMLElement): ChartsPanel {
     });
     s.appendChild(over);
     expBox.replaceChildren(
-      s,
+      plain(doseCaption(c)), s,
       note(`${c.trials} trial${c.trials === 1 ? "" : "s"} per rate · mean with 95% CI · model prediction, not a measurement`),
       table(["rate (Hz)", `${c.readoutLabel} mean (Hz)`, "CI low", "CI high"], c.points.map((p) => [String(p.rate), String(p.mean), String(p.low ?? ""), String(p.high ?? "")])),
     );
@@ -353,7 +360,7 @@ export function createChartsPanel(root: HTMLElement): ChartsPanel {
       legend.appendChild(item);
     }
     expBox.replaceChildren(
-      legend, s,
+      plain(screenCaption(c)), legend, s,
       note(`${c.trials} trial${c.trials === 1 ? "" : "s"} per condition · whiskers are 95% CI · click a row to open its difference map · model prediction`),
       table(["neuron", "row", "delta (Hz)", "CI low", "CI high", "p", "significant"],
         c.rows.map((r) => [r.label, String(r.row), String(r.delta), String(r.low ?? ""), String(r.high ?? ""), String(r.p ?? ""), r.significant ? "yes" : "no"])),

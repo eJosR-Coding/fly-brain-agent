@@ -1,5 +1,6 @@
 """Atlas core: where every FlyWire neuron is and what it is. Pandas/numpy only."""
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,7 +10,21 @@ import pandas as pd
 VOXEL_NM = (4, 4, 40)  # FlyWire voxel size in nm (x, y, z)
 
 TEXT_FIELDS = ("super_class", "cell_class", "cell_type", "top_nt", "side", "flow")
-COLUMNS = ["root_id", "x_um", "y_um", "z_um", *TEXT_FIELDS]
+COLUMNS = ["root_id", "x_um", "y_um", "z_um", *TEXT_FIELDS, "known_nt"]
+
+# known_nt (literature) is a messy list like "acetylcholine; sNPF; acetylcholine, sNPF" or "gaba-negative":
+# keep the first classical transmitter, skip peptides, gases and "-negative" tokens
+CLASSICAL_NTS = {"acetylcholine", "glutamate", "gaba", "dopamine", "serotonin", "octopamine", "tyramine", "histamine"}
+
+
+def first_known_nt(raw) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    for token in re.split(r"[;,]", raw):
+        token = token.strip().lower()
+        if token in CLASSICAL_NTS:
+            return token
+    return None
 
 
 class AtlasLoadError(ValueError):
@@ -48,7 +63,8 @@ def load_atlas(path) -> "Atlas":
         missing = [c for c in needed if c not in header]
         if missing:
             raise AtlasLoadError(f"missing required columns: {', '.join(missing)}")
-        raw = pd.read_csv(path, sep="\t", usecols=needed, dtype=str, low_memory=False)
+        has_known = "known_nt" in header
+        raw = pd.read_csv(path, sep="\t", usecols=[*needed, *(["known_nt"] if has_known else [])], dtype=str, low_memory=False)
     except AtlasLoadError:
         raise
     except pd.errors.EmptyDataError:
@@ -78,6 +94,8 @@ def load_atlas(path) -> "Atlas":
         df[f"{axis}_um"] = col * nm / 1000
     for field in TEXT_FIELDS:
         df[field] = raw[field].astype("object").where(raw[field].notna(), None)
+    known = raw["known_nt"].map(first_known_nt).astype("object") if has_known else pd.Series([None] * len(raw), dtype="object")
+    df["known_nt"] = known.where(known.notna(), None)
     return Atlas(df[COLUMNS].reset_index(drop=True))
 
 
@@ -162,6 +180,7 @@ class Atlas:
             out[axis] = float(row[axis])
         for field in TEXT_FIELDS:
             out[field] = None if pd.isna(row[field]) else str(row[field])
+        out["known_nt"] = None if pd.isna(row["known_nt"]) else str(row["known_nt"])
         return out
 
     def extent_um(self) -> tuple[float, float, float]:

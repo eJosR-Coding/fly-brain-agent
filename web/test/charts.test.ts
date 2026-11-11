@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { decodeFrames, type Activity } from "../src/activity";
 import {
-  groupLabelLayout, linearScale, niceTicks, rasterModel, readoutSeries, rasterTooltip, traceModel, tracePath,
+  groupLabelLayout, linearScale, niceTicks, rasterCaption, rasterModel, traceCaption, readoutSeries, rasterTooltip, traceModel, tracePath,
   traceTooltip, parseRowTypes, smooth, smoothWindow,
 } from "../src/charts";
 
@@ -167,5 +167,19 @@ describe("smoothWindow", () => {
     expect(smoothWindow(10)).toBe(3);
     expect(smoothWindow(1)).toBe(25);
     expect(smoothWindow(100)).toBe(1);
+  });
+});
+
+describe("plain captions for the recording charts", () => {
+  it("raster: one row per neuron, one tick per spike", () => {
+    expect(rasterCaption(30, 300)).toMatch(/30 .*neurons/);
+    expect(rasterCaption(30, 300)).toMatch(/300 ms/);
+    expect(rasterCaption(1, 300)).toMatch(/1 most active neuron\b/);
+  });
+  it("trace: the peak rate of the first series, or silence", () => {
+    const m = traceModel([readoutSeries("MN9", [0, 40, 12], 100, false)], 100, 300);
+    expect(traceCaption("MN9", m)).toMatch(/MN9 .*up to 40 Hz/);
+    const flat = traceModel([readoutSeries("MN9", [0, 0], 100, false)], 100, 200);
+    expect(traceCaption("MN9", flat)).toMatch(/did not fire/);
   });
 });

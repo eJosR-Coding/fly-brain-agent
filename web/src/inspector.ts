@@ -1,6 +1,6 @@
 /** Click-to-inspect glue: hover ring, click-vs-drag, the neuron card (textContent only) and its follow loop. */
 import type { BrainScene } from "./scene";
-import { cardView, isClick, parseNeuronCard, placeCard, type CardView, type NeuronCard, type Pt } from "./inspect";
+import { LABEL_TIPS, PARTNER_TIPS, cardView, isClick, parseNeuronCard, placeCard, type CardView, type NeuronCard, type Pt } from "./inspect";
 
 export interface InspectorOptions {
   /** where the card lives (the stage: positioned, same box as the canvas) */
@@ -28,7 +28,9 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, txt?: s
 
 function partnerList(title: string, items: CardView["inputs"]): HTMLElement {
   const sec = el("section", "nc-partners");
-  sec.append(el("h3", undefined, title));
+  const h = el("h3", undefined, title);
+  if (PARTNER_TIPS[title]) h.title = PARTNER_TIPS[title];
+  sec.append(h);
   const ul = el("ul");
   for (const p of items) {
     const li = el("li");
@@ -92,10 +94,14 @@ export function mountInspector(o: InspectorOptions): Inspector {
     const dl = el("dl");
     for (const r of v.rows) {
       const row = el("div");
-      row.append(el("dt", undefined, r.label), el("dd", undefined, r.value));
+      const dt = el("dt", undefined, r.label);
+      if (LABEL_TIPS[r.label]) dt.title = LABEL_TIPS[r.label];
+      row.append(dt, el("dd", undefined, r.value));
       dl.append(row);
     }
-    card.replaceChildren(head, dl);
+    card.replaceChildren(head);
+    if (v.plain) card.append(el("p", "nc-plain", v.plain)); // the sentence for non-specialists, right under the title
+    card.append(dl);
     if (v.partnersNote) {
       card.append(el("p", "nc-note", v.partnersNote));
     } else {

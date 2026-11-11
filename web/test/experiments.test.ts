@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  doseModel, doseTooltip, formatExperimentProgress, logScale, parseChart, parseProgress, screenModel, screenTooltip, symmetricTicks,
+  doseCaption, doseModel, doseTooltip, formatExperimentProgress, logScale, parseChart, parseProgress, screenCaption, screenModel, screenTooltip, symmetricTicks,
 } from "../src/experiments";
 
 const dose = {
@@ -131,5 +131,36 @@ describe("progress", () => {
     expect(formatExperimentProgress({ experiment: "silencing_screen", done: 3, total: 8 })).toBe("screen · 3/8");
     expect(formatExperimentProgress({ experiment: "dose_response", done: 0, total: 5 })).toBe("dose · 0/5");
     expect(formatExperimentProgress({ experiment: "other", done: 1, total: 2 })).toBe("other · 1/2");
+  });
+});
+
+describe("plain captions", () => {
+  const d = parseChart(dose);
+  const sc = parseChart(screen);
+  if (typeof d === "string" || d.kind !== "dose_response" || typeof sc === "string" || sc.kind !== "screen") throw new Error("setup");
+  it("dose: says more stimulus means more firing, with the half-maximum rate", () => {
+    const t = doseCaption(d);
+    expect(t).toMatch(/More SUGAR/);
+    expect(t).toMatch(/MN9 fires more/);
+    expect(t).toMatch(/half its maximum at about 77.5 Hz/);
+  });
+  it("dose: warns when the curve has not levelled off, and not when it has", () => {
+    expect(doseCaption(d)).toMatch(/not levelled off/);
+    const flat = { ...d, points: [...d.points.slice(0, 2), { rate: 200, mean: 18, low: 17, high: 19 }].map((p, i) => (i === 1 ? { ...p, mean: 17.8 } : p)) };
+    expect(doseCaption(flat)).not.toMatch(/not levelled off/);
+  });
+  it("dose: handles a falling curve, a flat one and a missing half-maximum", () => {
+    expect(doseCaption({ ...d, points: [...d.points].reverse().map((p, i) => ({ ...p, rate: d.points[i].rate })), ec50: null })).toMatch(/fires less/);
+    expect(doseCaption({ ...d, ec50: null })).not.toMatch(/half its maximum/);
+    expect(doseCaption({ ...d, points: d.points.map((p) => ({ ...p, mean: 0 })) })).toMatch(/never fired/);
+  });
+  it("screen: counts how many silenced neurons changed the readout", () => {
+    const t = screenCaption(sc);
+    expect(t).toMatch(/2 neurons/);
+    expect(t).toMatch(/1 changed MN9/);
+    expect(t).toMatch(/filled/);
+  });
+  it("screen: says there is no test with a single trial", () => {
+    expect(screenCaption({ ...sc, rows: sc.rows.map((r) => ({ ...r, p: null, significant: false })) })).toMatch(/no significance test/);
   });
 });

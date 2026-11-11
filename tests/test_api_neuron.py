@@ -78,3 +78,29 @@ def test_non_integer_row_is_422(tiny_tsv_path, row):
 def test_search_route_still_wins_over_the_row_route(tiny_tsv_path):
     with TestClient(create_app(atlas_path=tiny_tsv_path)) as c:
         assert c.get("/neurons/search", params={"nt": "glutamate"}).status_code == 200
+
+
+def test_neuron_card_carries_a_plain_language_line(tiny_tsv_path, conn_path):
+    with TestClient(create_app(atlas_path=tiny_tsv_path, connectome_path=conn_path)) as c:
+        body = c.get("/neurons/60").json()  # EPG -> PEN_a (central)
+    assert "heading" in body["plain"]  # the famous-type entry
+    assert "glutamate" in body["plain"]
+
+
+def test_plain_line_names_the_strongest_output_class_and_works_without_a_connectome(tiny_tsv_path, conn_path):
+    with TestClient(create_app(atlas_path=tiny_tsv_path, connectome_path=conn_path)) as c:
+        with_conn = c.get("/neurons/61").json()  # T4a: class OL is unknown to the glossary, super optic
+    assert "strongest output is" in with_conn["plain"]
+    with TestClient(create_app(atlas_path=tiny_tsv_path)) as c:
+        assert c.get("/neurons/61").json()["plain"]
+
+
+def test_plain_line_prefers_known_nt_from_the_file(tmp_path):
+    from conftest import HEADER, _tiny_rows
+
+    rows = _tiny_rows()
+    path = tmp_path / "k.tsv"
+    path.write_text("\n".join([HEADER + "\tknown_nt", *[f"{r}\t{'acetylcholine; sNPF' if i == 60 else ''}" for i, r in enumerate(rows)]]) + "\n")
+    with TestClient(create_app(atlas_path=path)) as c:
+        body = c.get("/neurons/60").json()
+    assert "known to use acetylcholine" in body["plain"] and "machine prediction says glutamate" in body["plain"]
