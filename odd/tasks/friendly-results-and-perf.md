@@ -20,7 +20,7 @@ experiments return instantly; the viewer stops using the GPU while nothing chang
       (route: delegated writer)
 - [x] T3 render on demand: draw only when the camera, animation, highlight or data changes.
       (route: delegated writer)
-- [ ] T4 small fixes from reviews: vacuous clip test (tests/test_dose_response.py:158), duplicated
+- [x] T4 small fixes from reviews: vacuous clip test (tests/test_dose_response.py:158), duplicated
       top_non_sensory helpers (silencing.py/tools.py), toolTrace DOM test (chat.ts:537), SELECTION
       line on phones. (route: delegated writer)
 - [ ] T5 Engram: find why mem_save is blocked in auto mode (a hook rewrites its input); report, do
@@ -49,3 +49,7 @@ ask-on-risk; one PR per task.
   failed (module missing). GREEN: `pnpm -C web test` 406 passed (8 new); `pnpm -C web build` ok. Playwright (swiftshader,
   own ports): idle rAF callbacks in 2 s with orbit off: 31 before -> 0 after (orbit on: ~32 both, by design); highlight
   after idle redraws then settles to 0; inspector card still follows a camera drag. Screenshots rod_*_highlight.png match.
+- T4 done 2026-11-11 (delegated writer, branch fix/review-followups). Commits 4a152df (clip test + shared non_sensory_rows), dc32bf9
+  (toolTrace DOM test + phone stage). RED: clip test fails with the clip removed (ci_low negative), toolTrace tests fail when
+  the default is forced open. GREEN: `uv run pytest -q` 653 passed; `pnpm -C web test` 401 passed; `pnpm -C web build` ok.
+  Screenshots m390_after_844.png / _667.png: ~60 px / ~28 px clearance between brain and SELECTION line.
