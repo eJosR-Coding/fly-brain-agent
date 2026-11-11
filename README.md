@@ -98,15 +98,23 @@ plus the final answer). Other providers: `uv add langchain-openai`, then
 
 ### Choosing a model
 
-The picker next to the message box lists the models from `GET /models`.
-`--models` (or `FLYBRAIN_MODELS`) is a comma-separated list of `provider:model` ids; the
-default is `--model` plus these Groq models with tool use (checked on
-<https://console.groq.com/docs/tool-use>): `groq:openai/gpt-oss-120b`,
-`groq:openai/gpt-oss-20b` (the Llama 3 ids were no longer served on Groq when checked on 2026-11-10; list yours with the Groq models API and pass them with `--models`).
+The picker next to the message box lists the models from `GET /models`. Set any provider
+keys you have in `.env` (see `.env.example`) and restart: the picker shows the catalog models
+those keys can use, cheapest first, and the chat starts on the first one (or on `--model` /
+`FLYBRAIN_MODEL` if you set it).
 
-DeepSeek (paid, no per-minute cap like Groq's free 8k TPM): set `DEEPSEEK_API_KEY` and add
-`deepseek:deepseek-flash` (V4.1 Flash) or `deepseek:deepseek-v4-pro` to `--models`. Both support
-tool calling (checked on the DeepSeek pricing page, 2026-11-10).
+The built-in catalog (tool-calling models only): `deepseek:deepseek-flash`,
+`deepseek:deepseek-v4-pro`, `groq:openai/gpt-oss-120b`, `groq:openai/gpt-oss-20b`,
+`google_genai:gemini-3.5-flash`, `anthropic:claude-haiku-5-5`, `anthropic:claude-sonnet-5-5`.
+OpenAI has no catalog entry yet; add one with `--models`.
+
+At startup the server asks each provider that has a key for its model list (one request per
+provider, 5 second timeout, key sent only to that provider in a header) and hides catalog ids
+the provider no longer serves for your key. If that request fails, the model stays offered and
+the row carries a `note`; a failed request never stops the server.
+
+`--models` (or `FLYBRAIN_MODELS`) replaces the catalog with your own comma-separated
+`provider:model` list; the same key and availability checks apply.
 
 ```bash
 uv run --env-file .env flybrain-web --model google_genai:gemini-3.5-flash \
@@ -114,10 +122,9 @@ uv run --env-file .env flybrain-web --model google_genai:gemini-3.5-flash \
 ```
 
 A model is selectable only when its provider key is set: `GOOGLE_API_KEY` (`google_genai`),
-`GROQ_API_KEY` (`groq`), `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`. To add a provider key, put it in
-`.env` (see `.env.example`) and restart the server; models without a key show as "(no key)".
-The server only accepts ids from this list, never free text. The conversation keeps its history
-when you switch model between messages.
+`GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`. Models without a key
+show as "(no key)" when you use `--models`. The server only accepts ids from this list, never
+free text. The conversation keeps its history when you switch model between messages.
 
 Free tiers have small quotas (Gemini's free tier allows about 20 requests per day per model,
 and a tool-using turn makes several requests). When a model hits its quota the chat says so;
@@ -441,7 +448,7 @@ must be a positive number; anything else stops startup with a one-line error.
 | `GET /brain/regions` | one `uint8` per neuron, same row order as `/brain/points`; the code table is `regions` in `/brain/meta` (`0` central, `1` optic, `2` sensory, `3` other), derived from `super_class` |
 | `GET /brain/nt` | one `uint8` per neuron, same row order: the predicted top neurotransmitter (`nt` table in `/brain/meta`: `0` acetylcholine, `1` glutamate, `2` gaba, `3` dopamine, `4` serotonin, `5` octopamine, `6` unknown) |
 | `GET /brain/landmarks` | JSON computed from the data: centroids in micrometers (`central brain`, `optic lobe L/R`, `lamina L/R`), plus per side the lobe center, a robust lobe radius (80th percentile) and the outward lamina direction |
-| `GET /models` | `{"default", "models": [{"id", "provider", "available", "reason"?}]}`: the model picker's registry |
+| `GET /models` | `{"default", "models": [{"id", "provider", "available", "reason"?, "note"?}]}`: the model picker's registry |
 | `POST /chat` | `text/event-stream`, body `{"message", "conversation_id"?, "model"?}`; `model` must be an available id from `/models`, else `422` listing them |
 | `GET /neurons/{row}` | one neuron by atlas row (the index the viewer uses): `root_id` (a string, it does not fit a JS number), `cell_type`, `cell_class`, `super_class`, `side`, `top_nt`, `position_um`, `region`, and with a connectome `partners: true` plus the top 5 `inputs` and `outputs` (`{row, cell_type, super_class, synapses}`) and `synapses_in` / `synapses_out` totals (`partners: false` and no lists without one); `404` for a row outside the atlas, `422` for a non-integer |
 | `GET /selections/{id}/indices` | row indices of a ticket, uint32 LE; 404 if unknown or expired |
@@ -599,7 +606,7 @@ FlyWire consortium and its authors; follow their terms and cite their papers if 
 
 ```bash
 uv sync
-uv run pytest        # 283 tests, no network or API key needed (fake chat model)
+uv run pytest        # 579 tests, no network or API key needed (fake chat model)
 ```
 
 Work is tracked per feature in [`odd/tasks/`](odd/tasks/), with test-first commits.

@@ -216,6 +216,7 @@ def create_app(
     models: list[str] | None = None,
     model_factory=None,
     env=None,
+    served: dict | None = None,
     keep_turns: int | None = None,
     experiment_timeout: float | None = None,
 ) -> FastAPI:
@@ -223,7 +224,8 @@ def create_app(
 
     ``model_name`` is the provider:model label shown by /health (only while chat is on).
     ``models`` is the picker's registry of provider:model ids; ``model_factory(id)`` builds one
-    on first use (default: init_chat_model) and ``env`` is where API keys are looked up.
+    on first use (default: init_chat_model) and ``env`` is where API keys are looked up and
+    ``served`` (provider -> ids from the provider's list, None if the fetch failed) hides retired ids.
     Only registry ids whose key is set can be chosen per message; every model shares ONE
     checkpointer, so a conversation keeps its history across a model switch."""
     path = Path(atlas_path or os.environ.get("FLYBRAIN_ANNOTATIONS") or DEFAULT_ANNOTATIONS)
@@ -268,7 +270,7 @@ def create_app(
 
     def _rows() -> list[dict]:
         """Registry rows; the default is built already, so it is available whatever the env says."""
-        rows = describe_models(registry, os.environ if env is None else env)
+        rows = describe_models(registry, os.environ if env is None else env, served)
         for row in rows:
             if row["id"] == default_id:
                 row.pop("reason", None)

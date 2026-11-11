@@ -5,8 +5,8 @@ import os
 import sys
 
 from flybrain.agent import MAX_STEPS
-from flybrain.cli import DEFAULT_MODEL, _model_spec, _one_line, _positive_int, _unwrap
-from flybrain.models import CHAT_MODEL_KWARGS, parse_model_list, resolve_models
+from flybrain.cli import _model_spec, _one_line, _positive_int, _unwrap
+from flybrain.models import CHAT_MODEL_KWARGS, PROVIDER_KEYS, parse_model_list, startup_registry
 
 
 def _model_list(value: str) -> str:
@@ -25,16 +25,18 @@ def parse_args(argv):
     parser.add_argument(
         "--model",
         type=_model_spec,
-        default=os.environ.get("FLYBRAIN_MODEL", DEFAULT_MODEL),
-        help="provider:model (default: $FLYBRAIN_MODEL or %(default)s)",
+        default=os.environ.get("FLYBRAIN_MODEL") or None,
+        help="provider:model the chat starts on (default: $FLYBRAIN_MODEL, else the first "
+        "available catalog model, cheapest first)",
     )
     parser.add_argument(
         "--models",
         type=_model_list,
         default=os.environ.get("FLYBRAIN_MODELS") or None,
         help="comma-separated provider:model ids offered in the picker "
-        "(default: $FLYBRAIN_MODELS, else --model plus Groq tool-calling models); "
-        "each is usable only if its provider API key is set",
+        "(default: $FLYBRAIN_MODELS, else the built-in catalog of tool-calling models "
+        "for every provider whose API key is set, checked at startup against the provider's "
+        "model list so retired ids are hidden); each is usable only if its key is set",
     )
     parser.add_argument(
         "--max-steps",
@@ -53,18 +55,28 @@ def main(argv=None) -> int:
 
     from flybrain.api import create_app
 
+    # one discovery pass at startup (never per request); it cannot crash: failed fetches fail open
+    default, models, served = startup_registry(args.model, args.models, os.environ)
+    if default is None:
+        keys = ", ".join(PROVIDER_KEYS.values())
+        print(
+            "flybrain-web: no chat model available: no provider API key is set.\n"
+            f"Set one of {keys} in .env, or pass --model provider:model.",
+            file=sys.stderr,
+        )
+        return 1
     try:
-        model = init_chat_model(args.model, **CHAT_MODEL_KWARGS)
+        model = init_chat_model(default, **CHAT_MODEL_KWARGS)
     except Exception as exc:
         print(
-            f"flybrain-web: could not set up model {args.model!r}: {_one_line(_unwrap(exc))}\n"
+            f"flybrain-web: could not set up model {default!r}: {_one_line(_unwrap(exc))}\n"
             "Check the provider package (uv add langchain-<provider>) and its API key env var.",
             file=sys.stderr,
         )
         return 1
     try:
-        app = create_app(model=model, max_steps=args.max_steps, model_name=args.model,
-                         models=resolve_models(args.model, args.models))
+        app = create_app(model=model, max_steps=args.max_steps, model_name=default,
+                         models=models, served=served)
     except ValueError as exc:  # e.g. a bad FLYBRAIN_TURN_TIMEOUT
         print(f"flybrain-web: {_one_line(exc)}", file=sys.stderr)
         return 1

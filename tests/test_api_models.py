@@ -140,3 +140,16 @@ def test_models_picked_in_the_picker_are_built_to_fail_fast(tiny_tsv_path, monke
         events = parse_sse(chat(client, "hi", model="groq:fast").text)
     assert dict(events)["answer"] == {"text": "from picker"}
     assert seen == [("groq:fast", {"max_retries": 1})]
+
+
+def test_models_hides_ids_the_provider_does_not_serve(tiny_tsv_path):
+    app = create_app(
+        atlas_path=tiny_tsv_path, model=answering("x"), model_name="google_genai:g",
+        models=["google_genai:g", "groq:old", "groq:new"], env=ENV,
+        served={"groq": {"new"}, "google_genai": {"g"}},
+    )
+    with TestClient(app) as client:
+        by_id = {m["id"]: m for m in client.get("/models").json()["models"]}
+    assert by_id["groq:new"]["available"] is True
+    assert by_id["groq:old"] == {"id": "groq:old", "provider": "groq", "available": False,
+                                 "reason": "not served for this key"}

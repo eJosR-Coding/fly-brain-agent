@@ -3,6 +3,14 @@
 import pytest
 
 from flybrain import web
+from flybrain.models import PROVIDER_KEYS
+
+
+@pytest.fixture(autouse=True)
+def no_provider_keys(monkeypatch):
+    # startup discovery only calls providers that have a key; keep every test off the network
+    for key in PROVIDER_KEYS.values():
+        monkeypatch.delenv(key, raising=False)
 
 
 def test_defaults_bind_to_localhost(monkeypatch):
@@ -88,3 +96,35 @@ def test_main_passes_the_resolved_registry_to_the_app(monkeypatch):
     monkeypatch.delenv("FLYBRAIN_MODELS", raising=False)
     assert web.main(["--model", "google_genai:g", "--models", "groq:a"]) == 0
     assert seen["models"] == ["google_genai:g", "groq:a"]
+
+
+def test_default_model_is_the_first_available_catalog_model(monkeypatch):
+    seen = {}
+    monkeypatch.delenv("FLYBRAIN_MODEL", raising=False)
+    monkeypatch.setattr(
+        web, "startup_registry",
+        lambda explicit, raw, env: ("groq:openai/gpt-oss-120b",
+                                    ["groq:openai/gpt-oss-120b", "groq:openai/gpt-oss-20b"],
+                                    {"groq": {"openai/gpt-oss-120b"}}),
+    )
+    monkeypatch.setattr("langchain.chat_models.init_chat_model", lambda spec, **kw: seen.update(spec=spec) or object())
+    monkeypatch.setattr("flybrain.api.create_app", lambda **kw: seen.update(kw) or object())
+    monkeypatch.setattr("uvicorn.run", lambda *a, **k: None)
+    assert web.main([]) == 0
+    assert seen["spec"] == "groq:openai/gpt-oss-120b"
+    assert seen["model_name"] == "groq:openai/gpt-oss-120b"
+    assert seen["served"] == {"groq": {"openai/gpt-oss-120b"}}
+
+
+def test_no_key_and_no_model_says_which_keys_to_set(monkeypatch, capsys):
+    monkeypatch.delenv("FLYBRAIN_MODEL", raising=False)
+    assert web.main([]) == 1
+    err = capsys.readouterr().err
+    assert "no chat model available" in err and "GROQ_API_KEY" in err
+
+
+def test_help_explains_the_catalog(capsys):
+    with pytest.raises(SystemExit):
+        web.parse_args(["--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "first available catalog model" in out
