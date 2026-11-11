@@ -240,16 +240,56 @@ readout mn9)` takes about 13 s including the first load, MN9 fires at about 60 H
 
 API: `GET /simulations/{id}` (meta) and `GET /simulations/{id}/frames` (`application/octet-stream`:
 `n_rows` uint32 LE atlas rows, then `n_rows * n_bins` uint8 spike counts, row-major; 404 with a clear
-message when unknown or expired), `POST /simulate` (the viewer's no-LLM route: `{preset | selection_id,
-rate_hz, duration_ms, trials, readout_preset | readout_selection_id, silence_selection_id}`; 422 on
-bad input, 404 for an unknown ticket, 503 when the simulator is not set up), an `activity` SSE event
-(`simulation_id`, `n_bins`, `bin_ms`) after a `stimulate` result, and `simulation: true|false` in `/health`.
+message when unknown or expired), `GET /simulations/{id}/rows` (`[{row, cell_type, super_class}]` for
+the recorded rows, or only the comma-separated `?rows=` among them), `POST /simulate` (the viewer's
+no-LLM route: `{preset | selection_id, rate_hz, duration_ms, trials, readout_preset |
+readout_selection_id, silence_preset | silence_selection_id}`; 422 on bad input, 404 for an unknown
+ticket, 503 when the simulator is not set up), an `activity` SSE event (`simulation_id`, `n_bins`,
+`bin_ms`, `compare_id`) after a `stimulate` result, and `simulation: true|false` in `/health`.
+
+**Compare runs.** A run with silencing keeps BOTH recordings (same stimulus and seed): the silenced
+one and the baseline. The silenced recording's meta (`GET /simulations/{id}`) carries `compare_id`
+(the baseline's simulation id, also in the `activity` event), `silenced_rows` (up to 5,000) and
+`readout` (`{label, neurons, rows, hz}`: the readout group's mean rate per time bin); the baseline's
+meta has its own `readout` and `compare_id: null`. For example, no LLM needed:
+`POST /simulate {"preset": "sugar", "readout_preset": "mn9", "silence_selection_id": "sel_..."}`.
 
 In the viewer, the **give sugar** chip runs the paper's experiment (20 sugar neurons, 100 Hz, 1 s,
 3 trials, MN9 read out) and plays the result as a wave of light over the brain, in slow motion,
 with a timeline (play/pause, scrub, `t = 340 ms`) and the legend `activity · 336 neurons · MN9 60 Hz`.
 Activity from a chat answer plays the same way. With reduced motion the summed activity is drawn
 as a still frame.
+
+The timeline has a mode toggle, and every mode is strictly black and white (shape, fill and size
+carry the meaning, never hue):
+
+- `wave`: the animation above.
+- `latency`: a static map of when each neuron fired FIRST (first non-zero bin times the bin width).
+  Early neurons are bright and larger, late ones dim grey, on a monotonic scale from 0 ms to the run
+  length; a small black-to-white bar with ticks is the legend (`first spike · 0 ms → 1000 ms`).
+- `diff` (only when the run has a baseline, see compare runs): per neuron, the rate in the silenced
+  run minus the baseline rate (Hz). Neurons that LOST activity are hollow rings, neurons that GAINED
+  are filled dots, the magnitude sets the size and brightness, unchanged neurons (under 0.5 Hz) are
+  hidden, and the silenced neurons are marked with a grey cross. Legend:
+  `diff · 36 lost · 263 gained · MN9 60 → 71 Hz`.
+
+The `charts` chip opens a panel (bottom left, it replaces the color key while open) with two plain
+SVG charts that share one time axis and a playhead synced with the wave:
+
+- **raster**: spikes over time for the 30 busiest neurons, grouped by cell type (one bracket and
+  label per group, never a label on every row); the readout group (MN9) is always included and drawn
+  bold. Hover for the exact row, time window and spike count.
+- **readout**: the readout group's mean rate over time on one y axis. In a compare run, baseline
+  (solid) and silenced (dashed) are told apart by stroke style plus a legend and direct labels, never
+  by color. The trace is a 25 ms moving average (a single neuron fires a few spikes per bin) and the
+  tooltip shows the exact plotted values; the numbers are also in a visually hidden table.
+
+Design notes (`dataviz` skill, adapted to the black and white palette): 2 px lines, hairline solid
+grid, 12 px mono text at 9.8:1 contrast, one axis (no dual axes), legend only with two or more
+series. The palette validator reports the lightness-band and chroma checks as expected failures
+for an all-grey palette; the checks that matter here pass (contrast and separation between the two
+greys), and identity never relies on tone: it comes from stroke style, shape and labels. No chart
+library: two small SVGs do not justify the weight.
 
 Honesty note: this is the published model of the wiring diagram with fixed parameters, not the
 living fly: no neuromodulation, no plasticity, no ventral nerve cord, and the sign of each synapse
@@ -437,8 +477,8 @@ Without a model, run the data and search endpoints only with
   pointer ray; the selection, click-vs-drag, card model and card placement are pure, tested
   functions (`web/src/inspect.ts`).
 - **Paths as cables**: when the agent runs `find_path`, the `path` event draws the route as
-  glowing white cables between the neurons it passes through (`web/src/pathLayer.ts`). Cable width
-  grows with the log of the hop's synapses (clamped), each hop is labelled (`19 syn`, hidden on
+  fine white threads between the neurons it passes through (`web/src/pathLayer.ts`). Thread width
+  grows subtly with the log of the hop's synapses (1 px to 2.5 px), each hop is labelled (`19 syn`, hidden on
   small screens), and lights travel from source to target (static under `prefers-reduced-motion`).
   The legend reads `path · 3 hops · bottleneck 5 syn`. The `clear` chip, a new selection or `new
   chat` removes them.
