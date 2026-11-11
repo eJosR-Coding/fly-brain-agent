@@ -16,6 +16,7 @@ import { createChartsPanel, type ChartsPanel } from "./chartsPanel";
 import { mountInspector } from "./inspector";
 import { pathLegend } from "./path";
 import { formatExperimentProgress, parseChart, parseProgress, type ExperimentChart } from "./experiments";
+import { addGroup, addSubgroup, renderKey } from "./controls";
 import { greyHex, keyRows, loadNt, ntTier, type Transmitters } from "./transmitters";
 import type { Theme } from "./theme";
 
@@ -231,28 +232,30 @@ function renderStatus(modelEl: HTMLElement): void {
 }
 
 function setupChips(): void {
+  const runItems = addGroup($("chips"), "run", "RUN");
+  const hlItems = addGroup($("chips"), "highlight", "HIGHLIGHT");
   const sugar = document.createElement("button");
-  sugar.className = "chip";
+  sugar.className = "chip run";
   sugar.textContent = "give sugar";
   sugar.title = "simulate 1 s of the fly tasting sugar (Shiu et al. 2024 model): 20 sugar-sensing neurons at 100 Hz, MN9 read out";
   sugar.addEventListener("click", () => void giveSugar());
   sugarChip = sugar;
-  $("chips").appendChild(sugar);
+  runItems.appendChild(sugar);
   for (const [path, label, title] of [
     ["dose_response", "dose", "sweep the sugar neurons from 10 to 200 Hz and plot MN9's response (dose-response curve, 3 trials per rate, ~20 s)"],
     ["screen", "screen", "silence the 8 busiest non-sensory neurons one at a time and rank their effect on MN9 (3 trials each, ~40 s)"],
   ] as const) {
     const b = document.createElement("button");
-    b.className = "chip";
+    b.className = "chip run";
     b.textContent = label;
     b.title = title;
     b.addEventListener("click", () => void runExperiment(path, b, label));
     experimentChips.push(b);
-    $("chips").appendChild(b);
+    runItems.appendChild(b);
   }
   for (const chip of CHIPS) {
     const b = document.createElement("button");
-    b.className = "chip";
+    b.className = chip.params ? "chip" : "chip sep";
     b.textContent = chip.label;
     b.addEventListener("click", async () => {
       if (!chip.params) {
@@ -281,37 +284,20 @@ function setupChips(): void {
         renderLegend(null, `search failed: ${(e as Error).message}`);
       }
     });
-    $("chips").appendChild(b);
+    hlItems.appendChild(b);
   }
-}
-
-/** Compact key for the current color mode: one row per category with its real neuron count. */
-function renderKey(rows: { name: string; count: number; hex: string }[]): void {
-  $("key").replaceChildren(
-    ...rows.map((r) => {
-      const row = document.createElement("div");
-      row.className = "key-row";
-      const dot = document.createElement("i");
-      dot.style.background = r.hex;
-      const name = document.createElement("span");
-      name.textContent = r.name;
-      const n = document.createElement("b");
-      n.textContent = r.count.toLocaleString("en-US");
-      row.append(dot, name, n);
-      return row;
-    }),
-  );
 }
 
 /** Mode, orbit and camera chips, shown once the scene is up. */
 function setupViewChips(scene: BrainScene, theme: Theme, regions?: Regions, nt?: Transmitters): void {
-  const mk = (label: string, title: string, onClick: (b: HTMLButtonElement) => void, extra = "") => {
+  const viewItems = addGroup($("views"), "view", "VIEW");
+  const mk = (label: string, title: string, onClick: (b: HTMLButtonElement) => void, extra = "", into: HTMLElement = viewItems) => {
     const b = document.createElement("button");
     b.className = `chip ${extra}`.trim();
     b.textContent = label;
     b.title = title;
     b.addEventListener("click", () => onClick(b));
-    $("views").appendChild(b);
+    into.appendChild(b);
     return b;
   };
   const regionRows = () =>
@@ -322,24 +308,25 @@ function setupViewChips(scene: BrainScene, theme: Theme, regions?: Regions, nt?:
     const modes: HTMLButtonElement[] = [];
     const select = (mode: "regions" | "transmitters") => {
       scene.setColorMode(mode);
-      renderKey(mode === "regions" ? regionRows() : ntRows());
+      renderKey($("key"), mode === "regions" ? "REGIONS" : "TRANSMITTERS", mode === "regions" ? regionRows() : ntRows());
       modes.forEach((m) => m.classList.toggle("active", m.textContent === mode));
     };
     modes.push(mk("regions", "tint the neurons by brain region", () => select("regions"), "mode active"));
     modes.push(mk("transmitters", "tint the neurons by predicted neurotransmitter", () => select("transmitters"), "mode"));
   }
-  renderKey(regionRows());
+  renderKey($("key"), "REGIONS", regionRows());
   chartsChip = mk("charts", "spike raster of the busiest neurons and the readout trace over time", (b) => {
     charts?.setOpen(!charts.open);
     b.classList.toggle("active", charts?.open === true);
-  }, "sep toggle");
+  }, "toggle");
   chartsChip.disabled = true; // needs a recording
   mk("orbit", "slow auto-orbit; pauses while you drag", (b) => {
     scene.setOrbit(!scene.orbitOn);
     b.classList.toggle("active", scene.orbitOn);
   }, `toggle${scene.orbitOn ? " active" : ""}`);
-  mk("front", "reset the camera to a straight front view", () => scene.setView("front"), "sep");
-  mk("3/4", "reset the camera to the default three-quarter view", () => scene.setView("home"));
+  const camera = addSubgroup(viewItems, "camera");
+  mk("front", "reset the camera to a straight front view", () => scene.setView("front"), "", camera);
+  mk("3/4", "reset the camera to the default three-quarter view", () => scene.setView("home"), "", camera);
 }
 
 async function loadHealth(): Promise<void> {
