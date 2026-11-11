@@ -23,7 +23,7 @@ experiments return instantly; the viewer stops using the GPU while nothing chang
 - [x] T4 small fixes from reviews: vacuous clip test (tests/test_dose_response.py:158), duplicated
       top_non_sensory helpers (silencing.py/tools.py), toolTrace DOM test (chat.ts:537), SELECTION
       line on phones. (route: delegated writer)
-- [ ] T5 Engram: find why mem_save is blocked in auto mode (a hook rewrites its input); report, do
+- [x] T5 Engram: find why mem_save is blocked in auto mode (a hook rewrites its input); report, do
       not change user config without asking. (route: inline, read-only)
 
 ## Later (not in scope)
@@ -53,3 +53,8 @@ ask-on-risk; one PR per task.
   (toolTrace DOM test + phone stage). RED: clip test fails with the clip removed (ci_low negative), toolTrace tests fail when
   the default is forced open. GREEN: `uv run pytest -q` 653 passed; `pnpm -C web test` 401 passed; `pnpm -C web build` ok.
   Screenshots m390_after_844.png / _667.png: ~60 px / ~28 px clearance between brain and SELECTION line.
+- T5 done 2026-11-11 (inline, read-only). Cause: the Engram plugin's own PreToolUse hook
+  (`engram hook claude-pre-tool-use`, plugin 0.1.3) rewrites every mem_* write through `updatedInput` to bind the
+  authoritative session_id; auto mode approves the original input, sees it changed, and refuses. Engram itself works.
+  Options (user's decision): approve mem_save manually outside auto mode, or turn that hook off (not recommended:
+  it is what binds memories to the right session). No user config changed.
