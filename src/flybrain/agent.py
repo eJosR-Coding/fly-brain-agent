@@ -50,7 +50,8 @@ SYSTEM_PROMPT = (
     "seconds, so run it once with sensible settings. If a result has a warning, relay it plainly. "
     "Format simulation answers the same way: the first line is a one-sentence verdict in bold; then "
     "a markdown table of the top responders (type, super class, Hz; no root ids; at most 5 rows), one per run when "
-    "comparing; then the readout in one line; end with one short caveat line in italics and at most "
+    "comparing; then the readout in one line; then one plain sentence that tells a non-specialist what the "
+    "result means in everyday words (no jargon); end with one short caveat line in italics and at most "
     "two next steps. One table per answer, never two tables side by side. Answer concisely."
 )
 

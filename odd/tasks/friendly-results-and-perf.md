@@ -12,7 +12,7 @@ experiments return instantly; the viewer stops using the GPU while nothing chang
 - The render loop draws every frame even when the scene is still (web/src/scene.ts:370).
 
 ## Tasks
-- [ ] T1 plain-language layer: class glossary (cell_class/super_class/nt) + template for unclassed
+- [x] T1 plain-language layer: class glossary (cell_class/super_class/nt) + template for unclassed
       neurons, served by the API and `describe_neuron`; one plain line atop the inspector card;
       plain captions under charts; the agent ends results with a one-line plain summary.
       (route: delegated writer, 4+ files)
@@ -38,3 +38,7 @@ ask-on-risk; one PR per task.
 
 ## Progress
 - Created 2026-11-11.
+- T1 done 2026-11-11 (delegated writer). Commits: glossary+backend 0fb323d, web (card line, tooltips, chart
+  captions), prompt line. RED: tests/test_plain.py collection error, 10 failing web tests, prompt test.
+  GREEN: `uv run pytest -q` 642 passed; `pnpm -C web test` 398 passed; `pnpm -C web build` ok.
+  Screenshot /tmp/claude-1000/legib/plain.png: plain line renders under the title (13px Inter, #fff on #050505).

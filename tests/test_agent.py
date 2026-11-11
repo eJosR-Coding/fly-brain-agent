@@ -253,6 +253,11 @@ def test_the_prompt_fixes_one_answer_layout_for_simulation_results():
         assert phrase in SYSTEM_PROMPT
 
 
+def test_the_prompt_asks_for_one_plain_sentence_for_a_non_specialist():
+    # the table stays technical; one closing sentence says what it means in everyday words
+    assert "one plain sentence" in SYSTEM_PROMPT and "non-specialist" in SYSTEM_PROMPT
+
+
 def test_the_prompt_never_mentions_the_reply_language():
     # live DeepSeek runs: "in the user's language" turned "Ilumina las neuronas..." into Portuguese and
     # "(Spanish stays Spanish)" into Italian; with no language words it answered Spanish 3 of 3 times
