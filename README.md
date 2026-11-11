@@ -280,6 +280,21 @@ conversation. Free tiers (Groq) limit tokens per minute, so the agent keeps all 
   question and the final answer: their tool calls and results are dropped together, so no tool
   call is left without its result. In the kept window a single tool result over 4,000 characters
   is cut with a `... [truncated N chars]` marker.
+- **Per-request budget.** After compaction, `fit_to_budget` makes the whole request (system
+  prompt + tool definitions + messages, estimated as characters / 4) fit
+  `FLYBRAIN_CONTEXT_BUDGET` tokens (default 6000, an integer >= 1000). It drops the oldest
+  whole turns first (never the current one), then cuts the largest tool results of the
+  current turn down to 1,000 characters each. Why: on 2026-11-10 the Groq headers for
+  `openai/gpt-oss-120b` and `openai/gpt-oss-20b` on the free tier showed
+  `x-ratelimit-limit-tokens: 8000` per minute, and a single request above that fails with
+  HTTP 413 ("Request too large"). The estimate is rough (id-heavy JSON tokenizes denser than
+  4 chars per token), so on that tier set `FLYBRAIN_CONTEXT_BUDGET=4000` if you still see 413s.
+  A 413 is reported as "request too large for its per-minute token limit; start a new chat or
+  ask a narrower question", distinct from the 429 quota message.
+- **New chat.** The chat header has a `new chat` button that clears the log and drops the
+  conversation id, so the next message starts a fresh thread (and a fresh token count).
+  `list_selection` pages are small by design (default 20, max 25 rows of
+  `root_id, cell_type, super_class, side`).
 - **Fail fast on rate limits.** Chat models are built with `max_retries=1`, so a 429 reaches the
   friendly quota message in seconds instead of the SDK retrying silently until the turn limit.
 - **Usage per turn.** The server sums `usage_metadata` over every model call of the turn and
