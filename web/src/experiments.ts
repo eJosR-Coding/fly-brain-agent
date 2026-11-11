@@ -160,3 +160,38 @@ const SHORT: Record<string, string> = { dose_response: "dose", silencing_screen:
 export function formatExperimentProgress(p: ExperimentProgress): string {
   return `${SHORT[p.experiment] ?? p.experiment} · ${p.done}/${p.total}`;
 }
+
+// --- plain captions ------------------------------------------------------------------------
+
+const MIN_STEP_SHARE = 0.1; // the last step still adds this much of the top value: the curve is still climbing
+
+/** One plain sentence for a dose-response curve; the technical caption stays below it. */
+export function doseCaption(c: DoseChart): string {
+  const means = c.points.map((p) => p.mean);
+  const peak = Math.max(0, ...means);
+  if (peak === 0) return `${c.readoutLabel} never fired at any ${c.stimulusLabel} rate tested.`;
+  const first = means[0];
+  const last = means[means.length - 1];
+  const rising = last > first;
+  const falling = last < first;
+  const head = rising
+    ? `More ${c.stimulusLabel} means ${c.readoutLabel} fires more.`
+    : falling
+      ? `More ${c.stimulusLabel} means ${c.readoutLabel} fires less.`
+      : `${c.readoutLabel} barely changes with ${c.stimulusLabel}.`;
+  const half = c.ec50 !== null && rising ? ` It reaches half its maximum at about ${Number(c.ec50.toFixed(1))} Hz.` : "";
+  const step = means.length > 1 ? last - means[means.length - 2] : 0;
+  const climbing = rising && step > MIN_STEP_SHARE * last;
+  return `${head}${half}${climbing ? " The curve has not levelled off at the highest rate tested, so the true maximum may be higher." : ""}`;
+}
+
+/** One plain sentence for a silencing screen. */
+export function screenCaption(c: ScreenChart): string {
+  const n = c.rows.length;
+  const noun = `${n} neuron${n === 1 ? "" : "s"}`;
+  if (c.rows.every((r) => r.p === null)) {
+    return `Each of ${noun} was silenced on its own and ${c.readoutLabel} was re-measured; there is no significance test with a single trial. Left of zero means ${c.readoutLabel} dropped.`;
+  }
+  const hits = c.rows.filter((r) => r.significant).length;
+  return `Each of ${noun} was silenced on its own: ${hits} changed ${c.readoutLabel} significantly (filled dots), the rest did not (hollow). Left of zero means ${c.readoutLabel} dropped.`;
+}

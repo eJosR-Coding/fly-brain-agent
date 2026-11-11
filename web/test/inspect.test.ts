@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cardView, isClick, parseNeuronCard, pickNearest, pickThreshold, placeCard } from "../src/inspect";
+import { LABEL_TIPS, PARTNER_TIPS, cardView, isClick, parseNeuronCard, pickNearest, pickThreshold, placeCard } from "../src/inspect";
 
 const raw = {
   row: 60, root_id: "720575940624566549", cell_type: "PAM05", cell_class: "DAN", super_class: "central",
@@ -7,6 +7,7 @@ const raw = {
   inputs: [{ row: 5, cell_type: "KCg-m", super_class: "central", synapses: 31 }],
   outputs: [{ row: 9, cell_type: null, super_class: "central", synapses: 12 }],
   synapses_in: 120, synapses_out: 1234,
+  plain: "A dopaminergic neuron. It uses dopamine.",
 };
 
 describe("pickNearest", () => {
@@ -112,5 +113,27 @@ describe("placeCard", () => {
   it("stays inside the bounds vertically", () => {
     expect(placeCard({ x: 200, y: 10 }, size, bounds, { gap: 16, margin: 12 }).top).toBe(12);
     expect(placeCard({ x: 200, y: 790 }, size, bounds, { gap: 16, margin: 12 }).top).toBe(800 - 12 - 300);
+  });
+});
+
+describe("plain line and tooltips", () => {
+  it("parses the plain line from the endpoint and keeps it null when absent or empty", () => {
+    expect((parseNeuronCard(raw, null) as { plain: string }).plain).toBe("A dopaminergic neuron. It uses dopamine.");
+    expect((parseNeuronCard({ ...raw, plain: undefined }, null) as { plain: unknown }).plain).toBeNull();
+    expect((parseNeuronCard({ ...raw, plain: "" }, null) as { plain: unknown }).plain).toBeNull();
+  });
+  it("hands the plain line to the card view", () => {
+    const c = parseNeuronCard(raw, null);
+    if (typeof c === "string") throw new Error(c);
+    expect(cardView(c).plain).toBe("A dopaminergic neuron. It uses dopamine.");
+    expect(cardView({ ...c, plain: null }).plain).toBeNull();
+  });
+  it("explains every technical label in words", () => {
+    const c = parseNeuronCard(raw, null);
+    if (typeof c === "string") throw new Error(c);
+    const v = cardView(c);
+    for (const r of v.rows) expect(LABEL_TIPS[r.label], r.label).toMatch(/(\w+ ){4}/);
+    expect(PARTNER_TIPS["top inputs"]).toMatch(/send/);
+    expect(PARTNER_TIPS["top outputs"]).toMatch(/receive/);
   });
 });

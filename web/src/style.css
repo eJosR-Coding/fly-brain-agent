@@ -195,6 +195,7 @@ body.has-activity #key { bottom: 310px; }
 .ch-back[hidden] { display: none; }
 #charts [hidden] { display: none; }
 .ch-note { margin: 4px 0 0; color: var(--dim); }
+.ch-plain { margin: 2px 0 8px; font: 400 13px/19px var(--font-ui); color: var(--fg); }
 .ch-legend { display: flex; gap: 16px; margin-bottom: 4px; color: var(--text); }
 .ch-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .chart-tip { position: absolute; left: 0; top: 0; padding: 4px 8px; background: #000; border: 1px solid #555; border-radius: var(--radius);
@@ -384,6 +385,8 @@ body.has-charts #key { display: none; }
 .neuron-card:focus-visible { border-color: var(--fg); }
 .neuron-card header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .neuron-card h2 { margin: 0; font: 500 13px/18px var(--font-mono); color: var(--fg); overflow-wrap: anywhere; }
+.neuron-card .nc-plain { margin: -2px 0 12px; font: 400 13px/19px var(--font-ui); color: var(--fg); }
+.neuron-card dt[title], .neuron-card h3[title] { cursor: help; text-decoration: underline dotted #666; text-underline-offset: 3px; }
 .neuron-card h3 { margin: 12px 0 4px; font: 400 12px/18px var(--font-mono); letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
 .neuron-card dl { margin: 0; display: flex; flex-direction: column; gap: 2px; }
 .neuron-card dl > div { display: flex; justify-content: space-between; gap: 12px; }

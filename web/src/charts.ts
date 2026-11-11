@@ -149,3 +149,17 @@ export function smoothWindow(binMs: number, ms = 25): number {
   const n = Math.max(1, Math.round(ms / binMs));
   return n % 2 ? n : n + 1;
 }
+
+// --- plain captions ------------------------------------------------------------------------
+
+/** What the raster shows, in words. */
+export function rasterCaption(nNeurons: number, durationMs: number): string {
+  return `Each row is one neuron and each tick is one spike: the ${nNeurons} most active neuron${nNeurons === 1 ? "" : "s"} over ${Math.round(durationMs)} ms.`;
+}
+
+/** What the readout trace shows, in words: the peak of its first line, or that it stayed silent. */
+export function traceCaption(label: string, m: TraceModel): string {
+  const peak = Math.max(0, ...(m.series[0]?.points.map((p) => p.hz) ?? []));
+  if (peak === 0) return `${label} did not fire in this run.`;
+  return `${label} fires at up to ${Math.round(peak)} Hz on average (peak of the smoothed line).`;
+}
