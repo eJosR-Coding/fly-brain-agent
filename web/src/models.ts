@@ -43,6 +43,11 @@ export function pickModel(list: ModelList, stored: string | null): string | null
   return list.models.find((m) => m.available)?.id ?? null;
 }
 
+/** The model the status line reports: the one a running turn started with, else the picker's current choice. */
+export function statusModel(running: boolean, turnModel: string | null, chosen: string | null): string | null {
+  return running ? turnModel : chosen;
+}
+
 export function optionLabel(m: ModelInfo): string {
   return m.available ? m.id : `${m.id} (no key)`;
 }

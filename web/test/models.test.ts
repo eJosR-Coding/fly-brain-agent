@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { STORAGE_KEY, loadStoredModel, optionLabel, parseModels, pickModel, saveStoredModel } from "../src/models";
+import { STORAGE_KEY, loadStoredModel, optionLabel, parseModels, pickModel, saveStoredModel, statusModel } from "../src/models";
 
 const LIST = {
   default: "google_genai:g",
@@ -64,5 +64,16 @@ describe("stored choice", () => {
     } as unknown as Storage;
     expect(() => saveStoredModel("x", bad)).not.toThrow();
     expect(loadStoredModel(bad)).toBeNull();
+  });
+});
+
+describe("statusModel", () => {
+  it("shows the model the running turn started with, whatever the picker says now", () => {
+    expect(statusModel(true, "a", "b")).toBe("a");
+    expect(statusModel(true, null, "b")).toBeNull(); // a turn sent before the list loaded went with the server default
+  });
+  it("shows the picker choice when no turn runs", () => {
+    expect(statusModel(false, "a", "b")).toBe("b");
+    expect(statusModel(false, null, null)).toBeNull();
   });
 });

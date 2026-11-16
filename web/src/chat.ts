@@ -1,9 +1,10 @@
 import { parseActivityEvent, type ActivityEvent } from "./activity";
 import { formatExperimentProgress, parseChart, parseProgress, type ExperimentChart, type ExperimentProgress } from "./experiments";
 import { renderMarkdown } from "./markdown";
-import { loadStoredModel, optionLabel, pickModel, saveStoredModel, type ModelList } from "./models";
+import { loadStoredModel, optionLabel, pickModel, saveStoredModel, statusModel, type ModelList } from "./models";
 import { parsePathEvent, pathLegend, type PathPayload } from "./path";
 import { parseSSE } from "./sse";
+import { guardHandlers, IDLE, isBusy, turnStep, type Turn, type TurnEvent } from "./turn";
 import { loadExpanded, saveExpanded, summarizeTools, type TraceTool } from "./toolTrace";
 
 export interface HighlightPayload {
@@ -133,6 +134,7 @@ export async function streamChat(
   base = "/api",
   getPointCount: () => number | null = () => null,
   model: string | null = null,
+  signal?: AbortSignal,
 ): Promise<void> {
   let finished = false;
   const finish = () => {
@@ -149,12 +151,14 @@ export async function streamChat(
       method: "POST",
       headers: { "content-type": "application/json", accept: "text/event-stream" },
       body: JSON.stringify(body),
+      signal,
     });
     if (!res.ok || !res.body) {
       h.onError(`chat request failed: HTTP ${res.status}`);
       return;
     }
     for await (const ev of parseSSE(res.body)) {
+      if (finished) break; // after `done` nothing else of this turn may be dispatched
       const d = (ev.data ?? {}) as Record<string, unknown>;
       switch (ev.event) {
         case "meta":
@@ -208,6 +212,7 @@ export async function streamChat(
         case "done": finish(); break;
       }
     }
+    if (finished) void res.body.cancel().catch(() => undefined); // a server that keeps the connection open after `done`
   } catch (e) {
     h.onError((e as Error).message);
   } finally {
@@ -275,12 +280,28 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
   let conversationId: string | null = null;
   let chosen: string | null = null;
   const newChat = root.querySelector<HTMLButtonElement>("#new-chat")!;
-  let running = false; // a turn is streaming
-  const syncNewChat = () => {
+  // ONE turn state; the disabled flags of input, send, new chat and the model picker are all derived from it in render()
+  let turn: Turn = IDLE;
+  let turnSeq = 0;
+  let turnModel: string | null = null; // the model the running turn was sent with
+  let stopTurn: () => void = () => undefined;
+  const STOP_ICON = "M3 3h7v7H3z";
+  const arrowIcon = send.querySelector("path")!.getAttribute("d")!;
+  const render = () => {
+    const busy = isBusy(turn);
+    input.disabled = busy;
+    select.disabled = busy;
+    send.disabled = turn.k === "stopping"; // while a turn runs the send button is the stop button
+    send.setAttribute("aria-label", busy ? "stop" : "send");
+    send.title = busy ? "Stop the answer" : "";
+    send.querySelector("path")!.setAttribute("d", busy ? STOP_ICON : arrowIcon);
     newChat.disabled = !newChatEnabled({
-      streaming: running, conversationId, messages: log.querySelectorAll(".msg").length,
+      streaming: busy, conversationId, messages: log.querySelectorAll(".msg").length,
     });
   };
+  const syncNewChat = render;
+  const dispatch = (e: TurnEvent) => { turn = turnStep(turn, e); };
+  const emitModel = () => onModelChange(statusModel(isBusy(turn), turnModel, chosen));
   let following = true; // keep the log pinned to the bottom unless the user scrolled up
 
   log.addEventListener("scroll", () => {
@@ -293,7 +314,7 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
   select.addEventListener("change", () => {
     chosen = select.value || null;
     if (chosen) saveStoredModel(chosen);
-    onModelChange(chosen);
+    emitModel();
   });
 
   const hint = document.createElement("button");
@@ -433,7 +454,7 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
   };
 
   newChat.addEventListener("click", () => {
-    if (running) return;
+    if (isBusy(turn)) return;
     conversationId = null; // the next message opens a fresh thread on the server
     onNewChat();
     turnUsage = null;
@@ -450,11 +471,21 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
+    if (isBusy(turn)) { stopTurn(); return; } // a submit while a turn runs is the stop press, never a second turn
     const text = input.value.trim();
     if (!text) return;
     input.value = "";
-    input.disabled = send.disabled = true;
-    running = true;
+    const id = ++turnSeq;
+    dispatch({ type: "start", id });
+    turnModel = chosen;
+    const ctl = new AbortController();
+    stopTurn = () => {
+      if (turn.k !== "pending" && turn.k !== "streaming") return;
+      dispatch({ type: "stop" });
+      render();
+      ctl.abort();
+    };
+    render();
     following = true;
     turnUsage = null;
     usageEl = null;
@@ -474,7 +505,7 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
       thinking?.remove();
       thinking = null;
     };
-    void streamChat(text, conversationId, {
+    const handlers: ChatHandlers = {
       onMeta: (id) => { conversationId = id; syncNewChat(); },
       onToolCall: (tool, args, id) => {
         settle();
@@ -570,22 +601,31 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
         el.replaceChildren(renderMarkdown(t));
         showUsage();
       },
-      onError: (m) => { settle(); add("error", m); },
+      onError: (m) => { settle(); add("error", ctl.signal.aborted ? "stopped" : m); },
       onDone: () => {
+        // first, unconditionally: whatever the cosmetic cleanup below does, the panel is usable again
         window.clearInterval(tick);
-        settle();
-        if (streamEl) paintStream(); // an interrupted stream keeps what arrived
-        streamEl = null;
-        for (const t of tools.values()) if (!t.finished) { t.finished = true; t.trace.state = "ended"; t.el.dataset.state = "ended"; t.stat.textContent = ""; }
-        refreshSummary();
-        tools.clear();
-        input.disabled = send.disabled = false;
-        running = false;
-        syncNewChat();
+        dispatch({ type: "done", id });
+        render();
+        emitModel();
         onStreaming(false);
-        input.focus();
+        try {
+          settle();
+          if (streamEl) paintStream(); // an interrupted stream keeps what arrived
+          for (const t of tools.values()) if (!t.finished) { t.finished = true; t.trace.state = "ended"; t.el.dataset.state = "ended"; t.stat.textContent = ""; }
+          refreshSummary();
+        } catch (err) {
+          dropStream();
+          add("error", `could not render the answer: ${(err as Error).message}`);
+        } finally {
+          streamEl = null;
+          tools.clear();
+          render();
+          input.focus();
+        }
       },
-    }, fetch, "/api", getPointCount, chosen);
+    };
+    void streamChat(text, conversationId, guardHandlers(handlers, id, () => turn, () => { dispatch({ type: "event" }); }), fetch, "/api", getPointCount, turnModel, ctl.signal);
   });
 
   return {
@@ -596,7 +636,7 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
       if (list === null || list.models.length === 0) {
         picker.hidden = true;
         chosen = null;
-        onModelChange(null);
+        emitModel();
         return;
       }
       for (const m of list.models) {
@@ -609,8 +649,9 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
       }
       chosen = pickModel(list, loadStoredModel());
       if (chosen) select.value = chosen;
+      else select.selectedIndex = -1; // every model is unavailable: show what is sent (the server default), not a disabled option
       picker.hidden = false;
-      onModelChange(chosen);
+      emitModel();
     },
   };
 }

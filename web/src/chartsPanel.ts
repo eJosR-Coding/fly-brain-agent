@@ -41,6 +41,7 @@ export function createChartsPanel(root: HTMLElement): ChartsPanel {
   let current: { a: Activity; baseline: Activity | null } | null = null;
   let token = 0;
   let playheads: { line: SVGLineElement; x: (ms: number) => number }[] = [];
+  let lastMs: number | null = null; // the player's last time: a redraw re-applies it (the player may be idle and send nothing)
   let experiment: { chart: ExperimentChart; onPick: (id: string) => void } | null = null;
   let view: "recording" | "experiment" = "recording";
 
@@ -87,6 +88,18 @@ export function createChartsPanel(root: HTMLElement): ChartsPanel {
     }
   };
 
+  const applyTime = () => {
+    for (const p of playheads) {
+      if (lastMs === null) p.line.setAttribute("visibility", "hidden");
+      else {
+        const px = String(p.x(lastMs));
+        p.line.setAttribute("x1", px);
+        p.line.setAttribute("x2", px);
+        p.line.setAttribute("visibility", "visible");
+      }
+    }
+  };
+
   const drawRaster = (m: RasterModel, a: Activity) => {
     const plotH = m.rows.length * ROW_PX;
     const H = plotH + 22;
@@ -121,6 +134,7 @@ export function createChartsPanel(root: HTMLElement): ChartsPanel {
     const hover = svg("rect", { height: ROW_PX - 1, width: binW + 2, class: "ch-hover", visibility: "hidden" });
     s.append(frame, hover, head);
     playheads.push({ line: head, x });
+    applyTime();
     const over = svg("rect", { x: LEFT, y: 0, width: W - RASTER_RIGHT - LEFT, height: plotH, fill: "transparent" });
     over.addEventListener("pointermove", (ev) => {
       const box = s.getBoundingClientRect();
@@ -178,6 +192,7 @@ export function createChartsPanel(root: HTMLElement): ChartsPanel {
     const dots = m.series.map(() => svg("circle", { r: 4, class: "ch-dot", visibility: "hidden" }));
     s.append(cross, ...dots, head);
     playheads.push({ line: head, x });
+    applyTime();
     const over = svg("rect", { x: LEFT, y: top, width: W - RIGHT - LEFT, height: bottom - top, fill: "transparent" });
     over.addEventListener("pointermove", (ev) => {
       const box = s.getBoundingClientRect();
@@ -432,18 +447,12 @@ export function createChartsPanel(root: HTMLElement): ChartsPanel {
       view = "recording";
       token++;
       playheads = [];
+      lastMs = null;
       sync();
     },
     setTime(ms) {
-      for (const p of playheads) {
-        if (ms === null) p.line.setAttribute("visibility", "hidden");
-        else {
-          const px = String(p.x(ms));
-          p.line.setAttribute("x1", px);
-          p.line.setAttribute("x2", px);
-          p.line.setAttribute("visibility", "visible");
-        }
-      }
+      lastMs = ms;
+      applyTime();
     },
     setOpen(open) {
       isOpen = open;
