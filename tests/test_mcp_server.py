@@ -155,7 +155,7 @@ def test_find_path_doc_explains_strength_fields(tiny_atlas):
 
 # --- token budget: the tool definitions ride on EVERY model call ---------------------------------
 
-TOOL_DEFS_BUDGET_CHARS = 10230  # ~2,550 tokens (measured 10,217 with 14 tools): was 12,320 before trimming; +2 experiments; +stimulate(preset); +fly (1,184); +looming_escape (547, 5 params)
+TOOL_DEFS_BUDGET_CHARS = 10280  # ~2,570 tokens (measured 10,262 with 14 tools): was 12,320 before trimming; +2 experiments; +stimulate(preset); +fly (1,184); +looming_escape (592, 6 params). Merged from three branches that each raised this cap
 
 
 def _definition_chars(tiny_atlas) -> dict[str, int]:

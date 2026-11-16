@@ -281,12 +281,15 @@ def build_server(
     @server.tool()
     async def looming_escape(
         trials: int = 5, rate_hz: float = 100, duration_ms: float = 500, steps: int = 10, side: str = "right",
+        input: str = "detectors",
     ) -> dict:
-        """SIMULATION (model): looming disc on one eye vs receding, dimming, LPLC2+LC4 silenced; equal drive.
+        """SIMULATION (model): looming disc vs receding, dimming, control (equal drive), read at DNp01.
 
-        Returns DNp01 Hz + 95% CI, Welch p (Holm), verdict. Slow: run once. trials 1..10, steps 3..20, side left|right.
+        input: detectors (LPLC2+LC4) | photoreceptors (R1-6; signal dies). Slow: run once. steps 3..20, trials 1..10.
         """
-        return await asyncio.to_thread(looming.looming_escape, atlas, sims, trials, rate_hz, duration_ms, steps, side)
+        return await asyncio.to_thread(
+            looming.looming_escape, atlas, sims, trials, rate_hz, duration_ms, steps, side, input,
+        )
 
     # the tool definitions are sent on EVERY model call: keep them lean (see the budget test)
     for registered in server._tool_manager.list_tools():

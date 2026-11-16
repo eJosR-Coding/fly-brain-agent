@@ -57,14 +57,15 @@ class EyeMap:
         return np.sort(self.rows[inside])
 
 
-def eye_map(atlas, side: str = "right", cell_type: str = PHOTORECEPTOR_TYPE) -> EyeMap:
-    """The EyeMap of one eye's photoreceptors from the atlas (`side` is "left" or "right")."""
+def eye_map(atlas, side: str = "right", cell_type: str | tuple[str, ...] = PHOTORECEPTOR_TYPE) -> EyeMap:
+    """The EyeMap of one side's cells of `cell_type` (one name or several) from the atlas ("left" or "right")."""
     if side not in SIDES:
         raise ValueError(f'side must be "left" or "right", got {side!r}')
     n = atlas.neurons
-    rows = np.flatnonzero(((n["cell_type"] == cell_type) & (n["side"] == side)).to_numpy())
+    types = (cell_type,) if isinstance(cell_type, str) else tuple(cell_type)
+    rows = np.flatnonzero((n["cell_type"].isin(types) & (n["side"] == side)).to_numpy())
     if not len(rows):
-        raise ValueError(f"no {cell_type} neurons on the {side} side in the atlas")
+        raise ValueError(f"no {'/'.join(types)} neurons on the {side} side in the atlas")
     return EyeMap(rows, n[["x_um", "y_um", "z_um"]].to_numpy()[rows])
 
 
