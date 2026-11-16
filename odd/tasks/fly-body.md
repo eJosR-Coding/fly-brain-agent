@@ -149,6 +149,10 @@ Engram mirror `odd/fly-body/tasks`: PENDING (mem_save is blocked by a hook that 
   context undisposed (small leak); R3-002/R3-003 chatToggle.ts:44-48 and :39-41 focus handling around inert/hidden
   controls (focus moves on every state change); R3-004 bodyData.ts:50-55 (suggestion). Open follow-ups.
   Reviewed boundary is now 2e306a5.
+- T2c slice (base 2e306a5 -> be52349, 696 lines, risk medium): consent granted, consolidated native review APPROVED,
+  acknowledged (lineage review-86b70c3f59e0b78f, authority burned). 2 non-blocking findings: R3-001 web/src/main.ts:437-440
+  (WARNING; see the lines: the layout/body/preview mounting order in boot()); R3-002 bodyData.ts:131-148 (suggestion,
+  viewFitDistance numerics). Open follow-ups. Reviewed boundary is now be52349.
 
 ## Progress
 - 2026-11-16 created after phase 0. T1, T2b, T2a, T2d, T3, T2c done. Next: the user tries it in a real browser; T5 (animate the body from the brain readouts) is a separate decision.
