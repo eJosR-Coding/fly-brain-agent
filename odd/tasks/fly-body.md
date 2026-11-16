@@ -71,5 +71,13 @@ TDD strict (source: project config). Runners: `uv run pytest -q` (baseline 688 o
 Delivery: ask-on-risk; branch feat/fly-body from main; no push or PR until asked.
 Engram mirror `odd/fly-body/tasks`: PENDING (mem_save is blocked by a hook that rewrites its input).
 
+## Reviews
+- T1 slice (base main -> d5a67ad, 1524 lines, risk medium: scripts/build_fly_body.py): consent granted, consolidated
+  native review APPROVED, acknowledged (lineage review-68336c01a9aaca1e, authority burned). 4 non-blocking findings
+  (dev-time build script, the committed asset is validated by tests): R3-001 fly_body_build.py:357-358 .bin and .json
+  written separately (not atomic, an interruption leaves an inconsistent pair); R3-002 :195-196 encode_segments edge
+  case; R3-003 tests/test_fly_body_build.py:276-337 (suggestion); R3-004 :110-112 parse_stl strictness (suggestion).
+  Open follow-ups. Reviewed boundary is now d5a67ad.
+
 ## Progress
 - 2026-11-16 created after phase 0. T1 done. Next step: T2b.
