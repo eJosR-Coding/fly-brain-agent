@@ -130,6 +130,12 @@ Engram mirror `odd/fly-body/tasks`: PENDING (mem_save is blocked by a hook that 
   and chips are wired; if that wiring throws, a retry would build a SECOND scene and the page would have lost its
   preview. Fix idea: wire first, remove the preview last, and in the catch dispose the scene and reset brainScene.
   Open follow-up (untestable glue without WebGL). Reviewed boundary is now 6dc522b.
+- T2d+T3 slice (base 6dc522b -> 2e306a5, 691 lines, risk medium: web/src/body.ts): consent granted, consolidated native
+  review APPROVED, acknowledged (lineage review-2ee83b8ffb851600, authority burned). 4 non-blocking findings:
+  R3-001 bodyMount.ts:28-33 if createBodyScene throws after building the canvas, stage.remove() leaves the WebGL
+  context undisposed (small leak); R3-002/R3-003 chatToggle.ts:44-48 and :39-41 focus handling around inert/hidden
+  controls (focus moves on every state change); R3-004 bodyData.ts:50-55 (suggestion). Open follow-ups.
+  Reviewed boundary is now 2e306a5.
 
 ## Progress
 - 2026-11-16 created after phase 0. T1, T2b, T2a, T2d, T3 done. Next: T2c (layout: body at the center, brain inset top-right) and the framing polish.
