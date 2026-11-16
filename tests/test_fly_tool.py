@@ -341,3 +341,15 @@ def test_the_prompt_tells_the_agent_not_to_quote_tool_fields():
 
     assert "field names" in SYSTEM_PROMPT
     assert "change_vs_previous" not in SYSTEM_PROMPT
+
+
+def test_the_prompt_routes_presets_and_conversational_commands_to_fly_not_stimulate():
+    from flybrain.agent import SYSTEM_PROMPT
+
+    low = SYSTEM_PROMPT.lower()
+    assert "use fly" in low
+    for name in ("sugar", "bitter", "water", "jo_ce"):
+        assert name in low  # the agent is told which published presets go to fly
+    assert "dale" in low  # the Spanish command form of 'give'
+    assert "stimulate(preset" not in low  # the competing instruction is gone
+    assert "only for a selection_id" in low
