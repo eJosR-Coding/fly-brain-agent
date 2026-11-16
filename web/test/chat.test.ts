@@ -349,3 +349,49 @@ describe("streamChat path events", () => {
     expect(log.some((l) => l.startsWith("path:"))).toBe(false);
   });
 });
+
+describe("streamChat lifecycle", () => {
+  const openStream = (chunks: string[]) => {
+    const enc = new TextEncoder();
+    let ctrl!: ReadableStreamDefaultController<Uint8Array>;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(c) { for (const ch of chunks) c.enqueue(enc.encode(ch)); ctrl = c; }, // never closes
+      cancel() { cancelled = true; },
+    });
+    return { res: new Response(body, { status: 200 }), wasCancelled: () => cancelled, fail: (e: Error) => ctrl.error(e) };
+  };
+
+  it("stops reading at done: later events of a connection kept open are ignored and the body is cancelled", async () => {
+    const s = openStream(['event: done\ndata: {}\n\n', 'event: answer\ndata: {"text":"late"}\n\n']);
+    const { log, h } = recorder();
+    await streamChat("x", null, h, (async () => s.res) as unknown as typeof fetch);
+    expect(log).toEqual(["done"]);
+    expect(s.wasCancelled()).toBe(true);
+  });
+
+  it("an aborted signal ends a stalled stream with one error and exactly one onDone", async () => {
+    const s = openStream(['event: meta\ndata: {"conversation_id":"c1"}\n\n']);
+    const ctl = new AbortController();
+    const { log, h } = recorder();
+    const f = (async (_u: string, init: RequestInit) => {
+      init.signal?.addEventListener("abort", () => s.fail(new DOMException("aborted", "AbortError")));
+      return s.res;
+    }) as unknown as typeof fetch;
+    const p = streamChat("x", null, h, f, "/api", () => null, null, ctl.signal);
+    await new Promise((r) => setTimeout(r, 5));
+    ctl.abort();
+    await p;
+    expect(log[0]).toBe("meta:c1");
+    expect(log.filter((l) => l === "done")).toHaveLength(1);
+    expect(log.at(-1)).toBe("done");
+  });
+
+  it("passes the signal to fetch", async () => {
+    let seen: AbortSignal | null | undefined;
+    const f = (async (_u: string, init: RequestInit) => { seen = init.signal; return sseResponse(['event: done\ndata: {}\n\n']); }) as unknown as typeof fetch;
+    const ctl = new AbortController();
+    await streamChat("x", null, recorder().h, f, "/api", () => null, null, ctl.signal);
+    expect(seen).toBe(ctl.signal);
+  });
+});
