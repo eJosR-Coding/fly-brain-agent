@@ -8,6 +8,7 @@ import { fetchIndices, loadBrain, loadBrainMeta } from "./brainData";
 import { mountPreview } from "./brainPreview";
 import { createBrainGate } from "./brainGate";
 import { mountOpenControl } from "./previewOpen";
+import { mountBody } from "./bodyMount";
 import { createScene, type BrainScene } from "./scene";
 import { Latest, runLatest } from "./latest";
 import { loadLatestActivity } from "./activityLoader";
@@ -500,6 +501,13 @@ async function boot(): Promise<void> {
     }
   });
   // The preview stays as the whole default stage; the real scene replaces it only when asked for.
+  // ?body=1: the static fly body takes the stage. The brain preview and open control are skipped entirely
+  // (brain events from the chat still load the real scene through the gate, drawn over the body).
+  if (new URLSearchParams(location.search).get("body") === "1") {
+    const calm = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+    mountBody($("stage"), { theme, reducedMotion: calm });
+    return;
+  }
   preview = mountPreview($("stage"), { theme });
   openControl = mountOpenControl($("stage"), gate);
 }

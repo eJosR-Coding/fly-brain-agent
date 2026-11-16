@@ -87,8 +87,23 @@ fly itself be the interface.
       block re-anchored, "AGENT" tab visible. FOUND AND FIXED: in the wide collapsed stage the preview grew over the
       control rows -> inset 12% 8% 26% 8%. NOT verified: the click itself, the transition, ESC/focus behavior.
       Known: the preview still looks pixelated when upscaled ~4x on a wide stage (blur tried and reverted: no visible gain).
-- [ ] T3 `web/src/body.ts`: its own small scene+renderer for the fly body (LineSegments from fly-body.bin, theme
-      colors, auto-rotate, orbit, dispose); pure helpers (decode, camera framing) tested.
+- [x] T3 `web/src/bodyData.ts` + `body.ts` + `bodyMount.ts` (route: delegated writer). Pure decode of fly-body.bin/json to mm and to
+      Three axes (three = (y_fly, z_fly, x_fly), handedness kept: face on +Z, fly's left on viewer-right +X), own
+      WebGL scene (transparent, theme.highlightHex lines at 0.6, OrbitControls, 3/4 front-left default, slow auto-
+      rotate via orbit.ts, off under reduced motion, on-demand scheduler, ResizeObserver, full dispose) and a caption
+      "static model (NeuroMechFly v2 micro-CT mesh, Apache-2.0), not driven by the brain". Visible ONLY with the URL
+      flag `?body=1` (in that mode the brain is skipped; chat events that need the brain would still call
+      gate.ensure() and draw the brain over the body: documented in main.ts). RED: bodyData tests failed on the
+      missing import; GREEN: web 461 (32 files), build ok, pytest 723 (parent re-ran).
+      PARENT RENDER CHECK: headless Firefox does NOT capture WebGL (a plain red-cleared WebGL canvas also screenshots
+      empty; rAF works, also in iframes), so the first screenshot (only the caption) proved nothing. Workaround: a
+      temporary debug page (removed) built the real createBodyScene with preserveDrawingBuffer patched in temporarily
+      (reverted), copied the canvas to an <img> with toDataURL: the fly renders correctly (white lines on black,
+      3/4 view, head left, wing over the back, six legs). Data diagnostics: 32,262 segments, 193,572 floats, 0 NaN,
+      bounds x -1.53..1.53, y -0.09..1.72, z -2.32..1.34 mm, theme color #ffffff, canvas 1898x968.
+      POLISH (to do in T2c): the fly fills only ~43% of the height and sits right of center (framing uses the bbox
+      bounding sphere); the writer left a redundant assertion and an unused variable in bodyData.test.ts.
+      Also: this method cannot verify the REAL brain scene's WebGL either.
 - [ ] T2c layout: the body takes the CENTER stage; the brain (preview first, the real scene once opened) is an INSET panel
       top-right with a hide/show toggle (remembered in localStorage, try/catch; hidden = not rendered, state kept)
       and a swap control that exchanges the inset and the center sizes (full-size brain one click away).
@@ -115,6 +130,12 @@ Engram mirror `odd/fly-body/tasks`: PENDING (mem_save is blocked by a hook that 
   and chips are wired; if that wiring throws, a retry would build a SECOND scene and the page would have lost its
   preview. Fix idea: wire first, remove the preview last, and in the catch dispose the scene and reset brainScene.
   Open follow-up (untestable glue without WebGL). Reviewed boundary is now 6dc522b.
+- T2d+T3 slice (base 6dc522b -> 2e306a5, 691 lines, risk medium: web/src/body.ts): consent granted, consolidated native
+  review APPROVED, acknowledged (lineage review-2ee83b8ffb851600, authority burned). 4 non-blocking findings:
+  R3-001 bodyMount.ts:28-33 if createBodyScene throws after building the canvas, stage.remove() leaves the WebGL
+  context undisposed (small leak); R3-002/R3-003 chatToggle.ts:44-48 and :39-41 focus handling around inert/hidden
+  controls (focus moves on every state change); R3-004 bodyData.ts:50-55 (suggestion). Open follow-ups.
+  Reviewed boundary is now 2e306a5.
 
 ## Progress
-- 2026-11-16 created after phase 0. T1, T2b, T2a done. Next: user tries click/zoom in the real browser, then T3 (body module).
+- 2026-11-16 created after phase 0. T1, T2b, T2a, T2d, T3 done. Next: T2c (layout: body at the center, brain inset top-right) and the framing polish.
