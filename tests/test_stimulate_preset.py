@@ -14,6 +14,7 @@ PRESETS = {
     "epg": {"description": "compass neuron", "root_ids": [100], "source": "test"},
     "plain": {"description": "no readout", "root_ids": [102], "source": "test"},
     "ghost": {"description": "absent", "root_ids": [999], "source": "test"},
+    "blind": {"description": "readout missing", "root_ids": [102], "source": "test", "readout": "ghost"},
 }
 KW = {"rate_hz": 300, "duration_ms": 200, "trials": 2}
 
@@ -42,6 +43,14 @@ def test_preset_reads_out_its_default_readout(tiny_atlas, store, sims):
     assert out["preset"] == {"name": "orn", "readout_preset": "epg"}
     assert "readout_stats" not in out  # only when silencing
     assert sims.get(out["simulation_id"]).readout["label"] == "EPG"
+
+
+def test_a_missing_default_readout_degrades_instead_of_aborting(tiny_atlas, store, sims):
+    out = call(tiny_atlas, store, sims, preset="blind")
+    assert out["active_neurons"] >= 1  # the stimulation still ran
+    assert "readout" not in out
+    assert out["preset"] == {"name": "blind", "readout_preset": None}
+    assert "ghost" in out["note"] and "readout" in out["note"]
 
 
 def test_default_readout_gets_stats_when_silencing(tiny_atlas, store, sims):

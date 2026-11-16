@@ -545,12 +545,16 @@ def stimulate(
     if (selection_id is None) == (preset is None):
         raise ValueError("give exactly one of selection_id or preset")
     readout_preset = None
+    preset_key = preset.strip().lower() if isinstance(preset, str) else preset
     if preset is not None:
         selection_id = _preset_ticket(atlas, store, preset)
-        declared = load_presets().get(preset.strip().lower(), {}).get("readout")
+        declared = load_presets().get(preset_key, {}).get("readout")
         if declared and readout_selection_id is None:
-            readout_selection_id = _preset_ticket(atlas, store, declared)
-            readout_preset = declared
+            try:
+                readout_selection_id = _preset_ticket(atlas, store, declared)
+                readout_preset = declared
+            except ValueError as exc:  # the default readout is a convenience: run without it, say so
+                notes.append(f"default readout {declared!r} skipped ({exc})")
     rate = _clamp("rate_hz", _number("rate_hz", rate_hz), MIN_RATE_HZ, MAX_RATE_HZ, notes)
     duration = round(_clamp("duration_ms", _number("duration_ms", duration_ms), MIN_DURATION_MS, MAX_DURATION_MS, notes), 1)
     if trials is None:  # a comparison needs enough trials to tell a change from noise
@@ -595,7 +599,7 @@ def stimulate(
     else:
         out["hint"] = "No neuron fired above 1 Hz. Raise rate_hz or stimulate more neurons."
     if preset is not None:
-        out["preset"] = {"name": preset.strip().lower(), "readout_preset": readout_preset}
+        out["preset"] = {"name": preset_key, "readout_preset": readout_preset}
     if readout is not None:
         out["readout"] = _group(atlas, rates, readout)
     if base is not None:
