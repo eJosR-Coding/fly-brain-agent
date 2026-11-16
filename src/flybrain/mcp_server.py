@@ -10,6 +10,7 @@ from mcp.server.fastmcp import FastMCP
 from flybrain import experiments, silencing, tools
 from flybrain.atlas import Atlas, AtlasLoadError, load_atlas
 from flybrain.connectome import Connectome, ConnectomeError
+from flybrain.doll import Doll
 from flybrain.selections import SelectionStore
 from flybrain.sim_service import SimulationService
 
@@ -53,6 +54,7 @@ def build_server(
     store = store if store is not None else SelectionStore()
     sims = sims if sims is not None else SimulationService.default(atlas)
     server = FastMCP("flybrain")
+    doll = Doll()  # one per server process: shared by every conversation of this server, lost on restart
 
     @server.tool()
     def search_neurons(
@@ -203,6 +205,31 @@ def build_server(
         return await asyncio.to_thread(
             tools.stimulate, atlas, store, sims, selection_id, rate_hz, duration_ms, trials,
             silence_selection_id, readout_selection_id, 0, preset,
+        )
+
+    @server.tool()
+    async def fly(
+        stimuli: dict[str, float] = {},  # noqa: B006 - pydantic copies the default
+        remove: list[str] = [],  # noqa: B006
+        silence: list[str] = [],  # noqa: B006
+        readouts: list[str] = [],  # noqa: B006
+        reset: bool = False,
+        duration_ms: float = 500,
+        trials: int | None = None,
+    ) -> dict:
+        """Persistent simulated fly (MODEL, Shiu et al. 2024). Changes its conditions, then runs ALL its stimuli together.
+
+        Conditions persist between calls (shared by every chat of this server). Returns conditions, active count,
+        responders, readouts (meaning, Hz), `change_vs_previous`. No stimulus: no run.
+
+        Args:
+            stimuli: preset -> Hz 1..300 (sugar|bitter|water|jo_ce), added or replaced; max 6.
+            remove: names to drop. silence: presets whose output is cut. readouts: mn9|abn1|dnp01 (a stimulus adds its own).
+            reset: clear all first. duration_ms: 100..1000. trials: 1..10 (3).
+        """
+        return await asyncio.to_thread(
+            tools.fly, atlas, store, sims, doll, dict(stimuli), list(remove), list(silence), list(readouts), reset,
+            duration_ms, trials,
         )
 
     @server.tool()

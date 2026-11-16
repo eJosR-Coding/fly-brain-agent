@@ -10,7 +10,9 @@ import numpy as np
 from flybrain.atlas import Atlas, RowIndex, clean_filter
 from flybrain.connectome import Connectome, ConnectomeError
 from flybrain.plain import plain_description
+from flybrain.doll import Doll, describe_change
 from flybrain.selections import SelectionStore
+from flybrain.simulation import StimulusSchedule
 from flybrain.stats import compare, summarize, verdict
 
 SAMPLE_SIZE = 5
@@ -533,6 +535,20 @@ def non_sensory_rows(atlas: Atlas, rows) -> np.ndarray:
     return rows[~np.isin(super_classes[rows], SENSORY_CLASSES)]
 
 
+def _activity_lists(atlas: Atlas, rates: np.ndarray):
+    """(active rows above ACTIVE_HZ, top responders, top non-sensory) of a run, shared by stimulate and fly."""
+    active = np.flatnonzero(rates > ACTIVE_HZ)
+    order = active[np.argsort(-rates[active], kind="stable")][:TOP_RESPONDERS]
+    super_classes = atlas.neurons["super_class"].to_numpy()
+    top = [{**item, "super_class": _text(super_classes[int(r)]), "rate_hz": round(float(rates[r]), 1)}
+           for item, r in zip(_label(atlas, order), order)]
+    non_sensory = non_sensory_rows(atlas, active)
+    non_sensory = non_sensory[np.argsort(-rates[non_sensory], kind="stable")][:TOP_NON_SENSORY]
+    top_non_sensory = [{**item, "super_class": _text(super_classes[int(r)]), "rate_hz": round(float(rates[r]), 1)}
+                       for item, r in zip(_label(atlas, non_sensory), non_sensory)]
+    return active, top, top_non_sensory
+
+
 def stimulate(
     atlas: Atlas, store: SelectionStore, sims, selection_id=None, rate_hz=100, duration_ms=500, trials=None,
     silence_selection_id=None, readout_selection_id=None, seed: int = 0, preset: str | None = None,
@@ -577,15 +593,7 @@ def stimulate(
     runtime = time.perf_counter() - t0
 
     rates = res.rate_hz
-    active = np.flatnonzero(rates > ACTIVE_HZ)
-    order = active[np.argsort(-rates[active], kind="stable")][:TOP_RESPONDERS]
-    super_classes = atlas.neurons["super_class"].to_numpy()
-    top = [{**item, "super_class": _text(super_classes[int(r)]), "rate_hz": round(float(rates[r]), 1)}
-           for item, r in zip(_label(atlas, order), order)]
-    non_sensory = non_sensory_rows(atlas, active)
-    non_sensory = non_sensory[np.argsort(-rates[non_sensory], kind="stable")][:TOP_NON_SENSORY]
-    top_non_sensory = [{**item, "super_class": _text(super_classes[int(r)]), "rate_hz": round(float(rates[r]), 1)}
-                       for item, r in zip(_label(atlas, non_sensory), non_sensory)]
+    active, top, top_non_sensory = _activity_lists(atlas, rates)
     out = {
         "stimulus": {"neurons": int(len(stim)), "rate_hz": rate, "duration_ms": duration, "trials": n_trials},
         "active_neurons": int(len(active)),
@@ -645,4 +653,145 @@ def stimulate(
     if cached:
         notes.append("served from the simulation cache (same rows, parameters and seed as an earlier run)")
     out["note"] = "; ".join([*notes, SIM_NOTE])
+    return out
+
+
+# --- the doll: persistent conditions, all stimuli run together ----------------------------------
+
+DOLL_TOP = 5
+EXPLORATORY_NOTE = "an exploratory mapping is part of these conditions: not validated against the paper"
+
+
+def _preset_key(name) -> str:
+    if not isinstance(name, str):
+        raise TypeError(f"preset names must be strings, got {type(name).__name__}")
+    return name.strip().lower()
+
+
+def _of_role(presets: dict, role: str) -> list[str]:
+    """Names usable as `role`: a preset without a role counts as a stimulus."""
+    return sorted(k for k, v in presets.items() if v.get("role", "stimulus") == role)
+
+
+def _check_role(presets: dict, name: str, role: str) -> None:
+    if presets.get(name, {}).get("role", "stimulus") != role or name not in presets:
+        raise ValueError(f"{name!r} is not a {role} preset; valid {role} presets: {', '.join(_of_role(presets, role))}")
+
+
+def fly(
+    atlas: Atlas, store: SelectionStore, sims, doll: Doll, stimuli=None, remove=None, silence=None,
+    readouts=None, reset: bool = False, duration_ms=500, trials=None,
+) -> dict:
+    """Change the doll's conditions, then run ALL its active stimuli together and report the reaction.
+
+    Order inside a call: reset, remove, set stimuli/silence/readouts, run. Nothing is applied when an
+    argument is invalid. Without an active stimulus nothing runs.
+    """
+    presets = load_presets()
+    notes: list[str] = []
+    if stimuli is not None and not isinstance(stimuli, dict):
+        raise TypeError("stimuli must be a dict of preset name -> rate in Hz")
+    new_stimuli = {}
+    for name, rate in (stimuli or {}).items():
+        key = _preset_key(name)
+        _check_role(presets, key, "stimulus")
+        new_stimuli[key] = _clamp("rate_hz", _number("rate_hz", rate), MIN_RATE_HZ, MAX_RATE_HZ, notes)
+    new_silence = [_preset_key(n) for n in silence or ()]
+    new_readouts = [_preset_key(n) for n in readouts or ()]
+    for key in new_readouts:
+        _check_role(presets, key, "readout")
+    for key in [*new_stimuli, *new_silence, *new_readouts]:
+        _preset_ticket(atlas, store, key)  # unknown or empty presets fail here, before any change
+    duration = round(_clamp("duration_ms", _number("duration_ms", duration_ms), MIN_DURATION_MS, MAX_DURATION_MS, notes), 1)
+    n_trials = _clamp("trials", _int("trials", DEFAULT_TRIALS if trials is None else trials), 1, MAX_TRIALS, notes)
+    notes += doll.apply(stimuli=new_stimuli, remove=[_preset_key(n) for n in remove or ()], silence=new_silence,
+                        readouts=new_readouts, reset=bool(reset))
+    conditions = doll.conditions()
+    if not doll.has_stimulus():
+        return {"ran": False, "conditions": conditions,
+                "hint": "the doll has no stimulus; e.g. fly(stimuli={'sugar': 100})",
+                **({"note": "; ".join(notes)} if notes else {})}
+
+    segments, groups = [], {}
+    for name, rate in conditions["stimuli"].items():
+        rows = _selection_rows(atlas, store, _preset_ticket(atlas, store, name))
+        groups[name] = rows
+        segments.append((0, duration, rows, rate))
+    silence_rows = None
+    if conditions["silenced"]:
+        silence_rows = np.unique(np.concatenate(
+            [_selection_rows(atlas, store, _preset_ticket(atlas, store, n)) for n in conditions["silenced"]]))
+    watched = []  # derived readouts (declared by active stimuli) first, then explicit ones
+    for name in conditions["stimuli"]:
+        declared = presets[name].get("readout")
+        if declared and declared not in watched:
+            watched.append(declared)
+    watched += [n for n in conditions["readouts"] if n not in watched]
+    readout_rows = {}
+    for name in watched:
+        try:
+            readout_rows[name] = _selection_rows(atlas, store, _preset_ticket(atlas, store, name))
+        except ValueError as exc:  # a default readout is a convenience: run without it, say so
+            notes.append(f"readout {name!r} skipped ({exc})")
+    bin_ms = max(1.0, math.ceil(duration / SIM_BINS * 10) / 10)
+
+    t0 = time.perf_counter()
+    with sims.exclusive():
+        sims.simulation()  # lazy load; SimulationUnavailable says what to download/build
+        res, cached = sims.run_schedule(StimulusSchedule(segments), duration, n_trials, seed=0,
+                                        silence_rows=silence_rows, bin_ms=bin_ms)
+    runtime = time.perf_counter() - t0
+
+    rates = res.rate_hz
+    active, top, top_non_sensory = _activity_lists(atlas, rates)
+    stimulated = int(len(np.unique(np.concatenate(list(groups.values())))))
+    readout_out = []
+    for name, rows in readout_rows.items():
+        g = _group(atlas, rates, rows)
+        readout_out.append({"name": name, "meaning": presets[name].get("meaning"),
+                            "validation": presets[name].get("validation"), "neurons": g["neurons"],
+                            "mean_hz": g["mean_hz"], "max_hz": g["max_hz"]})
+    infos = [{"name": n, "meaning": presets[n].get("meaning"), "validation": presets[n].get("validation"),
+              "rate_hz": r} for n, r in conditions["stimuli"].items()]
+    stimulus = {"neurons": stimulated, "rate_hz": max(conditions["stimuli"].values()), "duration_ms": duration,
+                "trials": n_trials, "stimuli": dict(conditions["stimuli"])}
+    first = next(iter(readout_rows), None)
+    trace = None if first is None else _readout_trace(atlas, readout_rows[first], bin_ms, n_trials, f"preset {first}")
+    out = {
+        "ran": True,
+        "conditions": conditions,
+        "active_neurons": int(len(active)),
+        "top_responders": top[:DOLL_TOP],
+        "top_non_sensory": top_non_sensory[:DOLL_TOP],
+        "readouts": readout_out,
+        "stimuli_info": infos,
+    }
+    previous = doll.last
+    if previous is None:
+        out["change_vs_previous"] = None
+    else:
+        before = previous["readouts"]
+        out["change_vs_previous"] = {
+            "active_neurons": out["active_neurons"] - previous["active_neurons"],
+            "readouts": [{"name": r["name"], "before_hz": before[r["name"]], "after_hz": r["mean_hz"],
+                          "change_hz": round(r["mean_hz"] - before[r["name"]], 1)}
+                         for r in readout_out if r["name"] in before],
+            "conditions_changed": describe_change(previous["conditions"], conditions),
+        }
+    doll.last = {"active_neurons": out["active_neurons"], "conditions": conditions,
+                 "readouts": {r["name"]: r["mean_hz"] for r in readout_out}}
+    out["simulation_id"] = sims.add(
+        res.active_rows, np.minimum(res.frames, 255).astype(np.uint8), bin_ms, duration, n_trials, stimulus,
+        active_count=len(active), silenced_rows=silence_rows, readout=None if trace is None else trace(res),
+    )
+    if len(active) > RUNAWAY_ACTIVE:
+        out["warning"] = _runaway_warning(len(active), stimulated, len(atlas.neurons))
+    if any(i["validation"] == "exploratory" for i in infos):
+        out["exploratory"] = True
+        notes.append(EXPLORATORY_NOTE)
+    out["runtime_s"] = round(runtime, 1)
+    out["cached"] = cached
+    if cached:
+        notes.append("served from the simulation cache (same rows, parameters and seed as an earlier run)")
+    out["note"] = "; ".join([*notes, "this is a MODEL prediction, not the living fly", SIM_NOTE])
     return out
