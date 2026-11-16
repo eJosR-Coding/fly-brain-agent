@@ -66,6 +66,11 @@ button, input { font-family: inherit; }
 .brain-preview canvas { object-fit: contain; image-rendering: auto; }
 @media (prefers-reduced-motion: reduce) { .brain-preview { transition: none; } }
 
+/* the static fly body (?body=1): fills the stage, the canvas takes the pointer for orbiting */
+.body-stage { position: absolute; inset: 0; }
+.body-caption { position: absolute; left: 0; right: 0; bottom: 18px; text-align: center; font: 400 12px/normal var(--font-mono);
+  color: var(--muted); letter-spacing: 0.3px; pointer-events: none; }
+
 /* landmark labels, anchored to data-derived centroids and projected each frame */
 #labels { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 .lm { position: absolute; left: 0; top: 0; will-change: transform; font: 400 12px/normal var(--font-mono);
