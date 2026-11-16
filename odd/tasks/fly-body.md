@@ -40,7 +40,10 @@ fly itself be the interface.
 - [ ] T2 layout (user idea 2026-11-16, replaces the zoom/LOD crossfade): the fly body takes the CENTER stage where the
       neurons are today; the existing 3D brain scene moves into an INSET panel top-right of the stage (still the
       same live Three.js scene, orbit/pick/highlight/activity unchanged). A swap control (click the inset) exchanges
-      the two sizes, so the full-size brain stays one click away. Verify first how createScene/resize, labels,
+      the two sizes, so the full-size brain stays one click away. The inset also has a hide/show toggle
+      (remembered in localStorage, wrapped in try/catch): hidden = the brain scene is not rendered (saves GPU/CPU
+      per frame) but keeps its state (selection, highlight, loaded activity); it does NOT free the ~18-20 MB of
+      neuron data (no lazy loading). Verify first how createScene/resize, labels,
       inspector picking, charts and the left controls behave when the brain container is small.
 - [ ] T3 `web/src/body.ts`: its own small scene+renderer for the fly body (LineSegments from fly-body.bin, theme
       colors, auto-rotate, orbit, dispose); pure helpers (decode, camera framing, swap/layout decision) tested.
