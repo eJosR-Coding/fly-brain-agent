@@ -98,6 +98,12 @@ Engram mirror `odd/fly-body/tasks`: PENDING (mem_save is blocked by a hook that 
   written separately (not atomic, an interruption leaves an inconsistent pair); R3-002 :195-196 encode_segments edge
   case; R3-003 tests/test_fly_body_build.py:276-337 (suggestion); R3-004 :110-112 parse_stl strictness (suggestion).
   Open follow-ups. Reviewed boundary is now d5a67ad.
+- T2b+T2a slice (base d5a67ad -> 6dc522b, 909 lines, risk medium): consent granted, consolidated native review
+  APPROVED, acknowledged (lineage review-3a747dd3521e020c, authority burned). 1 non-blocking WARNING, web/src/main.ts:385-390:
+  `brainScene` is assigned right after createScene and the preview/control are removed before the player, inspector
+  and chips are wired; if that wiring throws, a retry would build a SECOND scene and the page would have lost its
+  preview. Fix idea: wire first, remove the preview last, and in the catch dispose the scene and reset brainScene.
+  Open follow-up (untestable glue without WebGL). Reviewed boundary is now 6dc522b.
 
 ## Progress
 - 2026-11-16 created after phase 0. T1, T2b, T2a done. Next: user tries click/zoom in the real browser, then T3 (body module).
