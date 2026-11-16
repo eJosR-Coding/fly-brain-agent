@@ -685,8 +685,19 @@ def fly(
     """Change the doll's conditions, then run ALL its active stimuli together and report the reaction.
 
     Order inside a call: reset, remove, set stimuli/silence/readouts, run. Nothing is applied when an
-    argument is invalid. Without an active stimulus nothing runs.
+    argument is invalid, and the doll goes back to its previous state when the run fails. One change at
+    a time: the doll's lock is held from the first change to the recorded result.
     """
+    with doll.lock:
+        snapshot = doll.snapshot()
+        try:
+            return _fly_locked(atlas, store, sims, doll, stimuli, remove, silence, readouts, reset, duration_ms, trials)
+        except BaseException:
+            doll.restore(snapshot)
+            raise
+
+
+def _fly_locked(atlas, store, sims, doll, stimuli, remove, silence, readouts, reset, duration_ms, trials) -> dict:
     presets = load_presets()
     notes: list[str] = []
     if stimuli is not None and not isinstance(stimuli, dict):

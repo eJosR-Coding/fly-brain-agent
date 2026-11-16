@@ -52,8 +52,18 @@ User approved on 2026-11-16 the core: (1) doll state, (2) combined stimuli with 
       4.0 Hz (-59.3, 6.5 s; the earlier 0/24 was the 24-neuron proboscis group, MN9 is one neuron); remove bitter
       -> back to 342 / 63.3 (cache hit); reset -> ran false; jo_ce 100 -> 219 active, abn1 (grooming) 25.3 Hz.
       No runaway warnings. Caveat: after a reset the first run reports "removed sugar" vs the last run.
-- [ ] T3 agent evaluation on the real chat path: scripted conversation ("dale azucar", "ahora amargo", "quita el
-      amargo", "reinicia", "apaga X") with 2-3 models; record rounds, seconds, tokens, correctness; fix the prompt.
+- [x] T3 chat evaluation (real /chat path, scripted conversations; script in the session scratchpad).
+      deepseek-flash, 5 messages: fly used each time, 2 rounds per message, 3.6-12.3 s (6.5 s of it is the first
+      simulation, repeats come from the cache); sugar -> + bitter: MN9 63.3 -> 4.0 Hz and back on removal.
+      Found and FIXED (3 commits, tests RED -> GREEN, suite 749): (1) "dale viento" took 3 rounds/17.9 s because
+      nothing said jo_ce = antenna wind/touch -> tool description now says so; (2) after a reset the next run was
+      compared with the pre-reset run -> reset clears the baseline; (3) the answer quoted field names -> prompt.
+      Then groq gpt-oss-120b used `stimulate` instead of `fly` for "dale azucar" (two competing prompt rules,
+      English-only trigger words) -> one rule: presets + give/dale/add/remove/silence/reset -> fly; stimulate only
+      for a selection_id. Prompt 1696 of 1800 chars. After the fix both models call fly. groq also hit a provider
+      429 rate limit (not ours).
+      OPEN, user decision: the doll is shared by every conversation of the server, and this was observed: a new
+      groq chat inherited sugar+bitter from the previous deepseek chat, so "add bitter" showed no change.
 
 ## Checks
 TDD strict (source: project config). Runners: `uv run pytest -q` (baseline 697 on feat/stimulate-presets),
@@ -63,5 +73,15 @@ yet, the chain strategy question is asked when the user wants to open PRs. Revie
 feat/stimulate-presets (approved 2026-11-16; follow-up fix 3ff6e7d is under budget).
 Engram mirror `odd/fly-doll/tasks`: PENDING (mem_save is blocked by a hook that rewrites its input).
 
+## Reviews
+- Slice 81d6058 -> 92c0d8a (T1 + T2, 976 lines, risk high): consent granted, native 4-lens review APPROVED,
+  acknowledged (lineage review-72902dc79d59908f, authority burned). 9 non-blocking findings, 3 WARNINGs:
+  shared doll across conversations (mcp_server.py:57; documented, kept: single-user local app), conditions committed
+  before the run, and no lock. The last two FIXED in the follow-up commit (rollback on a failed run + doll.lock held
+  for the whole change; 3 new tests RED -> GREEN, suite 744). Open suggestions (style): bounded input of
+  stimuli/silence/readouts lists (tools.py:700-712), duplicated activity-rows code (tools.py:545-549), import order
+  (tools.py:10-14), magic seed and DOLL_TOP (tools.py:662-663), role check reads inverted (tools.py:567-569).
+  Reviewed boundary is now 92c0d8a.
+
 ## Progress
-- 2026-11-16 created after phase 0. T1, T2 done. Next step: T3 (chat evaluation).
+- 2026-11-16 created after phase 0. T1-T3 done. Next: decide how to scope the doll (per conversation / idle reset), then the pending native review of fc188ba (high risk, consent needed).

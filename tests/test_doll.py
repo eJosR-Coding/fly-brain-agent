@@ -41,7 +41,7 @@ def test_reset_clears_first_then_applies_the_rest_of_the_call():
     d.last = {"active_neurons": 1}
     d.apply(reset=True, stimuli={"jo_ce": 80})
     assert d.conditions() == {"stimuli": {"jo_ce": 80.0}, "silenced": [], "readouts": []}
-    assert d.last == {"active_neurons": 1}  # reset changes the conditions, the previous run stays the baseline
+    assert d.last is None  # a reset starts a new baseline: nothing from before it is comparable
 
 
 def test_order_is_reset_then_remove_then_set():

@@ -267,3 +267,89 @@ def test_the_server_registers_fly_and_keeps_one_doll_per_server(tiny_atlas, sims
     assert first["ran"] and second["ran"] and second["conditions"]["stimuli"] == {"orn": 300.0}
     other = build_server(tiny_atlas, sims=sims)  # a new server process starts with an empty doll
     assert _call(other, "fly", {})["ran"] is False
+
+
+# --- review follow-ups: a failed run must not leave the doll half changed; one change at a time ------------
+
+def test_a_failed_run_leaves_the_doll_as_it_was(tiny_atlas, store, sims, doll, monkeypatch):  # noqa: F811
+    fly(tiny_atlas, store, sims, doll, stimuli={"orn": 300})
+    before_conditions, before_last = doll.conditions(), dict(doll.last)
+
+    def boom(*a, **k):
+        raise RuntimeError("the simulator went away")
+
+    monkeypatch.setattr(sims, "run_schedule", boom)
+    with pytest.raises(RuntimeError):
+        fly(tiny_atlas, store, sims, doll, stimuli={"pen": 80}, silence=["epg"])
+    assert doll.conditions() == before_conditions
+    assert doll.last == before_last
+
+
+def test_the_doll_is_locked_while_a_change_runs(tiny_atlas, store, sims, doll, monkeypatch):  # noqa: F811
+    held = []
+    real = sims.run_schedule
+
+    def spy(*a, **k):
+        held.append(doll.lock.locked())
+        return real(*a, **k)
+
+    monkeypatch.setattr(sims, "run_schedule", spy)
+    fly(tiny_atlas, store, sims, doll, stimuli={"orn": 300})
+    assert held == [True]
+    assert not doll.lock.locked()  # released afterwards, also after a failure
+
+
+def test_the_lock_is_released_after_a_failed_run(tiny_atlas, store, sims, doll, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(sims, "run_schedule", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    with pytest.raises(RuntimeError):
+        fly(tiny_atlas, store, sims, doll, stimuli={"orn": 300})
+    assert not doll.lock.locked()
+
+
+# --- chat evaluation follow-ups (2026-11-16): reset starts a new baseline, wind is findable ------------------
+
+def test_a_reset_starts_a_new_baseline(tiny_atlas, store, sims, doll):  # noqa: F811
+    fly(tiny_atlas, store, sims, doll, stimuli={"orn": 300})
+    out = fly(tiny_atlas, store, sims, doll, reset=True, stimuli={"pen": 80})
+    assert out["ran"] is True
+    assert out["change_vs_previous"] is None  # nothing before a reset is comparable
+
+
+def test_a_reset_that_fails_keeps_the_old_baseline(tiny_atlas, store, sims, doll, monkeypatch):  # noqa: F811
+    fly(tiny_atlas, store, sims, doll, stimuli={"orn": 300})
+    last = dict(doll.last)
+    monkeypatch.setattr(sims, "run_schedule", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    with pytest.raises(RuntimeError):
+        fly(tiny_atlas, store, sims, doll, reset=True, stimuli={"pen": 80})
+    assert doll.last == last
+
+
+def test_the_tool_description_names_every_packaged_stimulus_and_points_wind_to_the_antenna(tiny_atlas, store, sims):  # noqa: F811
+    import importlib.resources as res
+
+    packaged = json.loads(res.files("flybrain").joinpath("data/presets.json").read_text(encoding="utf-8"))["presets"]
+    stimulus_names = [n for n, p in packaged.items() if p.get("role") == "stimulus"]
+    server = build_server(tiny_atlas, store, sims)
+    desc = next(t.description for t in asyncio.run(server.list_tools()) if t.name == "fly")
+    for name in stimulus_names:
+        assert name in desc
+    assert "wind" in desc.lower()
+
+
+def test_the_prompt_tells_the_agent_not_to_quote_tool_fields():
+    from flybrain.agent import SYSTEM_PROMPT
+
+    assert "field names" in SYSTEM_PROMPT
+    assert "change_vs_previous" not in SYSTEM_PROMPT
+
+
+def test_the_prompt_routes_presets_and_conversational_commands_to_fly_not_stimulate():
+    from flybrain.agent import SYSTEM_PROMPT
+
+    low = SYSTEM_PROMPT.lower()
+    assert "use fly" in low
+    for name in ("sugar", "bitter", "water", "jo_ce"):
+        assert name in low  # the agent is told which published presets go to fly
+    assert "dale" in low  # the Spanish command form of 'give'
+    assert "stimulate(preset" not in low  # the competing instruction is gone
+    assert "only for a selection_id" in low
