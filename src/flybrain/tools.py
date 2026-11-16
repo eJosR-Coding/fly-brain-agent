@@ -9,7 +9,7 @@ import numpy as np
 
 from flybrain.atlas import Atlas, RowIndex, clean_filter
 from flybrain.connectome import Connectome, ConnectomeError
-from flybrain.doll import Doll, describe_change
+from flybrain.doll import Doll, describe_run_change
 from flybrain.plain import plain_description
 from flybrain.selections import SelectionStore
 from flybrain.simulation import StimulusSchedule
@@ -160,8 +160,13 @@ STRUCTURAL = (
 _ROW_INDEX_CACHE: dict[int, tuple[Atlas, RowIndex]] = {}
 
 
+CONNECTOME_PROBLEM: str | None = None  # why the last load_connectome returned None (missing / other atlas / unreadable)
+
+
 def _need_connectome(conn) -> Connectome:
     if conn is None:
+        if CONNECTOME_PROBLEM:
+            raise ConnectomeError(f"connectome not available: {CONNECTOME_PROBLEM}")
         raise ConnectomeError(
             "connectome not available: run flybrain-build-connectome first "
             "(set FLYBRAIN_CONNECTOME to the built .npz if it is not data/processed/connectome_783.npz)"
@@ -636,18 +641,20 @@ def stimulate(
         notes.append("silencing runs a baseline too, so it costs 2x the runtime (same random seed for both)")
     trace = (_readout_trace(atlas, readout, bin_ms, n_trials, store.get(readout_selection_id).description)
              if readout is not None else None)
-    compare_id = None
-    if base is not None:  # keep the baseline too: the viewer draws the difference between the two
-        compare_id = sims.add(
-            base.active_rows, np.minimum(base.frames, 255).astype(np.uint8), bin_ms, duration, n_trials,
-            out["stimulus"], active_count=int((base.rate_hz > ACTIVE_HZ).sum()),
-            readout=None if trace is None else trace(base),
-        )
-    out["simulation_id"] = sims.add(
-        res.active_rows, np.minimum(res.frames, 255).astype(np.uint8), bin_ms, duration, n_trials, out["stimulus"],
-        active_count=len(active), compare_id=compare_id, silenced_rows=silence,
-        readout=None if trace is None else trace(res),
+    run_record = dict(
+        rows=res.active_rows, frames=np.minimum(res.frames, 255).astype(np.uint8), bin_ms=bin_ms,
+        duration_ms=duration, trials=n_trials, stimulus=out["stimulus"], active_count=len(active),
+        silenced_rows=silence, readout=None if trace is None else trace(res),
     )
+    if base is not None:  # keep the baseline too: the viewer draws the difference between the two
+        base_record = dict(
+            rows=base.active_rows, frames=np.minimum(base.frames, 255).astype(np.uint8), bin_ms=bin_ms,
+            duration_ms=duration, trials=n_trials, stimulus=out["stimulus"],
+            active_count=int((base.rate_hz > ACTIVE_HZ).sum()), readout=None if trace is None else trace(base),
+        )
+        _, out["simulation_id"] = sims.add_pair(base_record, run_record)  # one hold: the pair cannot dangle
+    else:
+        out["simulation_id"] = sims.add(**run_record)
     lit = max(len(active), out.get("baseline", {}).get("active_neurons", 0))
     if lit > RUNAWAY_ACTIVE:
         out["warning"] = _runaway_warning(lit, len(stim), len(atlas.neurons))
@@ -806,9 +813,10 @@ def _fly_locked(atlas, store, sims, doll, stimuli, remove, silence, readouts, re
             "readouts": [{"name": r["name"], "before_hz": before[r["name"]], "after_hz": r["mean_hz"],
                           "change_hz": round(r["mean_hz"] - before[r["name"]], 1)}
                          for r in readout_out if r["name"] in before],
-            "conditions_changed": describe_change(previous["conditions"], conditions),
+            "conditions_changed": describe_run_change(previous, conditions, duration, n_trials),
         }
     doll.last = {"active_neurons": out["active_neurons"], "conditions": conditions,
+                 "duration_ms": duration, "trials": n_trials,
                  "readouts": {r["name"]: r["mean_hz"] for r in readout_out}}
     out["simulation_id"] = sims.add(
         res.active_rows, np.minimum(res.frames, 255).astype(np.uint8), bin_ms, duration, n_trials, stimulus,

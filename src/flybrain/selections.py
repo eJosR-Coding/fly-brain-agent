@@ -2,6 +2,7 @@
 
 import os
 import secrets
+import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
@@ -48,6 +49,9 @@ class SelectionStore:
     Capped at ``max_items`` (default 100, env FLYBRAIN_MAX_SELECTIONS): a whole-brain ticket is
     ~2 MB, so we evict the least recently used one. Both add and get refresh recency. An
     evicted ticket fails with a message naming the search that made it, so the model can re-run it.
+
+    Tool threads (asyncio.to_thread) and HTTP handlers share one store, so every method that reads
+    or reorders the dicts holds `_lock` (check-then-move in `get` and eviction in `add` must not interleave).
     """
 
     def __init__(self, max_items: int | None = None) -> None:
@@ -56,18 +60,19 @@ class SelectionStore:
             raise ValueError(f"max_items must be >= 1, got {self.max_items}")
         self._items: OrderedDict[str, Selection] = OrderedDict()  # oldest first
         self._expired: OrderedDict[str, dict] = OrderedDict()  # evicted id -> filters
+        self._lock = threading.Lock()
 
     def add(self, root_ids, description: str, filters: dict | None = None) -> str:
-        selection_id = self._new_id()
-        self._items[selection_id] = Selection(
-            selection_id, description, tuple(int(r) for r in root_ids), dict(filters or {})
-        )
-        while len(self._items) > self.max_items:
-            old_id, old = self._items.popitem(last=False)
-            self._expired[old_id] = old.filters
-            while len(self._expired) > MAX_TOMBSTONES:
-                self._expired.popitem(last=False)
-        return selection_id
+        ids = tuple(int(r) for r in root_ids)  # validate before taking the lock
+        with self._lock:
+            selection_id = self._new_id()
+            self._items[selection_id] = Selection(selection_id, description, ids, dict(filters or {}))
+            while len(self._items) > self.max_items:
+                old_id, old = self._items.popitem(last=False)
+                self._expired[old_id] = old.filters
+                while len(self._expired) > MAX_TOMBSTONES:
+                    self._expired.popitem(last=False)
+            return selection_id
 
     def _new_id(self) -> str:
         while True:  # 16.7M possible ids; a clash inside one session is basically never, but check anyway
@@ -76,11 +81,15 @@ class SelectionStore:
                 return candidate
 
     def get(self, selection_id: str) -> Selection:
-        if selection_id in self._items:
-            self._items.move_to_end(selection_id)  # refresh recency
-            return self._items[selection_id]
-        if selection_id in self._expired:
-            filters = self._expired[selection_id]
+        with self._lock:
+            if selection_id in self._items:
+                self._items.move_to_end(selection_id)  # refresh recency
+                return self._items[selection_id]
+            expired = self._expired.get(selection_id)
+            recent = list(self._items)[-MAX_KNOWN_SHOWN:]
+            extra = len(self._items) - len(recent)
+        if expired is not None:
+            filters = expired
             if "_source" in filters:  # derived ticket (neighbors, find_path, ...)
                 raise UnknownSelectionError(
                     f"selection {selection_id!r} expired (least recently used); it came from "
@@ -91,8 +100,6 @@ class SelectionStore:
                 f"selection {selection_id!r} expired (least recently used); it came from "
                 f"search_neurons({args}). Run that search again."
             )
-        recent = list(self._items)[-MAX_KNOWN_SHOWN:]
-        extra = len(self._items) - len(recent)
         known = ", ".join(recent) or "none yet"
         if extra > 0:
             known += f" and {extra} more"

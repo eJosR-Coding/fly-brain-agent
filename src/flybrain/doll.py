@@ -90,3 +90,16 @@ def describe_change(before: dict, after: dict) -> str:
     parts += [f"watching {name}" for name in after["readouts"] if name not in before["readouts"]]
     parts += [f"stopped watching {name}" for name in before["readouts"] if name not in after["readouts"]]
     return ", ".join(parts) or "no change in conditions"
+
+
+def describe_run_change(previous: dict, conditions: dict, duration_ms: float, trials: int) -> str:
+    """`describe_change` plus the run settings that differ (a comparison across durations or trial counts is weaker)."""
+    text = describe_change(previous["conditions"], conditions)
+    settings = []
+    if previous.get("duration_ms") not in (None, duration_ms):
+        settings.append(f"duration {_fmt(previous['duration_ms'])} -> {_fmt(duration_ms)} ms")
+    if previous.get("trials") not in (None, trials):
+        settings.append(f"trials {previous['trials']} -> {trials}")
+    if not settings:
+        return text
+    return ", ".join(settings) if text == "no change in conditions" else f"{text}, {', '.join(settings)}"

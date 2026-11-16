@@ -117,8 +117,8 @@ def looming_escape(
     t0 = time.perf_counter()
     results, cached_runs = {}, 0
     with sims.exclusive():
-        sim = sims.simulation()
         with _Progress(sims, "looming_escape", len(CONDITIONS)) as progress:
+            sim = sims.simulation()  # the weight load is part of the experiment
             for name in CONDITIONS:
                 res, hit = sims.run_schedule(
                     schedules[name], duration, n_trials, seed=seed, bin_ms=bin_ms,

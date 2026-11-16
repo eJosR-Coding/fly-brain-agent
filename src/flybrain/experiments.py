@@ -63,6 +63,10 @@ class _Progress:
         self.sims.report_progress(self.experiment, 0, self.total)
         return self
 
+    def set_total(self, total: int) -> None:
+        """The real step count, once it is known (a screen picks its candidates after the baseline); the next step reports it."""
+        self.total = total
+
     def step(self) -> None:
         self.done += 1
         self.sims.report_progress(self.experiment, self.done, self.total)
@@ -85,8 +89,8 @@ def dose_response(
 
     points, t0, clipped, cached_runs = [], time.perf_counter(), False, 0
     with sims.exclusive():
-        sims.simulation()
         with _Progress(sims, "dose_response", len(rates)) as progress:
+            sims.simulation()  # the weight load is part of the experiment
             for rate in rates:
                 res, hit = sims.run(stim, rate, duration, n_trials, seed=seed)
                 cached_runs += hit

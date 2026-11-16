@@ -372,3 +372,20 @@ def test_a_name_longer_than_the_limit_is_refused(tiny_atlas, store, sims, doll, 
 def test_a_stimulus_name_longer_than_the_limit_is_refused(tiny_atlas, store, sims, doll):  # noqa: F811
     with pytest.raises(ValueError, match="stimuli: names are at most"):
         fly(tiny_atlas, store, sims, doll, stimuli={"x" * (tools.MAX_DOLL_NAME_LEN + 1): 50})
+
+def test_last_run_remembers_duration_and_trials(tiny_atlas, store, sims, doll):
+    fly(tiny_atlas, store, sims, doll, stimuli={"orn": 300}, duration_ms=200, trials=2)
+    assert doll.last["duration_ms"] == 200 and doll.last["trials"] == 2
+
+
+def test_change_vs_previous_says_when_duration_or_trials_differ(tiny_atlas, store, sims, doll):
+    fly(tiny_atlas, store, sims, doll, stimuli={"orn": 300}, duration_ms=200, trials=2)
+    out = fly(tiny_atlas, store, sims, doll, silence=["epg"], duration_ms=400, trials=3)
+    changed = out["change_vs_previous"]["conditions_changed"]
+    assert "silenced epg" in changed and "duration 200 -> 400 ms" in changed and "trials 2 -> 3" in changed
+
+
+def test_same_duration_and_trials_add_nothing_to_the_change(tiny_atlas, store, sims, doll):
+    fly(tiny_atlas, store, sims, doll, stimuli={"orn": 300}, duration_ms=200, trials=2)
+    out = fly(tiny_atlas, store, sims, doll, silence=["epg"], duration_ms=200, trials=2)
+    assert out["change_vs_previous"]["conditions_changed"] == "silenced epg"

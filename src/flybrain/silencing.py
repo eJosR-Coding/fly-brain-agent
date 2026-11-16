@@ -70,13 +70,16 @@ def silencing_screen(
     rows: list[dict] = []
     cached_runs = 0
     with sims.exclusive():
-        sims.simulation()
-        base, hit = sims.run(stim, rate, duration, n_trials, seed=seed, bin_ms=bin_ms)
-        cached_runs += hit
-        picked = _candidates(atlas, store, candidates, base, stim, readout, n, notes)
-        base_hz = base.group_trial_hz(readout)
-        base_id = keep(base)
-        with _Progress(sims, "silencing_screen", len(picked)) as progress:
+        # the weight load and the baseline are part of the experiment: n candidates + 1 baseline step
+        with _Progress(sims, "silencing_screen", n + 1) as progress:
+            sims.simulation()
+            base, hit = sims.run(stim, rate, duration, n_trials, seed=seed, bin_ms=bin_ms)
+            cached_runs += hit
+            progress.step()
+            picked = _candidates(atlas, store, candidates, base, stim, readout, n, notes)
+            progress.set_total(len(picked) + 1)
+            base_hz = base.group_trial_hz(readout)
+            base_id = keep(base)
             for row in picked:
                 res, hit = sims.run(stim, rate, duration, n_trials, seed=seed, silence_rows=[int(row)], bin_ms=bin_ms)
                 cached_runs += hit

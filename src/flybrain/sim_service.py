@@ -83,6 +83,10 @@ class SimulationService:
 
     The whole brain simulator costs ~1.5 GB and the machine is shared with a browser, so loading
     is deferred to the first run and every run holds `exclusive()`.
+
+    Independent expiry, on purpose: recordings (MAX_RESULTS, LRU) and experiment charts (MAX_CHARTS)
+    are separate stores, so a chart can outlive the recordings its rows point at, or the reverse;
+    the viewer then reports the missing one as expired.
     """
 
     def __init__(self, loader: Callable[[], Simulation], available: Callable[[], bool] = lambda: True,
@@ -94,6 +98,9 @@ class SimulationService:
         self.max_cached_runs, self.max_cache_bytes = max_cached_runs, max_cache_bytes
         self.cache_hits = 0
         self._sim: Simulation | None = None
+        # Set when the loader raises SimulationUnavailable (unreadable cache...), cleared by the next
+        # successful load. Transient errors (MemoryError) are never recorded: they stay retryable.
+        self._load_error: SimulationUnavailable | None = None
         self._load_lock = threading.Lock()
         self._run_lock = threading.Lock()
         self._records: OrderedDict[str, ActivityRecord] = OrderedDict()
@@ -116,13 +123,18 @@ class SimulationService:
 
     @property
     def available(self) -> bool:
-        return self._sim is not None or bool(self._available())
+        return self._sim is not None or (self._load_error is None and bool(self._available()))
 
     def simulation(self) -> Simulation:
         """The simulator, loaded on first use (SimulationUnavailable says what is missing)."""
         with self._load_lock:
             if self._sim is None:
-                self._sim = self._loader()
+                try:
+                    self._sim = self._loader()
+                except SimulationUnavailable as exc:
+                    self._load_error = exc
+                    raise
+                self._load_error = None
             return self._sim
 
     @contextmanager
@@ -187,20 +199,49 @@ class SimulationService:
             active_count: int | None = None, compare_id: str | None = None, silenced_rows=None,
             readout: dict | None = None) -> str:
         with self._record_lock:
-            while True:
-                sim_id = f"sim_{secrets.token_hex(3)}"
-                if sim_id not in self._records and sim_id not in self._expired:
-                    break
-            self._records[sim_id] = ActivityRecord(
-                sim_id, np.asarray(rows, dtype="<u4"), np.asarray(frames, dtype=np.uint8),
-                float(bin_ms), float(duration_ms), int(trials), dict(stimulus),
-                None if active_count is None else int(active_count),
-                compare_id, None if silenced_rows is None else np.asarray(silenced_rows, dtype="<u4"),
-                None if readout is None else dict(readout),
-            )
-            while len(self._records) > self.max_results:
-                self._evict_oldest()
-            return sim_id
+            return self._store(rows, frames, bin_ms, duration_ms, trials, stimulus, active_count, compare_id,
+                               silenced_rows, readout)
+
+    def add_pair(self, base: dict, run: dict) -> tuple[str, str]:
+        """Store a baseline and its silenced run under ONE hold of the record lock; returns (base_id, run_id).
+
+        `base` and `run` are `add` keyword arguments (`run` gets `compare_id` set here). Both records are
+        built before either is stored, so a bad second record leaves no orphan baseline, and no other
+        thread can evict the baseline between the two inserts.
+        """
+        with self._record_lock:
+            base_rec = self._make_record(**base)
+            run_rec = self._make_record(**{**run, "compare_id": base_rec.id})
+            for rec in (base_rec, run_rec):
+                self._records[rec.id] = rec
+            self._trim()
+            return base_rec.id, run_rec.id
+
+    def _make_record(self, rows, frames, bin_ms: float, duration_ms: float, trials: int, stimulus: dict,
+                     active_count: int | None = None, compare_id: str | None = None, silenced_rows=None,
+                     readout: dict | None = None) -> ActivityRecord:
+        """A new record with a fresh id (not yet stored). Call with the record lock held."""
+        while True:
+            sim_id = f"sim_{secrets.token_hex(3)}"
+            if sim_id not in self._records and sim_id not in self._expired:
+                break
+        return ActivityRecord(
+            sim_id, np.asarray(rows, dtype="<u4"), np.asarray(frames, dtype=np.uint8),
+            float(bin_ms), float(duration_ms), int(trials), dict(stimulus),
+            None if active_count is None else int(active_count),
+            compare_id, None if silenced_rows is None else np.asarray(silenced_rows, dtype="<u4"),
+            None if readout is None else dict(readout),
+        )
+
+    def _store(self, *args) -> str:
+        rec = self._make_record(*args)
+        self._records[rec.id] = rec
+        self._trim()
+        return rec.id
+
+    def _trim(self) -> None:
+        while len(self._records) > self.max_results:
+            self._evict_oldest()
 
     # -- experiment charts and progress -----------------------------------------------------
 
@@ -252,8 +293,10 @@ class SimulationService:
         """Drop the least recently used recording, skipping baselines a silenced run still points at.
 
         A baseline therefore lives exactly as long as the last run compared against it (the pair
-        expires together) and `compare_id` can never dangle. The runs that point at a baseline
-        are not baselines themselves, so there is always something else to evict.
+        expires together). `add_pair` stores both under one lock hold, so `compare_id` does not
+        dangle for pairs; a bare `add(compare_id=...)` with an id that is already gone would still
+        point at nothing. The runs that point at a baseline are not baselines themselves, so there
+        is always something else to evict.
         """
         needed = {r.compare_id for r in self._records.values() if r.compare_id is not None}
         victim = next((i for i in self._records if i not in needed), next(iter(self._records)))
