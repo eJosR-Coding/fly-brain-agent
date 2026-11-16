@@ -304,3 +304,40 @@ def test_the_lock_is_released_after_a_failed_run(tiny_atlas, store, sims, doll, 
     with pytest.raises(RuntimeError):
         fly(tiny_atlas, store, sims, doll, stimuli={"orn": 300})
     assert not doll.lock.locked()
+
+
+# --- chat evaluation follow-ups (2026-11-16): reset starts a new baseline, wind is findable ------------------
+
+def test_a_reset_starts_a_new_baseline(tiny_atlas, store, sims, doll):  # noqa: F811
+    fly(tiny_atlas, store, sims, doll, stimuli={"orn": 300})
+    out = fly(tiny_atlas, store, sims, doll, reset=True, stimuli={"pen": 80})
+    assert out["ran"] is True
+    assert out["change_vs_previous"] is None  # nothing before a reset is comparable
+
+
+def test_a_reset_that_fails_keeps_the_old_baseline(tiny_atlas, store, sims, doll, monkeypatch):  # noqa: F811
+    fly(tiny_atlas, store, sims, doll, stimuli={"orn": 300})
+    last = dict(doll.last)
+    monkeypatch.setattr(sims, "run_schedule", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    with pytest.raises(RuntimeError):
+        fly(tiny_atlas, store, sims, doll, reset=True, stimuli={"pen": 80})
+    assert doll.last == last
+
+
+def test_the_tool_description_names_every_packaged_stimulus_and_points_wind_to_the_antenna(tiny_atlas, store, sims):  # noqa: F811
+    import importlib.resources as res
+
+    packaged = json.loads(res.files("flybrain").joinpath("data/presets.json").read_text(encoding="utf-8"))["presets"]
+    stimulus_names = [n for n, p in packaged.items() if p.get("role") == "stimulus"]
+    server = build_server(tiny_atlas, store, sims)
+    desc = next(t.description for t in asyncio.run(server.list_tools()) if t.name == "fly")
+    for name in stimulus_names:
+        assert name in desc
+    assert "wind" in desc.lower()
+
+
+def test_the_prompt_tells_the_agent_not_to_quote_tool_fields():
+    from flybrain.agent import SYSTEM_PROMPT
+
+    assert "field names" in SYSTEM_PROMPT
+    assert "change_vs_previous" not in SYSTEM_PROMPT

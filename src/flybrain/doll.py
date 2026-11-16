@@ -70,6 +70,8 @@ class Doll:
                 "remove one first"
             )
         self.stimuli, self.silenced, self.readouts = new_stimuli, new_silenced, new_readouts
+        if reset:
+            self.last = None  # nothing from before a reset is comparable with the next run
         return notes
 
 

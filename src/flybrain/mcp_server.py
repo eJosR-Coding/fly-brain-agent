@@ -223,7 +223,7 @@ def build_server(
         responders, readouts (meaning, Hz), `change_vs_previous`. No stimulus: no run.
 
         Args:
-            stimuli: preset -> Hz 1..300 (sugar|bitter|water|jo_ce), added or replaced; max 6.
+            stimuli: preset -> Hz 1..300 (sugar|bitter|water|jo_ce = antenna: wind, touch), added or replaced; max 6.
             remove: names to drop. silence: presets whose output is cut. readouts: mn9|abn1|dnp01 (a stimulus adds its own).
             reset: clear all first. duration_ms: 100..1000. trials: 1..10 (3).
         """
