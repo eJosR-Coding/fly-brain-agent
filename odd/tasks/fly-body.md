@@ -104,9 +104,22 @@ fly itself be the interface.
       POLISH (to do in T2c): the fly fills only ~43% of the height and sits right of center (framing uses the bbox
       bounding sphere); the writer left a redundant assertion and an unused variable in bodyData.test.ts.
       Also: this method cannot verify the REAL brain scene's WebGL either.
-- [ ] T2c layout: the body takes the CENTER stage; the brain (preview first, the real scene once opened) is an INSET panel
-      top-right with a hide/show toggle (remembered in localStorage, try/catch; hidden = not rendered, state kept)
-      and a swap control that exchanges the inset and the center sizes (full-size brain one click away).
+- [x] T2c layout (route: delegated writer). The body is the DEFAULT center stage (the `?body=1` flag and its early return are
+      gone); the brain (preview first, the real scene once opened) is an inset top-right under #status (340 px, 16:10,
+      1 px --line border) with "swap" and "hide" buttons; a tab shows it again. New pure `layoutState.ts` (key
+      flybrain.layout, try/catch, malformed values fall back to the default) and `layoutPanes.ts` (`#pane-body`,
+      `#pane-brain`, `#pane-show`; swap and hide only change classes/aria/inert, no DOM is moved and no scene is
+      recreated; hidden = visibility:hidden, size unchanged). The real brain scene now mounts in `layout.brainHost`
+      (createScene already used its container for canvas, labels, ResizeObserver and pick; the fix was in main.ts);
+      landmark labels are hidden by CSS while the brain is the inset. Swapping to the brain opens it (gate.ensure()).
+      Narrow screens: inset 150 px at top 96 px, caption hidden. Framing: `centroid`, `boundingRadius` and an exact
+      `viewFitDistance` (replaces frameDistance; a test over the committed asset gets max |ndc| 0.70 at the default
+      3/4 view) with the orbit target at the vertex centroid. RED: modules missing / viewFitDistance not a function.
+      GREEN: web 497 (34 files), build ok, pytest 723 (parent re-ran). Parent browser check (headless Firefox, clean
+      profile, 1898x968): the inset with BRAIN header, SWAP and HIDE, the preview and the hint at top-right; the center
+      pane shows only its caption because the body is WebGL (not captured). NOT verified: any WebGL look (body in the
+      center, real brain in the inset), picking in the small pane, swapping with the real scene open, the 128 px offset
+      against every health state, the narrow layout on a phone, the clicks themselves.
 - [ ] T4 (dropped) partial lazy loading of the point layers and distance crossfade: all-or-nothing on-demand replaces it.
 - [ ] T5 (later, separate decision) animate the body from the brain readouts, labelled as our own mapping.
 Order: T1 (asset, running) -> T2b -> T2a -> T3 -> T2c.
@@ -138,4 +151,4 @@ Engram mirror `odd/fly-body/tasks`: PENDING (mem_save is blocked by a hook that 
   Reviewed boundary is now 2e306a5.
 
 ## Progress
-- 2026-11-16 created after phase 0. T1, T2b, T2a, T2d, T3 done. Next: T2c (layout: body at the center, brain inset top-right) and the framing polish.
+- 2026-11-16 created after phase 0. T1, T2b, T2a, T2d, T3, T2c done. Next: the user tries it in a real browser; T5 (animate the body from the brain readouts) is a separate decision.

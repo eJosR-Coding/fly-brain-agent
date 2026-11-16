@@ -66,7 +66,7 @@ button, input { font-family: inherit; }
 .brain-preview canvas { object-fit: contain; image-rendering: auto; }
 @media (prefers-reduced-motion: reduce) { .brain-preview { transition: none; } }
 
-/* the static fly body (?body=1): fills the stage, the canvas takes the pointer for orbiting */
+/* the static fly body: fills its pane, the canvas takes the pointer for orbiting */
 .body-stage { position: absolute; inset: 0; }
 .body-caption { position: absolute; left: 0; right: 0; bottom: 18px; text-align: center; font: 400 12px/normal var(--font-mono);
   color: var(--muted); letter-spacing: 0.3px; pointer-events: none; }
@@ -447,3 +447,45 @@ body.chat-collapsed #chat-show { display: block; }
 .brain-open { position: absolute; inset: 0; z-index: 1; cursor: pointer; display: flex; align-items: flex-end; justify-content: center; }
 .brain-open:focus-visible { outline: 1px solid var(--fg); outline-offset: -4px; }
 .brain-hint { margin-bottom: 18px; font: 400 12px/normal var(--font-mono); color: var(--muted); letter-spacing: 0.3px; pointer-events: none; }
+
+/* stage panes: the fly body and the brain. The layout is ONLY these classes on #stage (layout-main-body|brain, inset-hidden):
+   a swap never moves or recreates a node, and a hidden inset keeps its size (visibility, not display), so no scene ever
+   sees a zero-size container. */
+.pane { position: absolute; overflow: hidden; }
+.pane-view { position: absolute; inset: 0; }
+.pane-head { display: none; }
+.layout-main-body #pane-body, .layout-main-brain #pane-brain { inset: 0; z-index: 0; }
+.layout-main-body #pane-brain, .layout-main-brain #pane-body {
+  z-index: 2; top: 128px; /* below the #status rows */ right: 24px; width: 340px; aspect-ratio: 16 / 10;
+  background: var(--panel-bg); border: 1px solid var(--line); border-radius: var(--radius); }
+.layout-main-body #pane-brain .pane-head, .layout-main-brain #pane-body .pane-head {
+  display: flex; align-items: center; gap: 6px; position: absolute; left: 0; right: 0; top: 0; z-index: 3; height: 28px; padding: 0 6px 0 10px;
+  border-bottom: 1px solid var(--line-soft); }
+.pane-head[hidden] { display: none; }
+.layout-main-body #pane-brain .pane-view, .layout-main-brain #pane-body .pane-view { top: 28px; }
+.pane-label { margin-right: auto; font: 400 11px/normal var(--font-mono); letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+.pane-swap, .pane-hide, .pane-show { font: 400 11px/normal var(--font-mono); letter-spacing: 1px; text-transform: uppercase; color: var(--muted);
+  background: transparent; border: 1px solid var(--line); border-radius: var(--radius); padding: 2px 8px; cursor: pointer; }
+.pane-swap:hover, .pane-hide:hover, .pane-show:hover { color: var(--fg); border-color: var(--muted); }
+.pane-swap:focus-visible, .pane-hide:focus-visible, .pane-show:focus-visible { outline: 1px solid var(--fg); outline-offset: 2px; }
+.inset-hidden.layout-main-body #pane-brain, .inset-hidden.layout-main-brain #pane-body { visibility: hidden; pointer-events: none; }
+.pane-show { position: absolute; z-index: 2; top: 128px; right: 24px; background: var(--panel-bg); }
+.pane-show[hidden] { display: none; }
+/* the body caption belongs to the large body only; landmark labels are too big for the small brain pane */
+.layout-main-brain .body-caption { display: none; }
+.layout-main-body #pane-brain #labels { display: none; }
+/* the brain preview and its open control scale to the inset */
+.layout-main-body #pane-brain .brain-preview { inset: 6% 6% 22px 6%; }
+.layout-main-body #pane-brain .brain-hint { margin-bottom: 4px; font-size: 10px; }
+.layout-main-body #pane-brain .brain-open:focus-visible { outline-offset: -2px; }
+/* a neuron card or path label inside the small pane: the card scrolls inside the pane */
+.layout-main-body #pane-brain .neuron-card { width: min(292px, calc(100% - 12px)); }
+@media (max-width: 720px) {
+  /* chat is a bottom block here: a small inset under the brand, never reaching the chat or the control rows */
+  .layout-main-body #pane-brain, .layout-main-brain #pane-body { top: 96px; right: 12px; width: 150px; }
+  .pane-show { top: 96px; right: 12px; }
+  .layout-main-body #pane-brain .pane-swap, .layout-main-body #pane-brain .pane-hide,
+  .layout-main-brain #pane-body .pane-swap, .layout-main-brain #pane-body .pane-hide { padding: 2px 5px; }
+  .pane-head { padding-right: 4px; }
+  .body-caption { display: none; }
+}

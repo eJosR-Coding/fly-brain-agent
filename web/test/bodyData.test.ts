@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { frameDistance, loadBody, parseBody, type BodyMeta } from "../src/bodyData";
+import { boundingRadius, centroid, loadBody, parseBody, viewFitDistance, type BodyMeta, type Vec3 } from "../src/bodyData";
 
 // Synthetic asset: bounds x [0,100], y [-50,50], z [10,30] (um); two segments in two parts.
 const meta: BodyMeta = {
@@ -45,7 +45,6 @@ describe("parseBody", () => {
     const tx = [0, 0, 1], ty = [1, 0, 0], tz = [0, 1, 0];
     const cross = [tx[1] * ty[2] - tx[2] * ty[1], tx[2] * ty[0] - tx[0] * ty[2], tx[0] * ty[1] - tx[1] * ty[0]];
     expect(cross).toEqual(tz); // x cross y = z is preserved
-    expect(ex).toBeDefined();
   });
   it("maps +z_fly to Three +Y", () => {
     const b = parseBody(bin([0, 0, 0, 0, 0, 65535, 0, 0, 0, 0, 0, 0]), meta);
@@ -74,20 +73,55 @@ describe("parseBody", () => {
   });
 });
 
-describe("frameDistance", () => {
-  const box = (s: number) => ({ min: [-s, -s, -s] as [number, number, number], max: [s, s, s] as [number, number, number] });
-  it("grows with the body size", () => {
-    expect(frameDistance(box(2), 40, 1.5)).toBeGreaterThan(frameDistance(box(1), 40, 1.5));
+describe("boundingRadius and centroid", () => {
+  const pts = new Float32Array([-1, 0, 0, 3, 0, 0, 0, 2, 0]); // three endpoints
+  it("centroid is the mean of all endpoints", () => {
+    expect(centroid(pts)).toEqual([2 / 3, 2 / 3, 0].map((v) => expect.closeTo(v, 6)));
   });
-  it("grows when the viewport gets narrower and when the fov gets smaller", () => {
-    expect(frameDistance(box(1), 40, 0.6)).toBeGreaterThan(frameDistance(box(1), 40, 1.6));
-    expect(frameDistance(box(1), 20, 1.5)).toBeGreaterThan(frameDistance(box(1), 60, 1.5));
+  it("boundingRadius is the farthest vertex from the given centre", () => {
+    expect(boundingRadius(pts, [0, 0, 0])).toBeCloseTo(3, 6);
+    expect(boundingRadius(pts, [3, 0, 0])).toBeCloseTo(4, 6);
   });
-  it("leaves roughly 10% margin: the bounding sphere fits the vertical view", () => {
-    const b = box(1);
-    const d = frameDistance(b, 40, 10);
-    const r = Math.sqrt(3);
-    expect(d * Math.tan((20 * Math.PI) / 180)).toBeGreaterThanOrEqual(r);
+  it("handles an empty buffer without NaN", () => {
+    expect(centroid(new Float32Array(0))).toEqual([0, 0, 0]);
+    expect(boundingRadius(new Float32Array(0), [0, 0, 0])).toBe(0);
+  });
+  it("parseBody exposes the centroid and the radius around it", () => {
+    const b = parseBody(good(), meta);
+    expect(b.centroid).toEqual(centroid(b.positions));
+    expect(b.radius).toBeCloseTo(boundingRadius(b.positions, b.centroid), 9);
+  });
+});
+
+describe("viewFitDistance", () => {
+  const ring = (r: number) => new Float32Array([r, 0, 0, -r, 0, 0, 0, r, 0, 0, -r, 0]); // circle of radius r in the XY plane
+  const c: Vec3 = [0, 0, 0];
+  it("fills the requested fraction of the limiting dimension in a wide view", () => {
+    const d = viewFitDistance(ring(1), c, 0, 0, 40, 4, 0.7);
+    const halfV = Math.tan((20 * Math.PI) / 180);
+    expect(1 / (d * halfV)).toBeCloseTo(0.7, 6); // a vertex at y=1 occupies 70% of the half height
+  });
+  it("uses the horizontal limit when the view is narrow", () => {
+    const d = viewFitDistance(ring(1), c, 0, 0, 40, 0.5, 0.7);
+    const halfH = Math.tan((20 * Math.PI) / 180) * 0.5;
+    expect(1 / (d * halfH)).toBeCloseTo(0.7, 6);
+  });
+  it("grows with the body size, and when the view gets narrower or the fov smaller", () => {
+    expect(viewFitDistance(ring(2), c, 35, 15, 40, 1.5, 0.7)).toBeGreaterThan(viewFitDistance(ring(1), c, 35, 15, 40, 1.5, 0.7));
+    expect(viewFitDistance(ring(1), c, 35, 15, 40, 0.6, 0.7)).toBeGreaterThan(viewFitDistance(ring(1), c, 35, 15, 40, 1.6, 0.7));
+    expect(viewFitDistance(ring(1), c, 35, 15, 20, 1.5, 0.7)).toBeGreaterThan(viewFitDistance(ring(1), c, 35, 15, 60, 1.5, 0.7));
+  });
+  it("a smaller fill moves the camera farther away", () => {
+    expect(viewFitDistance(ring(1), c, 35, 15, 40, 1.5, 0.5)).toBeGreaterThan(viewFitDistance(ring(1), c, 35, 15, 40, 1.5, 0.7));
+  });
+  it("never puts a vertex behind the camera", () => {
+    const d = viewFitDistance(new Float32Array([0, 0, 5, 0, 0, -5]), c, 0, 0, 40, 1.5, 0.7);
+    expect(d).toBeGreaterThan(5);
+  });
+  it("returns a positive finite distance for an empty body", () => {
+    const d = viewFitDistance(new Float32Array(0), c, 35, 15, 40, 1.5, 0.7);
+    expect(Number.isFinite(d)).toBe(true);
+    expect(d).toBeGreaterThan(0);
   });
 });
 
@@ -133,5 +167,35 @@ describe("the committed asset", () => {
     // json bounds (um) -> mm, Three axes
     expect(b.bounds.min[0]).toBeCloseTo(m.bounds[0][1] / 1000, 6);
     expect(b.bounds.max[2]).toBeCloseTo(m.bounds[1][0] / 1000, 6);
+  });
+});
+
+describe("framing of the committed fly", () => {
+  const m = JSON.parse(readFileSync("public/fly-body.json", "utf8")) as BodyMeta;
+  const raw = readFileSync("public/fly-body.bin");
+  const buf = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) as ArrayBuffer;
+  it("at the default view the fly's vertical extent is about 70% of a wide pane, centred on the centroid", () => {
+    const b = parseBody(buf, m);
+    const fov = 40, aspect = 1.9, az = 35, el = 15;
+    const d = viewFitDistance(b.positions, b.centroid, az, el, fov, aspect, 0.7);
+    // project every vertex with the same camera and measure the vertical extent in NDC
+    const a = (az * Math.PI) / 180, e = (el * Math.PI) / 180;
+    const dir = [Math.sin(a) * Math.cos(e), Math.sin(e), Math.cos(a) * Math.cos(e)];
+    const right = [Math.cos(a), 0, -Math.sin(a)];
+    const up = [dir[1] * right[2] - dir[2] * right[1], dir[2] * right[0] - dir[0] * right[2], dir[0] * right[1] - dir[1] * right[0]];
+    const t = Math.tan((fov * Math.PI) / 360);
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < b.positions.length; i += 3) {
+      const p = [b.positions[i] - b.centroid[0], b.positions[i + 1] - b.centroid[1], b.positions[i + 2] - b.centroid[2]];
+      const depth = d - (p[0] * dir[0] + p[1] * dir[1] + p[2] * dir[2]);
+      const y = p[0] * up[0] + p[1] * up[1] + p[2] * up[2];
+      const ndc = y / (depth * t);
+      lo = Math.min(lo, ndc);
+      hi = Math.max(hi, ndc);
+    }
+    const fill = (hi - lo) / 2; // fraction of the full pane height (NDC spans 2)
+    expect(Math.max(Math.abs(lo), Math.abs(hi))).toBeCloseTo(0.7, 2);
+    expect(fill).toBeGreaterThan(0.55);
+    expect(fill).toBeLessThanOrEqual(0.71);
   });
 });
