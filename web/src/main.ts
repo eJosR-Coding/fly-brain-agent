@@ -8,7 +8,9 @@ import { fetchIndices, loadBrain, loadBrainMeta } from "./brainData";
 import { mountPreview } from "./brainPreview";
 import { createBrainGate } from "./brainGate";
 import { mountOpenControl } from "./previewOpen";
-import { mountBody } from "./bodyMount";
+import { mountBody, type MountedBody } from "./bodyMount";
+import { createBodyAnimation, DEFAULT_BODY_CAPTION, type BodyAnimation } from "./bodyAnimation";
+import { createBodyDriver } from "./bodyDriver";
 import { mountLayout, type Layout } from "./layoutPanes";
 import type { Pane } from "./layoutState";
 import { commitScene } from "./sceneLoad";
@@ -54,6 +56,9 @@ let health: Health | null = null;
 let streaming = false;
 let selectedModel: string | null = null;
 let player: Player | null = null;
+let mountedBody: MountedBody | null = null;
+/** Recording -> body pose and caption; one per page, fed by showActivity/clearAll and by the player clock. */
+let bodyAnimation: BodyAnimation | null = null;
 let charts: ChartsPanel | null = null;
 let chartsChip: HTMLButtonElement | null = null;
 let simulating = false;
@@ -96,6 +101,7 @@ export function clearAll(): void {
   pathShown = false;
   pathOrder.cancel(); // a path still waiting for the scene is dropped
   shown = null;
+  bodyAnimation?.setActivity(null); // before player.clear(): its null tick then finds nothing loaded (rest, default caption)
   player?.clear();
 }
 
@@ -136,6 +142,7 @@ function showActivity({ a, baseline }: { a: Activity; baseline: Activity | null 
   waveLegend = text;
   pathOrder.cancel(); // a recording replaces the cables' story: a path still waiting must not draw
   shown = { a, baseline };
+  bodyAnimation?.setActivity(a); // the MAIN recording, never the baseline; before player.load so its first tick is already driven
   player?.load(a, baseline); // no player yet: loadScene replays `shown` once the scene exists
   charts?.show(a, baseline);
   chartsHasContent = true;
@@ -462,6 +469,8 @@ async function loadScene(): Promise<BrainScene> {
         });
         const p = newPlayer;
         undo(() => p.clear());
+        // The body follows the playback clock (it runs even while the brain pane is hidden). Subscribed once per player, before the replay below.
+        undo(p.subscribeTime((ms) => bodyAnimation?.onTime(ms)));
         if (shown) p.load(shown.a, shown.baseline); // a recording that arrived before the scene existed
       },
       publish: (scene) => {
@@ -575,7 +584,14 @@ async function boot(): Promise<void> {
   });
   // The fly body is the default center pane; the brain preview (then the real scene, on demand) lives in the brain pane.
   const calm = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
-  mountBody(layout.bodyHost, { theme, reducedMotion: calm });
+  mountedBody = mountBody(layout.bodyHost, { theme, reducedMotion: calm });
+  const body = mountedBody;
+  bodyAnimation = createBodyAnimation({
+    driver: createBodyDriver({ setPose: (angles) => body.setPose(angles) }),
+    setCaption: (text) => body.setCaption(text),
+    defaultCaption: DEFAULT_BODY_CAPTION,
+    reducedMotion: calm,
+  });
   preview = mountPreview(layout.brainHost, { theme });
   openControl = mountOpenControl(layout.brainHost, gate);
   // the layout only reports changes, never its initial state: a remembered "brain large" opens the scene here
