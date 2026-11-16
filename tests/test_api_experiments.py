@@ -127,7 +127,7 @@ def test_chat_emits_the_screen_chart_with_rows_that_open_diff_maps(tiny_tsv_path
     chart = dict(events)["chart"]
     assert chart["kind"] == "screen" and chart["rows"][0]["label"] == "T4a" and chart["rows"][0]["significant"] is True
     assert svc.get(chart["rows"][0]["simulation_id"]).compare_id == chart["baseline_simulation_id"]
-    assert sum(1 for n, _ in events if n == "progress") == 4  # 0..3 of 3 candidates
+    assert sum(1 for n, _ in events if n == "progress") == 5  # 0..4 of 3 candidates + the baseline
 
 
 def test_a_chat_turn_with_no_experiment_has_no_progress_or_chart(tiny_tsv_path, svc):

@@ -106,7 +106,9 @@ def test_screen_caps_n_and_reports_progress_per_candidate(tiny_atlas, store, sim
     out = screen(tiny_atlas, store, sims, orn, epg, n=50)
     off()
     assert "n capped to 12" in out["note"]
-    assert seen == [("silencing_screen", i, 3) for i in range(4)]  # only 3 candidates exist, so 3 steps
+    # baseline + only 3 candidates exist: the total starts at n + 1 and shrinks to the real 4 once they are picked
+    assert seen[0] == ("silencing_screen", 0, 13) and seen[-1] == ("silencing_screen", 4, 4)
+    assert [d for _, d, _ in seen] == [0, 1, 2, 3, 4]
 
 
 def test_screen_chart_for_the_viewer(tiny_atlas, store, sims, orn, epg):

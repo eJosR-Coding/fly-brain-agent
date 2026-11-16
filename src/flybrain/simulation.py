@@ -60,7 +60,7 @@ class SimResult:
     rate_hz: np.ndarray  # (n,) mean rate per trial
     trials: int
     duration_ms: float
-    trial_counts: np.ndarray | None = None  # (trials, n) int32: spikes per trial, to measure trial-to-trial spread
+    trial_counts: np.ndarray  # (trials, n) int32: spikes per trial, to measure trial-to-trial spread (always set by _execute)
     bin_ms: float | None = None
     active_rows: np.ndarray | None = None  # (n_active,) int64, sorted
     frames: np.ndarray | None = None  # (n_active, n_bins) uint16

@@ -188,3 +188,44 @@ def test_schemas_carry_no_title_noise(tiny_atlas):
     for t in asyncio.run(build_server(tiny_atlas).list_tools()):
         assert "title" not in t.inputSchema
         assert all("title" not in p for p in t.inputSchema["properties"].values()), t.name
+
+
+def test_the_connectome_error_says_why_it_is_missing(tiny_atlas, tmp_path):
+    from flybrain import tools
+
+    assert mcp_server.load_connectome(tiny_atlas, tmp_path / "nope.npz") is None
+    with pytest.raises(Exception, match="not found.*nope.npz"):
+        tools._need_connectome(None)
+
+
+def test_the_connectome_error_says_it_was_built_for_another_atlas(tiny_atlas, tmp_path):
+    import numpy as np
+
+    from flybrain import tools
+    from flybrain.connectome_build import write_npz
+
+    path = tmp_path / "c.npz"
+    e = np.array([0], dtype=np.int32)
+    write_npz(path, e, e, e, n_neurons=7, source="x", stats={"rows_in": 1, "dropped_unknown": 0, "dropped_self_loops": 0})
+    assert mcp_server.load_connectome(tiny_atlas, path) is None
+    with pytest.raises(Exception, match="built for 7 neurons"):
+        tools._need_connectome(None)
+
+
+def test_the_connectome_error_says_it_could_not_be_read(tiny_atlas, tmp_path):
+    from flybrain import tools
+
+    path = tmp_path / "c.npz"
+    path.write_bytes(b"not an npz")
+    assert mcp_server.load_connectome(tiny_atlas, path) is None
+    with pytest.raises(Exception, match="could not read connectome"):
+        tools._need_connectome(None)
+
+
+def test_a_good_load_clears_the_reason(tiny_atlas, tiny_conn, tmp_path):
+    from flybrain import tools
+
+    mcp_server.load_connectome(tiny_atlas, tmp_path / "nope.npz")
+    tools.CONNECTOME_PROBLEM = None  # what a successful load does
+    with pytest.raises(Exception, match="flybrain-build-connectome"):
+        tools._need_connectome(None)

@@ -28,8 +28,11 @@ def load_connectome(atlas: Atlas, path=None) -> Connectome | None:
     """The connectome is optional: missing or mismatched file -> None (one stderr line if mismatched)."""
     path = Path(path) if path is not None else connectome_path()
     try:
-        return Connectome.load(path, len(atlas.neurons))
+        conn = Connectome.load(path, len(atlas.neurons))
+        tools.CONNECTOME_PROBLEM = None
+        return conn
     except ConnectomeError as exc:
+        tools.CONNECTOME_PROBLEM = str(exc)  # the connectome tools say WHY it is missing, not just "build it"
         if path.is_file():  # present but unusable: say so; a missing file is the normal "not built" case
             print(f"flybrain: connectome disabled: {exc}", file=sys.stderr)
         return None

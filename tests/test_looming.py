@@ -220,3 +220,21 @@ def test_default_input_is_detectors(atlas, sims):
 def test_unknown_input_is_a_clear_error(atlas, sims):
     with pytest.raises(ValueError, match="input"):
         run(atlas, sims, input="retina")
+
+
+def test_progress_is_running_while_the_weights_load_and_cleared_after(atlas, sims):
+    seen = []
+    lazy = SimulationService(lambda: (seen.append(lazy.progress_snapshot()), sims.simulation())[1])
+    run(atlas, lazy)
+    assert seen == [{"experiment": "looming_escape", "done": 0, "total": 4}]
+    assert lazy.progress_snapshot() is None
+
+
+def test_progress_is_cleared_when_the_load_fails(atlas):
+    def boom():
+        raise RuntimeError("load failed")
+
+    lazy = SimulationService(boom)
+    with pytest.raises(RuntimeError):
+        run(atlas, lazy)
+    assert lazy.progress_snapshot() is None
