@@ -197,10 +197,10 @@ def test_error_event_arrives_before_a_slow_repair(monkeypatch):
     real = agent.close_dangling_tool_calls
     order = []
 
-    async def slow_repair(graph, config, reason):
+    async def slow_repair(graph, config, reason, in_flight=None):
         await asyncio.sleep(0.5)
         order.append("repaired")
-        await real(graph, config, reason)
+        await real(graph, config, reason, in_flight)
 
     monkeypatch.setattr(agent, "close_dangling_tool_calls", slow_repair)
     model = _model("quick")
@@ -222,3 +222,85 @@ def test_error_event_arrives_before_a_slow_repair(monkeypatch):
     assert order == ["error seen", "repaired"]
     assert second[-1] == {"type": "answer", "text": "recovered"}
     assert_paired(model.seen[-1])
+
+
+# --- the repair text is honest about what it knows (S13) -----------------------------------
+
+async def _seed_two_dangling(graph, config):
+    await graph.aupdate_state(
+        config, {"messages": [HumanMessage("hi"), _ai("a", "b")]}, as_node="agent"
+    )
+
+
+def _closing(messages):
+    return {m.tool_call_id: m.content for m in messages if isinstance(m, ToolMessage)}
+
+
+def test_repair_tells_in_flight_calls_from_never_started_ones():
+    graph = build_graph(fn_model(lambda m: AIMessage(content="x")), [quick], checkpointer=InMemorySaver())
+    config = {"configurable": {"thread_id": "t"}}
+
+    async def run():
+        await _seed_two_dangling(graph, config)
+        await close_dangling_tool_calls(graph, config, "boom", in_flight={"a"})
+        return (await graph.aget_state(config)).values["messages"]
+
+    texts = _closing(asyncio.run(run()))
+    assert "may still have run" in texts["a"] and "boom" in texts["a"]
+    assert "before this tool ran" in texts["b"] and "boom" in texts["b"]
+
+
+def test_repair_without_knowledge_never_claims_the_tool_did_not_run():
+    graph = build_graph(fn_model(lambda m: AIMessage(content="x")), [quick], checkpointer=InMemorySaver())
+    config = {"configurable": {"thread_id": "t"}}
+
+    async def run():
+        await _seed_two_dangling(graph, config)
+        await close_dangling_tool_calls(graph, config, "boom")
+        return (await graph.aget_state(config)).values["messages"]
+
+    texts = _closing(asyncio.run(run()))
+    assert all("may still have run" in t and "before this tool ran" not in t for t in texts.values())
+
+
+def test_repair_is_idempotent_and_keeps_error_status():
+    graph = build_graph(fn_model(lambda m: AIMessage(content="x")), [quick], checkpointer=InMemorySaver())
+    config = {"configurable": {"thread_id": "t"}}
+
+    async def run():
+        await _seed_two_dangling(graph, config)
+        await close_dangling_tool_calls(graph, config, "boom", in_flight={"a", "b"})
+        once = (await graph.aget_state(config)).values["messages"]
+        await close_dangling_tool_calls(graph, config, "again", in_flight={"a", "b"})
+        return once, (await graph.aget_state(config)).values["messages"]
+
+    once, twice = asyncio.run(run())
+    assert len(once) == len(twice) == 4
+    assert all(m.status == "error" for m in once if isinstance(m, ToolMessage))
+
+
+def test_timeout_mid_tool_says_the_tool_may_still_have_run():
+    model = _model("slow")
+    graph = build_graph(model, [slow], checkpointer=InMemorySaver())
+
+    async def run():
+        await collect(graph, "first", turn_timeout=0.3)
+        await collect(graph, "second", turn_timeout=5)
+
+    asyncio.run(run())
+    closing = [m for m in model.seen[-1] if isinstance(m, ToolMessage) and m.status == "error"]
+    assert len(closing) == 1
+    assert "may still have run" in closing[0].content and "took longer" in closing[0].content
+
+
+def test_hard_stop_says_the_cut_call_never_ran():
+    model = _model("quick")
+    graph = build_graph(model, [quick], checkpointer=InMemorySaver())
+
+    async def run():
+        await collect(graph, "first", max_steps=1)
+        await collect(graph, "second", max_steps=1)
+
+    asyncio.run(run())
+    closing = [m for m in model.seen[-1] if isinstance(m, ToolMessage) and m.status == "error"]
+    assert len(closing) == 1 and "before this tool ran" in closing[0].content

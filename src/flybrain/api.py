@@ -250,6 +250,8 @@ def create_app(
         app.state.tools = None
         app.state.graphs = {}  # model id -> compiled graph, built lazily
         app.state.graph_lock = asyncio.Lock()
+        app.state.turns = set()  # conversation ids with a turn running (one at a time per id)
+        app.state.tools_ok = True  # False once a turn reports the tool server dead
         app.state.connectome = load_connectome(atlas, connectome_path)  # optional: None if not built
         # the simulator loads lazily on the first run; only its presence is checked here
         app.state.sims = simulation if simulation is not None else SimulationService.default(atlas)
@@ -311,7 +313,7 @@ def create_app(
 
     @app.get("/health")
     def health():
-        chat_on = app.state.graph is not None
+        chat_on = app.state.graph is not None and app.state.tools_ok
         return {
             "status": "ok",
             "neurons": len(app.state.atlas.neurons),
@@ -644,59 +646,70 @@ def create_app(
         conversation_id = req.conversation_id or uuid.uuid4().hex
         used = picked or default_id
         yield _sse("meta", {"conversation_id": conversation_id, "model": used if app.state.graph else None})
-        graph = app.state.graph
-        if graph is not None and picked is not None:
-            try:
-                graph = await _graph_for(picked)
-            except Exception as exc:  # missing provider package, bad key format...
-                reason = " ".join(str(exc).split()) or type(exc).__name__
-                yield _sse("error", {"message": f"could not set up model {picked}: {reason}"})
-                graph = False
-        if graph is None:
-            yield _sse("error", {"message": "no chat model configured on this server"})
-        elif graph is not False:
-            seen: set[str] = set()
-            # stream_events never raises: failures arrive as an "error" event
-            # aclosing: when the client leaves, the stream is closed right away (not at GC time)
-            # so its finally block repairs the thread before the next turn.
-            extensions = {name: app.state.experiment_timeout for name in EXPERIMENT_TOOLS}
-            running_experiment = False  # between an experiment tool's call and its result: progress belongs to this turn
-            async with aclosing(_with_progress(
-                stream_events(graph, req.message, conversation_id, max_steps, app.state.turn_timeout, used, extensions),
-                app.state.sims,
-            )) as merged:
-                async for kind, ev in merged:
-                    if kind == "progress":
-                        if running_experiment:
-                            yield _sse("progress", ev)
-                        continue
-                    if ev["type"] == "tool_call":
-                        running_experiment = ev["tool"] in EXPERIMENT_TOOLS
-                        yield _sse("tool_call", {"id": ev["id"], "tool": ev["tool"], "args": _short(ev["args"])})
-                    elif ev["type"] == "answer_delta":
-                        yield _sse("answer_delta", {"text": ev["text"]})
-                    elif ev["type"] == "tool_result":
-                        running_experiment = False
-                        yield _sse("tool_result", {"id": ev["id"], "tool": ev["tool"], "ok": not ev["error"], "ms": ev["ms"]})
-                        hl = None if ev["error"] else _highlight(ev["content"], seen)
-                        if hl is not None:
-                            yield hl
-                        route = None if ev["error"] else _path(ev["tool"], ev["content"])
-                        if route is not None:
-                            yield route
-                        act = None if ev["error"] else _activity(ev["content"])
-                        if act is not None:
-                            yield act
-                        chart = None if ev["error"] else _chart(ev["content"])
-                        if chart is not None:
-                            yield chart
-                    elif ev["type"] == "usage":
-                        yield _sse("usage", {k: ev[k] for k in
-                                             ("calls", "input_tokens", "output_tokens", "total_tokens")})
-                    elif ev["type"] == "answer":
-                        yield _sse("answer", {"text": ev["text"]})
-                    else:
-                        yield _sse("error", {"message": ev["message"]})
+        if conversation_id in app.state.turns:
+            # two turns on one thread would let one's repair close the other's in-flight tool calls
+            yield _sse("error", {"message": "a turn is already running on this conversation"})
+            yield _sse("done", {})
+            return
+        app.state.turns.add(conversation_id)  # no await between the check and this: no race
+        try:
+            graph = app.state.graph
+            if graph is not None and picked is not None:
+                try:
+                    graph = await _graph_for(picked)
+                except Exception as exc:  # missing provider package, bad key format...
+                    reason = " ".join(str(exc).split()) or type(exc).__name__
+                    yield _sse("error", {"message": f"could not set up model {picked}: {reason}"})
+                    graph = False
+            if graph is None:
+                yield _sse("error", {"message": "no chat model configured on this server"})
+            elif graph is not False:
+                seen: set[str] = set()
+                # stream_events never raises: failures arrive as an "error" event
+                # aclosing: when the client leaves, the stream is closed right away (not at GC time)
+                # so its finally block repairs the thread before the next turn.
+                extensions = {name: app.state.experiment_timeout for name in EXPERIMENT_TOOLS}
+                active: dict[str, str] = {}  # tool_call id -> tool, until its result: progress belongs to this turn
+                async with aclosing(_with_progress(
+                    stream_events(graph, req.message, conversation_id, max_steps, app.state.turn_timeout, used, extensions),
+                    app.state.sims,
+                )) as merged:
+                    async for kind, ev in merged:
+                        if kind == "progress":
+                            if any(t in EXPERIMENT_TOOLS for t in active.values()):
+                                yield _sse("progress", ev)
+                            continue
+                        if ev["type"] == "tool_call":
+                            active[ev["id"]] = ev["tool"]
+                            yield _sse("tool_call", {"id": ev["id"], "tool": ev["tool"], "args": _short(ev["args"])})
+                        elif ev["type"] == "answer_delta":
+                            yield _sse("answer_delta", {"text": ev["text"]})
+                        elif ev["type"] == "tool_result":
+                            active.pop(ev["id"], None)
+                            yield _sse("tool_result", {"id": ev["id"], "tool": ev["tool"], "ok": not ev["error"], "ms": ev["ms"]})
+                            hl = None if ev["error"] else _highlight(ev["content"], seen)
+                            if hl is not None:
+                                yield hl
+                            route = None if ev["error"] else _path(ev["tool"], ev["content"])
+                            if route is not None:
+                                yield route
+                            act = None if ev["error"] else _activity(ev["content"])
+                            if act is not None:
+                                yield act
+                            chart = None if ev["error"] else _chart(ev["content"])
+                            if chart is not None:
+                                yield chart
+                        elif ev["type"] == "usage":
+                            yield _sse("usage", {k: ev[k] for k in
+                                                 ("calls", "input_tokens", "output_tokens", "total_tokens")})
+                        elif ev["type"] == "answer":
+                            yield _sse("answer", {"text": ev["text"]})
+                        else:
+                            if ev.get("tools_stopped"):  # typed marker, not the text
+                                app.state.tools_ok = False
+                            yield _sse("error", {"message": ev["message"]})
+        finally:
+            app.state.turns.discard(conversation_id)  # after the stream (and its repair) closed
         yield _sse("done", {})  # always last, so the client never waits on a dead stream
 
     return app

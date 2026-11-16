@@ -360,8 +360,15 @@ def find_dangling_tool_calls(messages) -> list[dict]:
     return dangling
 
 
-async def close_dangling_tool_calls(graph, config, reason: str) -> None:
+async def close_dangling_tool_calls(
+    graph, config, reason: str, in_flight: frozenset[str] | set[str] | None = None
+) -> None:
     """Pair every unanswered tool call in the thread with an error ToolMessage.
+
+    ``in_flight`` = ids whose tool_call was emitted and had no result when the turn stopped.
+    A tool run in a thread may have changed state (or still be running), so those, and every
+    id when ``in_flight`` is None (unknown), get a text that never claims the tool did not run;
+    only ids outside a known ``in_flight`` set (cut by the hard stop) say they never ran.
 
     A turn cut mid-flight (hard stop, timeout, error) leaves an AIMessage whose tool_calls
     have no results; providers reject such a history, which would break the conversation for
@@ -375,7 +382,12 @@ async def close_dangling_tool_calls(graph, config, reason: str) -> None:
         return
     closing = [
         ToolMessage(
-            content=f"cancelled: the turn stopped before this tool ran ({reason})",
+            content=(
+                f"cancelled: the turn stopped before this tool ran ({reason})"
+                if in_flight is not None and c["id"] not in in_flight
+                else f"cancelled: the turn stopped ({reason}); the tool may still have run, "
+                "check the current state"
+            ),
             tool_call_id=c["id"],
             name=c["name"],
             status="error",
@@ -444,12 +456,28 @@ async def stream_events(
         "configurable": {"max_tool_rounds": max_steps, "thread_id": thread_id},
     }
     last_agent: AIMessage | None = None
-    deadline = None if turn_timeout is None else time.monotonic() + turn_timeout
+    base_deadline = None if turn_timeout is None else time.monotonic() + turn_timeout
+    active: dict[str, str] = {}  # tool_call id -> name, between its tool_call and its tool_result
+
+    spent_in_tools = 0.0  # time finished granted calls actually took (capped at their grant)
+
+    def current_deadline() -> float | None:
+        """Base deadline + the grant of every granted tool in flight + the time finished ones used.
+
+        A call that ends returns the unused part of its grant (a 1 s failure keeps 1 s, not the
+        whole grant), but the time it did take stays credited: the model call after a long
+        experiment still gets its own budget.
+        """
+        if base_deadline is None:
+            return None
+        return base_deadline + spent_in_tools + sum((tool_extensions or {}).get(n, 0.0) for n in active.values())
+
     updates = graph.astream(
         {"messages": [HumanMessage(question)]}, config=config, stream_mode=["updates", "messages"]
     ).__aiter__()
     started: dict[str, float] = {}
     failure: str | None = None  # set on every non-answer path; the thread is repaired below
+    tools_stopped = False  # failure came from a dead tool server (ServerStoppedError)
     answered = False
     calls = 0
     call_usages: list = []  # one entry per model call: its usage_metadata, or None
@@ -461,6 +489,7 @@ async def stream_events(
     try:
         try:
             while True:
+                deadline = current_deadline()
                 left = None if deadline is None else max(deadline - time.monotonic(), 0)
                 try:
                     update = await asyncio.wait_for(updates.__anext__(), left)
@@ -497,11 +526,14 @@ async def stream_events(
                             chunk_usage = []
                             for tc in getattr(msg, "tool_calls", None) or []:
                                 started[tc["id"]] = time.monotonic()
-                                if deadline is not None and tool_extensions:
-                                    deadline += tool_extensions.get(tc["name"], 0.0)
+                                active[tc["id"]] = tc["name"]
                                 yield {"type": "tool_call", "id": tc["id"], "tool": tc["name"], "args": tc["args"]}
                         elif isinstance(msg, ToolMessage):
                             t0 = started.pop(msg.tool_call_id, None)
+                            name = active.pop(msg.tool_call_id, None)
+                            grant = (tool_extensions or {}).get(name, 0.0)
+                            if t0 is not None and grant:
+                                spent_in_tools += min(time.monotonic() - t0, grant)
                             yield {
                                 "type": "tool_result",
                                 "id": msg.tool_call_id,
@@ -512,12 +544,16 @@ async def stream_events(
                             }
         except GraphRecursionError:
             failure = _hard_stop(max_steps)
+            started.clear()  # the cut request never executes
+            active.clear()
         except ServerStoppedError as exc:
             failure = str(exc)
+            tools_stopped = True
         except Exception as exc:  # model/provider failure: report it, never hang the stream
             dead = server_gone(exc)
             if dead is not None:
                 failure = str(stopped_error(dead))
+                tools_stopped = True
             else:
                 reason = " ".join(str(exc).split()) or type(exc).__name__
                 failure = friendly_model_error(exc, model_name) or f"model call failed: {reason}"
@@ -528,10 +564,13 @@ async def stream_events(
                 last_agent, "invalid_tool_calls", None
             ):
                 failure = _hard_stop(max_steps)
+                started.clear()  # the model wanted another round: those calls never ran
+                active.clear()
         if failure is not None:
             if (spent := usage_event()) is not None:
                 yield spent
-            yield {"type": "error", "message": failure}  # first: a slow repair must not delay it
+            # first: a slow repair must not delay it; tools_stopped is the typed "server died" marker
+            yield {"type": "error", "message": failure, **({"tools_stopped": True} if tools_stopped else {})}
             return
         text = last_agent.text
         answered = True
@@ -544,13 +583,15 @@ async def stream_events(
             # CancelledError (task cancelled), GeneratorExit (aclose() when the client left).
             # The repair is shielded so a cancellation in flight cannot abort it halfway, and
             # the cancellation itself is never swallowed (this finally just re-raises it).
-            await asyncio.shield(_repair(graph, config, updates, failure or "client disconnected"))
+            await asyncio.shield(
+                _repair(graph, config, updates, failure or "client disconnected", frozenset(started))
+            )
 
 
-async def _repair(graph, config, updates, reason: str) -> None:
+async def _repair(graph, config, updates, reason: str, in_flight: frozenset[str]) -> None:
     """Stop the still-running graph stream, then pair any unanswered tool call."""
     try:
         await updates.aclose()
     except Exception:  # noqa: BLE001 - best effort; the repair below is what matters
         pass
-    await close_dangling_tool_calls(graph, config, reason)
+    await close_dangling_tool_calls(graph, config, reason, in_flight)
