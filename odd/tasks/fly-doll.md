@@ -34,11 +34,14 @@ User approved on 2026-11-16 the core: (1) doll state, (2) combined stimuli with 
   local app); documented, not solved.
 
 ## Tasks
-- [ ] T1 data: presets from Shiu's figures.ipynb (raw github), ids verified against the v783 atlas: bitter, water,
-      jo_ce (antennal Johnston's organ C/E), readouts abn1 (grooming), plus `dnp01` (escape, from the atlas by
-      cell_type, validation "readout works, looming selectivity not shown"). Preset schema gains optional
-      `role` ("stimulus"|"readout"), `meaning` (behavior in one phrase) and `validation`
-      ("validated"|"exploratory"). Existing sugar/mn9 get them (mn9 meaning: proboscis extension, feeding).
+- [x] T1 data: presets from Shiu's figures.ipynb (commit 91bdd1e7), ids parsed with ast.literal_eval (no notebook
+      code run), verified against the v783 atlas. (route: delegated writer.) Added bitter (20/20 in atlas, all
+      sub_class bitter), water (18/18), jo_ce (69/69, all wind_gravity sub_class; readout abn1), abn1 (id
+      720575940630907434), dnp01 (2, from the atlas, exploratory). Fields role/meaning/validation on every preset;
+      preset_selection and the stimulate `preset` block carry them. RED: 12 failed, 9 passed. GREEN: 709 passed
+      (parent re-ran, and cross-checked the ids against the atlas). Not given a default readout: bitter, water.
+      Notes: annotation drift v630 -> v783: of Shiu's 20 sugar ids present, 9 are annotated sugar and 5 high_salt;
+      his water set holds 7 annotated sugar. Shiu's sets stay the reference for reproducing the paper.
 - [ ] T2 doll tool `fly`: persistent conditions (stimuli by name with rate, silenced sets, readouts), add/replace/
       remove/reset in one call, runs ALL stimuli together through run_schedule, returns the usual summary + the
       readouts with their meaning/validation + `change_vs_previous` (readout and active-neuron deltas) +
@@ -55,4 +58,4 @@ feat/stimulate-presets (approved 2026-11-16; follow-up fix 3ff6e7d is under budg
 Engram mirror `odd/fly-doll/tasks`: PENDING (mem_save is blocked by a hook that rewrites its input).
 
 ## Progress
-- 2026-11-16 created after phase 0. Next step: T1.
+- 2026-11-16 created after phase 0. T1 done. Next step: T2.

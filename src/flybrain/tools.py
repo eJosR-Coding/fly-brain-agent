@@ -425,6 +425,7 @@ def preset_selection(atlas: Atlas, store: SelectionStore, name, presets: dict | 
     found = rows[rows >= 0]
     out = {"name": key, "description": preset["description"], "source": preset["source"],
            "total": int(len(found)), "missing": int(len(rows) - len(found)), "selection_id": None}
+    out.update({k: preset[k] for k in ("role", "meaning", "validation") if k in preset})
     if not len(found):
         out["hint"] = f"None of its {len(rows)} neurons exists in this atlas."
         return out
@@ -544,7 +545,7 @@ def stimulate(
     notes: list[str] = []
     if (selection_id is None) == (preset is None):
         raise ValueError("give exactly one of selection_id or preset")
-    readout_preset = None
+    readout_preset = readout_meaning = None
     preset_key = preset.strip().lower() if isinstance(preset, str) else preset
     if preset is not None:
         selection_id = _preset_ticket(atlas, store, preset)
@@ -553,6 +554,7 @@ def stimulate(
             try:
                 readout_selection_id = _preset_ticket(atlas, store, declared)
                 readout_preset = declared
+                readout_meaning = load_presets().get(declared, {}).get("meaning")
             except ValueError as exc:  # the default readout is a convenience: run without it, say so
                 notes.append(f"default readout {declared!r} skipped ({exc})")
     rate = _clamp("rate_hz", _number("rate_hz", rate_hz), MIN_RATE_HZ, MAX_RATE_HZ, notes)
@@ -599,7 +601,11 @@ def stimulate(
     else:
         out["hint"] = "No neuron fired above 1 Hz. Raise rate_hz or stimulate more neurons."
     if preset is not None:
-        out["preset"] = {"name": preset_key, "readout_preset": readout_preset}
+        declared_fields = load_presets().get(preset_key, {})
+        out["preset"] = {"name": preset_key, "readout_preset": readout_preset,
+                         **{k: declared_fields[k] for k in ("meaning", "validation") if k in declared_fields}}
+        if readout_meaning:
+            out["preset"]["readout_meaning"] = readout_meaning
     if readout is not None:
         out["readout"] = _group(atlas, rates, readout)
     if base is not None:

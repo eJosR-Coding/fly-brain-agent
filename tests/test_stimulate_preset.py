@@ -10,8 +10,9 @@ from test_stimulate import sims, store, ticket  # noqa: F401  (fixtures)
 
 # tiny_atlas: ORN_DA1 root 102 (row 62); EPG root 100 (row 60)
 PRESETS = {
-    "orn": {"description": "olfactory input", "root_ids": [102], "source": "test", "readout": "epg"},
-    "epg": {"description": "compass neuron", "root_ids": [100], "source": "test"},
+    "orn": {"description": "olfactory input", "root_ids": [102], "source": "test", "readout": "epg",
+            "meaning": "smell", "validation": "validated"},
+    "epg": {"description": "compass neuron", "root_ids": [100], "source": "test", "meaning": "compass"},
     "plain": {"description": "no readout", "root_ids": [102], "source": "test"},
     "ghost": {"description": "absent", "root_ids": [999], "source": "test"},
     "blind": {"description": "readout missing", "root_ids": [102], "source": "test", "readout": "ghost"},
@@ -35,12 +36,14 @@ def test_preset_equals_the_old_two_step_result(tiny_atlas, store, sims):
     assert one_step["stimulus"] == two_step["stimulus"]
     assert "readout" not in one_step
     assert one_step["preset"] == {"name": "plain", "readout_preset": None}
+    assert "meaning" not in one_step["preset"] and "validation" not in one_step["preset"]
 
 
 def test_preset_reads_out_its_default_readout(tiny_atlas, store, sims):
     out = call(tiny_atlas, store, sims, preset="orn")
     assert out["readout"]["neurons"] == 1
-    assert out["preset"] == {"name": "orn", "readout_preset": "epg"}
+    assert out["preset"] == {"name": "orn", "readout_preset": "epg", "meaning": "smell",
+                             "validation": "validated", "readout_meaning": "compass"}
     assert "readout_stats" not in out  # only when silencing
     assert sims.get(out["simulation_id"]).readout["label"] == "EPG"
 
