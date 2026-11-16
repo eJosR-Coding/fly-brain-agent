@@ -26,7 +26,7 @@ def test_home_angles_match_the_viewer():
 
 def test_header_size_and_long_side():
     w, h, data = render_preview(cloud())
-    assert max(w, h) == LONG_SIDE == 256
+    assert max(w, h) == LONG_SIDE == 384
     assert len(data) == 4 + w * h
     assert struct.unpack("<HH", data[:4]) == (w, h)
 
@@ -35,7 +35,7 @@ def test_aspect_ratio_is_kept():
     # a flat, wide slab seen almost front-on: much wider than tall
     pts = cloud(scale=(1000.0, 100.0, 1.0))
     w, h, _ = render_preview(pts)
-    assert w == 256 and h < w / 3
+    assert w == LONG_SIDE and h < w / 3
 
 
 def test_deterministic():
