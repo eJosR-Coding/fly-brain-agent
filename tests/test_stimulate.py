@@ -44,8 +44,10 @@ def test_packaged_presets_are_cited_and_complete():
     presets = tools.load_presets()
     assert len(presets["sugar"]["root_ids"]) == 21
     assert presets["mn9"]["root_ids"] == [720575940660219265]
-    for p in presets.values():
-        assert "91bdd1e" in p["source"] and "MIT" in p["source"] and p["description"]
+    for name, p in presets.items():
+        assert p["description"] and p["source"]
+        if name != "dnp01":  # dnp01 comes from the FlyWire annotations, not from Shiu et al.
+            assert "91bdd1e" in p["source"] and "MIT" in p["source"]
 
 
 def test_preset_selection_returns_a_ticket_and_a_source_note(tiny_atlas, store):

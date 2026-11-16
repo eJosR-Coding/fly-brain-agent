@@ -1,0 +1,61 @@
+# Fly doll: talk to the simulated fly and change its conditions from the chat
+
+## Objective
+The chat agent behaves like a simulator with a doll: "give sugar", "now also bitter", "remove the bitter",
+"reset". The doll keeps its current conditions between messages, combines several stimuli with different
+rates in one run, and reports the reaction in behavior terms (feeding, grooming, escape) plus what changed
+versus the previous run. No graphical widgets (user rejected the Terrarium UI on 2026-11-16): everything lives in
+the agent tools and the chat answer.
+
+## Authorized scope
+User approved on 2026-11-16 the core: (1) doll state, (2) combined stimuli with per-stimulus rates,
+(6) behavior-named readouts. Later, not yet approved: more sense presets, timeline, global model knobs.
+
+## Honesty rules (hard)
+- It is a model of neurons (LIF, Shiu et al. 2024): no body, no physiology. Never say the fly dies, is harmed or
+  overdoses; runaway activity is "the model saturates" (an artifact), the tool already warns about it.
+- Temperature, hunger and sleep are NOT model inputs. "Conditions" means which neurons are driven, at what
+  rate, which are silenced, and which readouts are watched.
+- Only validated mappings are called validated (MN9 proboscis, sugar/bitter/water GRNs, antennal JO -> grooming
+  aBN1 per Shiu). Everything else says "exploratory".
+- Do not invent neuron ids: take them from the primary source and verify them against the v783 atlas.
+
+## Phase 0 evidence (2026-11-16)
+- Agent tools today (main): search_neurons, count_neurons, describe_neuron, list_selection, neighbors, find_path,
+  lesion_effect, top_hubs, preset_selection, stimulate (now also `preset=`), dose_response, silencing_screen.
+- `Simulation.run_schedule` exists (cached via SimulationService.run_schedule); overlapping segments ADD rates for
+  the same neuron; segments over different neurons are independent. It is not exposed to the agent.
+- Atlas lookups by cell_type: aBN1 0, aBN2 0, MN9 0 (no name), DNp01 2 (giant fiber, left+right), DNg11 6.
+  Presets hold root_ids from Shiu's notebook (sugar 21, mn9 1). Shiu's figures.ipynb has groups sugar_N, water_N,
+  bitter, IR94e, JON_CE, JON_F, JON_D_m and readouts MN9, DN1, DN2, aBN1.
+- Measured earlier: pure sugar GRNs reproduce Shiu (37 active at 10 Hz, 430 at 200 Hz); sugar 100 Hz + bitter
+  100 Hz gives 0/24 proboscis motor neurons (bitter blocks sugar); the chat takes 2 model rounds for "dale azucar".
+- The deployed chat server is one process: server-side doll state is shared by every conversation (single-user
+  local app); documented, not solved.
+
+## Tasks
+- [x] T1 data: presets from Shiu's figures.ipynb (commit 91bdd1e7), ids parsed with ast.literal_eval (no notebook
+      code run), verified against the v783 atlas. (route: delegated writer.) Added bitter (20/20 in atlas, all
+      sub_class bitter), water (18/18), jo_ce (69/69, all wind_gravity sub_class; readout abn1), abn1 (id
+      720575940630907434), dnp01 (2, from the atlas, exploratory). Fields role/meaning/validation on every preset;
+      preset_selection and the stimulate `preset` block carry them. RED: 12 failed, 9 passed. GREEN: 709 passed
+      (parent re-ran, and cross-checked the ids against the atlas). Not given a default readout: bitter, water.
+      Notes: annotation drift v630 -> v783: of Shiu's 20 sugar ids present, 9 are annotated sugar and 5 high_salt;
+      his water set holds 7 annotated sugar. Shiu's sets stay the reference for reproducing the paper.
+- [ ] T2 doll tool `fly`: persistent conditions (stimuli by name with rate, silenced sets, readouts), add/replace/
+      remove/reset in one call, runs ALL stimuli together through run_schedule, returns the usual summary + the
+      readouts with their meaning/validation + `change_vs_previous` (readout and active-neuron deltas) +
+      the current conditions. ONE tool to keep the tool-definition budget small. Prompt update.
+- [ ] T3 agent evaluation on the real chat path: scripted conversation ("dale azucar", "ahora amargo", "quita el
+      amargo", "reinicia", "apaga X") with 2-3 models; record rounds, seconds, tokens, correctness; fix the prompt.
+
+## Checks
+TDD strict (source: project config). Runners: `uv run pytest -q` (baseline 697 on feat/stimulate-presets),
+`pnpm -C web test`, `pnpm -C web build`.
+Delivery: ask-on-risk; stack of local branches main -> feat/stimulate-presets -> feat/fly-doll; no push or PR
+yet, the chain strategy question is asked when the user wants to open PRs. Reviewed boundary: 81d6058 on
+feat/stimulate-presets (approved 2026-11-16; follow-up fix 3ff6e7d is under budget).
+Engram mirror `odd/fly-doll/tasks`: PENDING (mem_save is blocked by a hook that rewrites its input).
+
+## Progress
+- 2026-11-16 created after phase 0. T1 done. Next step: T2.
