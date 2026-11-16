@@ -267,3 +267,40 @@ def test_the_server_registers_fly_and_keeps_one_doll_per_server(tiny_atlas, sims
     assert first["ran"] and second["ran"] and second["conditions"]["stimuli"] == {"orn": 300.0}
     other = build_server(tiny_atlas, sims=sims)  # a new server process starts with an empty doll
     assert _call(other, "fly", {})["ran"] is False
+
+
+# --- review follow-ups: a failed run must not leave the doll half changed; one change at a time ------------
+
+def test_a_failed_run_leaves_the_doll_as_it_was(tiny_atlas, store, sims, doll, monkeypatch):  # noqa: F811
+    fly(tiny_atlas, store, sims, doll, stimuli={"orn": 300})
+    before_conditions, before_last = doll.conditions(), dict(doll.last)
+
+    def boom(*a, **k):
+        raise RuntimeError("the simulator went away")
+
+    monkeypatch.setattr(sims, "run_schedule", boom)
+    with pytest.raises(RuntimeError):
+        fly(tiny_atlas, store, sims, doll, stimuli={"pen": 80}, silence=["epg"])
+    assert doll.conditions() == before_conditions
+    assert doll.last == before_last
+
+
+def test_the_doll_is_locked_while_a_change_runs(tiny_atlas, store, sims, doll, monkeypatch):  # noqa: F811
+    held = []
+    real = sims.run_schedule
+
+    def spy(*a, **k):
+        held.append(doll.lock.locked())
+        return real(*a, **k)
+
+    monkeypatch.setattr(sims, "run_schedule", spy)
+    fly(tiny_atlas, store, sims, doll, stimuli={"orn": 300})
+    assert held == [True]
+    assert not doll.lock.locked()  # released afterwards, also after a failure
+
+
+def test_the_lock_is_released_after_a_failed_run(tiny_atlas, store, sims, doll, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(sims, "run_schedule", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    with pytest.raises(RuntimeError):
+        fly(tiny_atlas, store, sims, doll, stimuli={"orn": 300})
+    assert not doll.lock.locked()

@@ -63,5 +63,15 @@ yet, the chain strategy question is asked when the user wants to open PRs. Revie
 feat/stimulate-presets (approved 2026-11-16; follow-up fix 3ff6e7d is under budget).
 Engram mirror `odd/fly-doll/tasks`: PENDING (mem_save is blocked by a hook that rewrites its input).
 
+## Reviews
+- Slice 81d6058 -> 92c0d8a (T1 + T2, 976 lines, risk high): consent granted, native 4-lens review APPROVED,
+  acknowledged (lineage review-72902dc79d59908f, authority burned). 9 non-blocking findings, 3 WARNINGs:
+  shared doll across conversations (mcp_server.py:57; documented, kept: single-user local app), conditions committed
+  before the run, and no lock. The last two FIXED in the follow-up commit (rollback on a failed run + doll.lock held
+  for the whole change; 3 new tests RED -> GREEN, suite 744). Open suggestions (style): bounded input of
+  stimuli/silence/readouts lists (tools.py:700-712), duplicated activity-rows code (tools.py:545-549), import order
+  (tools.py:10-14), magic seed and DOLL_TOP (tools.py:662-663), role check reads inverted (tools.py:567-569).
+  Reviewed boundary is now 92c0d8a.
+
 ## Progress
 - 2026-11-16 created after phase 0. T1, T2 done. Next step: T3 (chat evaluation).

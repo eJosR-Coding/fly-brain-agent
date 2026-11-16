@@ -3,6 +3,9 @@
 Pure Python, no I/O. These are inputs of the neuron model only; temperature, hunger or sleep are not model inputs.
 """
 
+import copy
+import threading
+
 MAX_STIMULI = 6
 
 
@@ -18,6 +21,16 @@ class Doll:
         self.silenced: set[str] = set()
         self.readouts: list[str] = []  # explicit ones; the stimulus presets' own readouts are derived per run
         self.last: dict | None = None
+        self.lock = threading.Lock()  # held by `fly` from the first change to the recorded result
+
+    def snapshot(self) -> dict:
+        """Everything a failed run must be able to put back."""
+        return {"stimuli": dict(self.stimuli), "silenced": set(self.silenced), "readouts": list(self.readouts),
+                "last": copy.deepcopy(self.last)}
+
+    def restore(self, snap: dict) -> None:
+        self.stimuli, self.silenced, self.readouts, self.last = (
+            snap["stimuli"], snap["silenced"], snap["readouts"], snap["last"])
 
     def has_stimulus(self) -> bool:
         return bool(self.stimuli)
