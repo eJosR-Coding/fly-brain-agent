@@ -7,7 +7,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from flybrain import experiments, silencing, tools
+from flybrain import experiments, looming, silencing, tools
 from flybrain.atlas import Atlas, AtlasLoadError, load_atlas
 from flybrain.connectome import Connectome, ConnectomeError
 from flybrain.doll import Doll
@@ -277,6 +277,16 @@ def build_server(
             silencing.silencing_screen, atlas, store, sims, selection_id, readout_selection_id, candidates, n,
             duration_ms, trials, rate_hz,
         )
+
+    @server.tool()
+    async def looming_escape(
+        trials: int = 5, rate_hz: float = 100, duration_ms: float = 500, steps: int = 10, side: str = "right",
+    ) -> dict:
+        """SIMULATION (model): looming disc on one eye vs receding, dimming, LPLC2+LC4 silenced; equal drive.
+
+        Returns DNp01 Hz + 95% CI, Welch p (Holm), verdict. Slow: run once. trials 1..10, steps 3..20, side left|right.
+        """
+        return await asyncio.to_thread(looming.looming_escape, atlas, sims, trials, rate_hz, duration_ms, steps, side)
 
     # the tool definitions are sent on EVERY model call: keep them lean (see the budget test)
     for registered in server._tool_manager.list_tools():
