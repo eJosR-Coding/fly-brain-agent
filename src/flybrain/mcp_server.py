@@ -204,7 +204,7 @@ def build_server(
         """
         return await asyncio.to_thread(
             tools.stimulate, atlas, store, sims, selection_id, rate_hz, duration_ms, trials,
-            silence_selection_id, readout_selection_id, 0, preset,
+            silence_selection_id, readout_selection_id, seed=tools.DEFAULT_SEED, preset=preset,
         )
 
     @server.tool()

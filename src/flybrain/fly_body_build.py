@@ -27,6 +27,7 @@ Vertices are deduplicated after quantization across all parts; `mesh.vertex_coun
 import argparse
 import hashlib
 import json
+import os
 import re
 import struct
 import zipfile
@@ -130,7 +131,10 @@ def parse_stl(data: bytes) -> np.ndarray:
     if len(data) != 84 + 50 * n:
         raise ValueError(f"bad binary STL: header says {n} triangles, size {len(data)} does not match")
     rec = np.dtype([("n", "<f4", 3), ("v", "<f4", (3, 3)), ("a", "<u2")])
-    return np.frombuffer(data, dtype=rec, count=n, offset=84)["v"].astype(np.float64)
+    tris = np.frombuffer(data, dtype=rec, count=n, offset=84)["v"].astype(np.float64)
+    if not np.isfinite(tris).all():
+        raise ValueError("bad binary STL: a coordinate is not finite (NaN or infinity)")
+    return tris
 
 
 def weld(tris: np.ndarray, decimals: int = 3):
@@ -208,9 +212,14 @@ def encode_segments(parts: list[Part], lo, hi):
     """-> (blob, [(segment_start, segment_count) per part])."""
     chunks, index, start = [], [], 0
     for p in parts:
-        chunks.append(quantize(p.segments, lo, hi).astype("<u2").tobytes())
-        index.append((start, len(p.segments)))
-        start += len(p.segments)
+        segments = np.asarray(p.segments, dtype=np.float64)
+        if segments.size == 0:  # an empty part has no segments, whatever its declared shape
+            segments = segments.reshape(0, 2, 3)
+        elif segments.ndim != 3 or segments.shape[1:] != (2, 3):
+            raise ValueError(f"part {p.name!r}: segments must be (n, 2, 3), got shape {segments.shape}")
+        chunks.append(quantize(segments, lo, hi).astype("<u2").tobytes())
+        index.append((start, len(segments)))
+        start += len(segments)
     return b"".join(chunks), index
 
 
@@ -389,6 +398,28 @@ def build_parts_and_meshes(wheel, angle_deg: float = DEFAULT_ANGLE_DEG):
     return parts, meshes
 
 
+def write_outputs(out_dir, mesh_blob: bytes, blob: bytes, meta_text: str) -> None:
+    """Write fly-body-mesh.bin, fly-body.bin and fly-body.json so an interruption never leaves a mixed set.
+
+    Every file is staged as a temp file in the same directory first (a failure here touches nothing), then
+    moved into place with os.replace, the json last: the json is what describes the binaries.
+    """
+    out_dir = Path(out_dir)
+    final = [(out_dir / "fly-body-mesh.bin", mesh_blob), (out_dir / "fly-body.bin", blob),
+             (out_dir / "fly-body.json", meta_text.encode("utf-8"))]
+    staged = []
+    try:
+        for path, data in final:
+            tmp = path.with_name(path.name + ".tmp")
+            staged.append(tmp)
+            tmp.write_bytes(data)
+        for (path, _), tmp in zip(final, staged):
+            os.replace(tmp, path)
+    finally:
+        for tmp in staged:
+            tmp.unlink(missing_ok=True)
+
+
 def build(wheel, out_dir=DEFAULT_OUT_DIR, angle_deg: float = DEFAULT_ANGLE_DEG, expected_sha256: str = WHEEL_SHA256) -> dict:
     wheel, out_dir = Path(wheel), Path(out_dir)
     verify_sha256(wheel, expected_sha256)
@@ -430,9 +461,7 @@ def build(wheel, out_dir=DEFAULT_OUT_DIR, angle_deg: float = DEFAULT_ANGLE_DEG, 
         **mesh_info,
     }
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "fly-body-mesh.bin").write_bytes(mesh_blob)
-    (out_dir / "fly-body.bin").write_bytes(blob)
-    (out_dir / "fly-body.json").write_text(json.dumps(meta, indent=1) + "\n")
+    write_outputs(out_dir, mesh_blob, blob, json.dumps(meta, indent=1) + "\n")
     with zipfile.ZipFile(wheel) as z:
         (out_dir / "LICENSE-neuromechfly.txt").write_bytes(z.read(LICENSE_MEMBER))
     return {"segments": len(allseg), "bytes": len(blob), "parts": len(parts), "bounds": meta["bounds"], "mesh": mesh_info}

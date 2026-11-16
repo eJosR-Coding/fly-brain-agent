@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mountChatToggle } from "../src/chatToggle";
 import { COLLAPSED_KEY } from "../src/panelState";
 
@@ -21,6 +21,49 @@ function setup(initial: Record<string, string> = {}) {
   const tab = root.querySelector<HTMLButtonElement>("#chat-show")!;
   return { root, chat, store, toggle, hide, tab };
 }
+
+describe("mountChatToggle focus", () => {
+  const spy = () => {
+    const root = document.createElement("div");
+    const chat = document.createElement("aside");
+    chat.id = "chat";
+    chat.innerHTML = '<header id="chat-head"></header>';
+    root.appendChild(chat);
+    document.body.appendChild(root);
+    return { root, chat };
+  };
+
+  it("does not move focus at mount, expanded or collapsed from a stored preference", () => {
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    for (const initial of [{}, { [COLLAPSED_KEY]: "1" }]) {
+      const { root, chat } = spy();
+      mountChatToggle(root, chat, { store: memory(initial) });
+    }
+    expect(focus).not.toHaveBeenCalled();
+    focus.mockRestore();
+  });
+
+  it("moves focus to the visible control only after a user click", () => {
+    const { hide, tab } = setup();
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    hide.click();
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(focus.mock.contexts[0]).toBe(tab);
+    tab.click();
+    expect(focus).toHaveBeenCalledTimes(2);
+    expect(focus.mock.contexts[1]).toBe(hide);
+    focus.mockRestore();
+  });
+
+  it("toggle() called from code changes the state without stealing focus", () => {
+    const { toggle } = setup();
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    toggle.toggle();
+    expect(toggle.collapsed()).toBe(true);
+    expect(focus).not.toHaveBeenCalled();
+    focus.mockRestore();
+  });
+});
 
 describe("mountChatToggle", () => {
   it("starts expanded by default with the hide button wired to the chat", () => {

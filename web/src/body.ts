@@ -33,10 +33,30 @@ export function createBodyScene(
   } catch (e) {
     throw new Error(`the fly body needs WebGL, which is not available: ${(e as Error).message}`);
   }
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setClearColor(0x000000, 0); // transparent: the CSS vignette shows through
-  container.appendChild(renderer.domElement);
+  // Everything created from here on registers its release in `undo`: when the setup throws half way, the
+  // WebGL context, the canvas and the observers are given back instead of leaking until the page closes.
+  const undo: Array<() => void> = [() => { renderer.dispose(); renderer.domElement.remove(); }];
+  try {
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x000000, 0); // transparent: the CSS vignette shows through
+    container.appendChild(renderer.domElement);
+    return assembleBodyScene(renderer, undo, container, body, theme, opts);
+  } catch (e) {
+    for (const release of undo.reverse()) {
+      try { release(); } catch { /* keep releasing the rest */ }
+    }
+    throw e;
+  }
+}
 
+function assembleBodyScene(
+  renderer: THREE.WebGLRenderer,
+  undo: Array<() => void>,
+  container: HTMLElement,
+  body: ParsedBody,
+  theme: Theme,
+  opts: { reducedMotion?: boolean },
+): BodyScene {
   const scene = new THREE.Scene();
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(body.positions, 3));
@@ -45,6 +65,7 @@ export function createBodyScene(
   const lines = new THREE.LineSegments(geometry, material);
   lines.renderOrder = 0;
   scene.add(lines);
+  undo.push(() => { geometry.dispose(); material.dispose(); });
 
   // Hidden-line occluder: the fly's surface writes depth but NO colour (the canvas stays transparent), and is
   // drawn first. The polygon offset pushes it slightly back so the edges lying on the surface do not z-fight.
@@ -68,6 +89,7 @@ export function createBodyScene(
     const occluder = new THREE.Mesh(meshGeometry, meshMaterial);
     occluder.renderOrder = -1;
     scene.add(occluder);
+    undo.push(() => { meshGeometry?.dispose(); meshMaterial?.dispose(); });
   }
 
   const size = body.radius * 2; // farthest vertex from the centroid, doubled
@@ -76,6 +98,7 @@ export function createBodyScene(
   let invalidate = () => {};
 
   const controls = new OrbitControls(camera, renderer.domElement);
+  undo.push(() => controls.dispose());
   controls.enableDamping = true;
   controls.enablePan = false;
   controls.target.copy(target);
@@ -110,6 +133,7 @@ export function createBodyScene(
     invalidate();
   };
   const ro = new ResizeObserver(resize);
+  undo.push(() => ro.disconnect());
   ro.observe(container);
   resize();
 
@@ -125,6 +149,7 @@ export function createBodyScene(
       return moved || orbiting || gate.enabled;
     },
   });
+  undo.push(() => scheduler.dispose());
   invalidate = () => scheduler.invalidate();
   invalidate();
 

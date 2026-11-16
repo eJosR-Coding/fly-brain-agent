@@ -306,3 +306,21 @@ describe("the committed mesh asset", () => {
     }
   });
 });
+
+describe("viewFitDistance degenerate input", () => {
+  const origin: Vec3 = [0, 0, 0];
+  it("returns 1 for an empty position list", () => {
+    expect(viewFitDistance([], origin, 30, 20, 40, 1.5, 0.8)).toBe(1);
+  });
+  it("ignores a trailing incomplete vertex", () => {
+    expect(viewFitDistance([1, 2], origin, 30, 20, 40, 1.5, 0.8)).toBe(1);
+  });
+  it("keeps the camera just in front of vertices that all sit on the target (zero radius)", () => {
+    expect(viewFitDistance([0, 0, 0, 0, 0, 0], origin, 30, 20, 40, 1.5, 0.8)).toBeCloseTo(1e-3, 9);
+  });
+  it("stays finite for a collapsed container (aspect 0) and a zero fill", () => {
+    const d = viewFitDistance([1, 0, 0, -1, 0, 0], origin, 0, 0, 40, 0, 0);
+    expect(Number.isFinite(d)).toBe(true);
+    expect(d).toBeGreaterThan(0);
+  });
+});
