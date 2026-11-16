@@ -33,10 +33,20 @@ fly itself be the interface.
 - Real size: body ~2.5-3 mm (secondary source), brain ~0.6 mm wide (JRC2018 template box 627 x 293 x 173 um).
 
 ## Tasks
-- [ ] T1 asset pipeline: `scripts/build_fly_body.py` (numpy only, reproducible) turns the NMF STL parts into a compact
-      line-segment file `web/public/fly-body.bin` + `fly-body.json` (parts/groups, units um, head center, bounds,
-      source and attribution) plus the Apache-2.0 LICENSE/NOTICE text. Resolve the frame question first. Feature
-      edges only, quantized, target <= ~400 KB. Tests for parse, edges, quantize, mirror, and the committed asset.
+- [x] T1 asset pipeline (route: delegated writer). `src/flybrain/fly_body_build.py` + `scripts/build_fly_body.py`
+      (numpy only, deterministic, refuses a wheel whose sha256 differs), tests/test_fly_body_build.py (26 tests),
+      assets `web/public/fly-body.bin` (387,144 B = 32,262 segments x 12 B, uint16 per axis), `fly-body.json`,
+      `LICENSE-neuromechfly.txt` (Apache-2.0), README build paragraph and credit line.
+      FRAME QUESTION RESOLVED: the STLs do NOT share a frame; each is body-local. Placed with rigging.yaml (pos in mm,
+      quat) over the manual neutral pose; joint convention cross-checked on six generated pose files (feet agree
+      within 50-80 um; not independently proven). Mirror axis y. Final fly: 69 parts (fused trochanter+femur),
+      length ~2,611 um (real ~2.5-3 mm), width ~980, head 753 um (829 with eyes), head center [762.9, 0, 1363.2]
+      um in NeuroMechFly world frame (x forward, y left, z up; origin NOT the fly's centre). Midline artifact
+      (internal mid-wall, ~5,000 false edges) removed; feature-edge angle 40 deg (30 deg gave 516 KB). Standing
+      pose not levelled (about 5 deg tilt). RED: ModuleNotFoundError; GREEN: 714 passed (parent re-ran). Parent
+      rendered three line views from the committed .bin and judged it reads as a fly (side, top, front); the
+      trace is busy with fine lines. Not verified: how it looks in Three.js; license scope of the meshes is an
+      assumption (Apache-2.0 of the wheel, no separate asset license found).
 - [ ] T2b brain PREVIEW (user idea 2026-11-16): a small 2D picture of the brain drawn with the same oblique angle as the
       3D home view and depth-shaded so it reads as 3D. Backend `GET /brain/preview` returns a small uint8 grid (about
       20 KB, pure numpy, no new dependency, cacheable); the browser draws it on a canvas in the theme colors. It
@@ -61,5 +71,13 @@ TDD strict (source: project config). Runners: `uv run pytest -q` (baseline 688 o
 Delivery: ask-on-risk; branch feat/fly-body from main; no push or PR until asked.
 Engram mirror `odd/fly-body/tasks`: PENDING (mem_save is blocked by a hook that rewrites its input).
 
+## Reviews
+- T1 slice (base main -> d5a67ad, 1524 lines, risk medium: scripts/build_fly_body.py): consent granted, consolidated
+  native review APPROVED, acknowledged (lineage review-68336c01a9aaca1e, authority burned). 4 non-blocking findings
+  (dev-time build script, the committed asset is validated by tests): R3-001 fly_body_build.py:357-358 .bin and .json
+  written separately (not atomic, an interruption leaves an inconsistent pair); R3-002 :195-196 encode_segments edge
+  case; R3-003 tests/test_fly_body_build.py:276-337 (suggestion); R3-004 :110-112 parse_stl strictness (suggestion).
+  Open follow-ups. Reviewed boundary is now d5a67ad.
+
 ## Progress
-- 2026-11-16 created after phase 0. Next step: T1.
+- 2026-11-16 created after phase 0. T1 done. Next step: T2b.
