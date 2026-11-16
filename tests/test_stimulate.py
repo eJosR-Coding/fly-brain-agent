@@ -237,6 +237,8 @@ def test_recordings_carry_the_readout_trace_in_hz(tiny_atlas, store, sims):
     assert rec.readout["label"] == "PEN_a" and rec.readout["neurons"] == 60
     assert len(rec.readout["hz"]) == rec.n_bins == len(base.readout["hz"])
     assert max(base.readout["hz"]) > 0 and max(rec.readout["hz"]) == 0
+    # stimulate records exactly one readout, unnamed, equal to the legacy field
+    assert rec.readouts == [{"name": None, **rec.readout}] and base.readouts == [{"name": None, **base.readout}]
     # the trace is the group's mean rate: averaged over its bins it matches the reported mean
     dur_s = rec.duration_ms / 1000
     mean_hz = sum(base.readout["hz"]) * (rec.bin_ms / 1000) / dur_s

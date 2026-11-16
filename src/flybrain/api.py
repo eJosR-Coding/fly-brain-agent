@@ -428,7 +428,8 @@ def create_app(
         return {"simulation_id": rec.id, "bin_ms": rec.bin_ms, "n_bins": rec.n_bins, "n_rows": rec.n_rows,
                 "duration_ms": rec.duration_ms, "stimulus": rec.stimulus, "trials": rec.trials,
                 "active_count": rec.active_count, "active_hz": ACTIVE_HZ, "compare_id": rec.compare_id,
-                "silenced_rows": silenced, "silenced_truncated": truncated, "readout": rec.readout}
+                "silenced_rows": silenced, "silenced_truncated": truncated, "readout": rec.readout,
+                "readouts": rec.readouts}
 
     @app.get("/simulations/{simulation_id}/rows")
     def simulation_rows(simulation_id: str, rows: str | None = None):

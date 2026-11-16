@@ -792,8 +792,8 @@ def _fly_locked(atlas, store, sims, doll, stimuli, remove, silence, readouts, re
               "rate_hz": r} for n, r in conditions["stimuli"].items()]
     stimulus = {"neurons": stimulated, "rate_hz": max(conditions["stimuli"].values()), "duration_ms": duration,
                 "trials": n_trials, "stimuli": dict(conditions["stimuli"])}
-    first = next(iter(readout_rows), None)
-    trace = None if first is None else _readout_trace(atlas, readout_rows[first], bin_ms, n_trials, f"preset {first}")
+    traces = {name: _readout_trace(atlas, rows, bin_ms, n_trials, f"preset {name}")
+              for name, rows in readout_rows.items()}
     out = {
         "ran": True,
         "conditions": conditions,
@@ -820,7 +820,9 @@ def _fly_locked(atlas, store, sims, doll, stimuli, remove, silence, readouts, re
                  "readouts": {r["name"]: r["mean_hz"] for r in readout_out}}
     out["simulation_id"] = sims.add(
         res.active_rows, np.minimum(res.frames, 255).astype(np.uint8), bin_ms, duration, n_trials, stimulus,
-        active_count=len(active), silenced_rows=silence_rows, readout=None if trace is None else trace(res),
+        active_count=len(active), silenced_rows=silence_rows,
+        readout=next((t(res) for t in traces.values()), None),
+        readouts=[{"name": name, **t(res)} for name, t in traces.items()],
     )
     if len(active) > RUNAWAY_ACTIVE:
         out["warning"] = _runaway_warning(len(active), stimulated, len(atlas.neurons))

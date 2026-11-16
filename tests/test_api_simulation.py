@@ -113,7 +113,8 @@ def test_frames_endpoints(tiny_tsv_path, svc):
     assert meta == {"simulation_id": sim_id, "bin_ms": 1.0, "n_bins": 100, "n_rows": rec.n_rows, "duration_ms": 100.0,
                     "stimulus": {"neurons": 1, "rate_hz": 300.0, "duration_ms": 100.0, "trials": 1}, "trials": 1,
                     "active_count": rec.active_count, "active_hz": 1.0, "compare_id": None,
-                    "silenced_rows": [], "silenced_truncated": False, "readout": None}
+                    "silenced_rows": [], "silenced_truncated": False, "readout": None,
+                    "readouts": []}
     assert meta["active_count"] == active  # same "> 1 Hz" count the stimulate summary reports
     assert frames.headers["content-type"] == "application/octet-stream"
     raw = frames.content
@@ -179,6 +180,7 @@ def test_simulate_with_silencing_exposes_both_recordings(tiny_tsv_path, svc):
     assert meta["silenced_rows"] == [60] and base_meta["silenced_rows"] == []
     assert meta["silenced_truncated"] is False and base_meta["silenced_truncated"] is False
     assert meta["readout"]["label"] == "PEN_a" and len(meta["readout"]["hz"]) == meta["n_bins"]
+    assert meta["readouts"] == [{"name": None, **meta["readout"]}]  # stimulate-style runs: one unnamed readout
     assert len(base_frames.content) == 4 * base_meta["n_rows"] + base_meta["n_rows"] * base_meta["n_bins"]
 
 
