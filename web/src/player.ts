@@ -14,6 +14,14 @@ export interface Player {
   /** Switch between the wave and the static maps (latency). */
   setMode(mode: ViewMode): void;
   readonly mode: ViewMode;
+  /**
+   * Follow the playback clock after construction (the fly body does this): gets exactly what `onTime` gets
+   * (ms, or null when the playhead rests/hides). A new subscriber is told once where things stand: null with no
+   * recording, the final time under reduced motion (no frames tick there). Returns the unsubscribe.
+   */
+  subscribeTime(cb: (ms: number | null) => void): () => void;
+  /** The time a late subscriber should assume: null with no recording, the duration under reduced motion. */
+  currentTime(): number | null;
   /** Remove the wave and the timeline. */
   clear(): void;
 }
@@ -45,10 +53,27 @@ export function createPlayer({ scene, root, reducedMotion, speed, onTime, onMode
   let shapeValues = new Float32Array(0);
   let raf = 0;
   let last = 0;
+  let shown: number | null = null; // last value emitted
+  const listeners = new Set<(ms: number | null) => void>();
+
+  // The one place the clock is announced: the constructor's onTime first, then each listener, isolated from each other.
+  const emit = (ms: number | null) => {
+    shown = ms;
+    onTime?.(ms);
+    for (const cb of [...listeners]) {
+      if (!listeners.has(cb)) continue; // unsubscribed by an earlier listener during this emit
+      try {
+        cb(ms);
+      } catch (err) {
+        console.error("player time listener failed", err);
+      }
+    }
+  };
+  const settled = (): number | null => (!activity ? null : reducedMotion ? activity.durationMs : shown);
 
   const draw = () => {
     if (!activity || !pb) return;
-    onTime?.(pb.timeMs);
+    emit(pb.timeMs);
     if (!pb.playing && pb.timeMs >= pb.durationMs) summedBrightness(activity, values); // finished: everything that fired
     else fillBrightness(activity, binAt(pb.timeMs, activity.binMs, activity.nBins), values);
     scene.setActivityFrame(values);
@@ -156,7 +181,7 @@ export function createPlayer({ scene, root, reducedMotion, speed, onTime, onMode
       return;
     }
     label.textContent = plan.timeLabel === "summed" ? `summed over ${Math.round(activity.durationMs)} ms` : "";
-    onTime?.(null);
+    emit(null);
   };
 
   playBtn.addEventListener("click", () => {
@@ -218,8 +243,22 @@ export function createPlayer({ scene, root, reducedMotion, speed, onTime, onMode
       scene.setActivity(null);
       root.hidden = true;
       document.body.classList.remove("has-activity");
-      onTime?.(null);
+      emit(null);
     },
+    subscribeTime(cb) {
+      listeners.add(cb);
+      if (!activity || reducedMotion) {
+        try {
+          cb(settled());
+        } catch (err) {
+          console.error("player time listener failed", err);
+        }
+      }
+      return () => {
+        listeners.delete(cb);
+      };
+    },
+    currentTime: settled,
   };
   return api;
 }
