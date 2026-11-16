@@ -434,6 +434,14 @@ def preset_selection(atlas: Atlas, store: SelectionStore, name, presets: dict | 
     return out
 
 
+def _preset_ticket(atlas: Atlas, store: SelectionStore, name) -> str:
+    """The ticket of a named preset, or a ValueError carrying preset_selection's hint."""
+    out = preset_selection(atlas, store, name)
+    if out["selection_id"] is None:
+        raise ValueError(out["hint"])
+    return out["selection_id"]
+
+
 def _number(name: str, value) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise TypeError(f"{name} must be a finite number, got {value!r}")
@@ -525,11 +533,24 @@ def non_sensory_rows(atlas: Atlas, rows) -> np.ndarray:
 
 
 def stimulate(
-    atlas: Atlas, store: SelectionStore, sims, selection_id, rate_hz=100, duration_ms=500, trials=None,
-    silence_selection_id=None, readout_selection_id=None, seed: int = 0,
+    atlas: Atlas, store: SelectionStore, sims, selection_id=None, rate_hz=100, duration_ms=500, trials=None,
+    silence_selection_id=None, readout_selection_id=None, seed: int = 0, preset: str | None = None,
 ) -> dict:
-    """Poisson-drive a selection in the whole-brain LIF model; return a small activity summary."""
+    """Poisson-drive a selection (or a published preset) in the whole-brain LIF model; return a small activity summary.
+
+    `preset` names a published set instead of `selection_id`; if the preset declares a `readout` preset
+    (sugar -> mn9) and no `readout_selection_id` is given, that set is read out too.
+    """
     notes: list[str] = []
+    if (selection_id is None) == (preset is None):
+        raise ValueError("give exactly one of selection_id or preset")
+    readout_preset = None
+    if preset is not None:
+        selection_id = _preset_ticket(atlas, store, preset)
+        declared = load_presets().get(preset.strip().lower(), {}).get("readout")
+        if declared and readout_selection_id is None:
+            readout_selection_id = _preset_ticket(atlas, store, declared)
+            readout_preset = declared
     rate = _clamp("rate_hz", _number("rate_hz", rate_hz), MIN_RATE_HZ, MAX_RATE_HZ, notes)
     duration = round(_clamp("duration_ms", _number("duration_ms", duration_ms), MIN_DURATION_MS, MAX_DURATION_MS, notes), 1)
     if trials is None:  # a comparison needs enough trials to tell a change from noise
@@ -573,6 +594,8 @@ def stimulate(
         )
     else:
         out["hint"] = "No neuron fired above 1 Hz. Raise rate_hz or stimulate more neurons."
+    if preset is not None:
+        out["preset"] = {"name": preset.strip().lower(), "readout_preset": readout_preset}
     if readout is not None:
         out["readout"] = _group(atlas, rates, readout)
     if base is not None:

@@ -176,12 +176,13 @@ def build_server(
 
     @server.tool()
     async def stimulate(
-        selection_id: str,
+        selection_id: str | None = None,
         rate_hz: float = 100,
         duration_ms: float = 500,
         trials: int | None = None,
         silence_selection_id: str | None = None,
         readout_selection_id: str | None = None,
+        preset: str | None = None,
     ) -> dict:
         """Whole-brain SIMULATION: Poisson-drive a group, see who responds (LIF model, Shiu et al. 2024). A MODEL, not the living fly.
 
@@ -191,6 +192,7 @@ def build_server(
 
         Args:
             selection_id: neurons to stimulate.
+            preset: published set by name ('sugar' also reads out 'mn9') instead of selection_id.
             rate_hz: 1..300 (default 100).
             duration_ms: 100..1000 (default 500).
             trials: averaged, 1..10 (default 3; 5 when silencing).
@@ -200,7 +202,7 @@ def build_server(
         """
         return await asyncio.to_thread(
             tools.stimulate, atlas, store, sims, selection_id, rate_hz, duration_ms, trials,
-            silence_selection_id, readout_selection_id,
+            silence_selection_id, readout_selection_id, 0, preset,
         )
 
     @server.tool()
