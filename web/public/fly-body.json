@@ -1,0 +1,518 @@
+{
+ "units": "um",
+ "axes": "x anterior(+)/posterior(-), y left(+)/right(-), z dorsal(+)/ventral(-); origin = NeuroMechFly world origin of the neutral pose (not the fly's centre)",
+ "bounds": [
+  [
+   -2323.7,
+   -1529.9,
+   -92.7
+  ],
+  [
+   1339.2,
+   1529.9,
+   1717.7
+  ]
+ ],
+ "quantization": "uint16 per axis over bounds: um = min + q / 65535 * (max - min)",
+ "format": "fly-body.bin: little-endian uint16 x0 y0 z0 x1 y1 z1 per segment (12 bytes), parts concatenated",
+ "feature_edge_angle_deg": 40.0,
+ "parts": [
+  {
+   "name": "c_thorax",
+   "group": "thorax",
+   "side": "c",
+   "segment_start": 0,
+   "segment_count": 868
+  },
+  {
+   "name": "c_abdomen12",
+   "group": "abdomen",
+   "side": "c",
+   "segment_start": 868,
+   "segment_count": 996
+  },
+  {
+   "name": "c_abdomen3",
+   "group": "abdomen",
+   "side": "c",
+   "segment_start": 1864,
+   "segment_count": 956
+  },
+  {
+   "name": "c_abdomen4",
+   "group": "abdomen",
+   "side": "c",
+   "segment_start": 2820,
+   "segment_count": 522
+  },
+  {
+   "name": "c_abdomen5",
+   "group": "abdomen",
+   "side": "c",
+   "segment_start": 3342,
+   "segment_count": 688
+  },
+  {
+   "name": "c_abdomen6",
+   "group": "abdomen",
+   "side": "c",
+   "segment_start": 4030,
+   "segment_count": 466
+  },
+  {
+   "name": "c_haustellum",
+   "group": "proboscis",
+   "side": "c",
+   "segment_start": 4496,
+   "segment_count": 264
+  },
+  {
+   "name": "c_head",
+   "group": "head",
+   "side": "c",
+   "segment_start": 4760,
+   "segment_count": 486
+  },
+  {
+   "name": "c_rostrum",
+   "group": "proboscis",
+   "side": "c",
+   "segment_start": 5246,
+   "segment_count": 762
+  },
+  {
+   "name": "l_eye",
+   "group": "eye",
+   "side": "l",
+   "segment_start": 6008,
+   "segment_count": 485
+  },
+  {
+   "name": "l_pedicel",
+   "group": "antenna",
+   "side": "l",
+   "segment_start": 6493,
+   "segment_count": 493
+  },
+  {
+   "name": "l_funiculus",
+   "group": "antenna",
+   "side": "l",
+   "segment_start": 6986,
+   "segment_count": 120
+  },
+  {
+   "name": "l_arista",
+   "group": "antenna",
+   "side": "l",
+   "segment_start": 7106,
+   "segment_count": 577
+  },
+  {
+   "name": "l_wing",
+   "group": "wing",
+   "side": "l",
+   "segment_start": 7683,
+   "segment_count": 890
+  },
+  {
+   "name": "l_haltere",
+   "group": "haltere",
+   "side": "l",
+   "segment_start": 8573,
+   "segment_count": 468
+  },
+  {
+   "name": "lf_coxa",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 9041,
+   "segment_count": 1007
+  },
+  {
+   "name": "lf_trochanterfemur",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 10048,
+   "segment_count": 1034
+  },
+  {
+   "name": "lf_tibia",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 11082,
+   "segment_count": 369
+  },
+  {
+   "name": "lf_tarsus1",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 11451,
+   "segment_count": 434
+  },
+  {
+   "name": "lf_tarsus2",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 11885,
+   "segment_count": 193
+  },
+  {
+   "name": "lf_tarsus3",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 12078,
+   "segment_count": 194
+  },
+  {
+   "name": "lf_tarsus4",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 12272,
+   "segment_count": 271
+  },
+  {
+   "name": "lf_tarsus5",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 12543,
+   "segment_count": 206
+  },
+  {
+   "name": "lm_coxa",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 12749,
+   "segment_count": 704
+  },
+  {
+   "name": "lm_trochanterfemur",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 13453,
+   "segment_count": 429
+  },
+  {
+   "name": "lm_tibia",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 13882,
+   "segment_count": 171
+  },
+  {
+   "name": "lm_tarsus1",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 14053,
+   "segment_count": 232
+  },
+  {
+   "name": "lm_tarsus2",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 14285,
+   "segment_count": 292
+  },
+  {
+   "name": "lm_tarsus3",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 14577,
+   "segment_count": 341
+  },
+  {
+   "name": "lm_tarsus4",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 14918,
+   "segment_count": 400
+  },
+  {
+   "name": "lm_tarsus5",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 15318,
+   "segment_count": 395
+  },
+  {
+   "name": "lh_coxa",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 15713,
+   "segment_count": 420
+  },
+  {
+   "name": "lh_trochanterfemur",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 16133,
+   "segment_count": 546
+  },
+  {
+   "name": "lh_tibia",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 16679,
+   "segment_count": 240
+  },
+  {
+   "name": "lh_tarsus1",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 16919,
+   "segment_count": 402
+  },
+  {
+   "name": "lh_tarsus2",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 17321,
+   "segment_count": 338
+  },
+  {
+   "name": "lh_tarsus3",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 17659,
+   "segment_count": 405
+  },
+  {
+   "name": "lh_tarsus4",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 18064,
+   "segment_count": 572
+  },
+  {
+   "name": "lh_tarsus5",
+   "group": "leg",
+   "side": "l",
+   "segment_start": 18636,
+   "segment_count": 499
+  },
+  {
+   "name": "r_eye",
+   "group": "eye",
+   "side": "r",
+   "segment_start": 19135,
+   "segment_count": 485
+  },
+  {
+   "name": "r_pedicel",
+   "group": "antenna",
+   "side": "r",
+   "segment_start": 19620,
+   "segment_count": 493
+  },
+  {
+   "name": "r_funiculus",
+   "group": "antenna",
+   "side": "r",
+   "segment_start": 20113,
+   "segment_count": 120
+  },
+  {
+   "name": "r_arista",
+   "group": "antenna",
+   "side": "r",
+   "segment_start": 20233,
+   "segment_count": 577
+  },
+  {
+   "name": "r_wing",
+   "group": "wing",
+   "side": "r",
+   "segment_start": 20810,
+   "segment_count": 890
+  },
+  {
+   "name": "r_haltere",
+   "group": "haltere",
+   "side": "r",
+   "segment_start": 21700,
+   "segment_count": 468
+  },
+  {
+   "name": "rf_coxa",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 22168,
+   "segment_count": 1007
+  },
+  {
+   "name": "rf_trochanterfemur",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 23175,
+   "segment_count": 1034
+  },
+  {
+   "name": "rf_tibia",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 24209,
+   "segment_count": 369
+  },
+  {
+   "name": "rf_tarsus1",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 24578,
+   "segment_count": 434
+  },
+  {
+   "name": "rf_tarsus2",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 25012,
+   "segment_count": 193
+  },
+  {
+   "name": "rf_tarsus3",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 25205,
+   "segment_count": 194
+  },
+  {
+   "name": "rf_tarsus4",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 25399,
+   "segment_count": 271
+  },
+  {
+   "name": "rf_tarsus5",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 25670,
+   "segment_count": 206
+  },
+  {
+   "name": "rm_coxa",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 25876,
+   "segment_count": 704
+  },
+  {
+   "name": "rm_trochanterfemur",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 26580,
+   "segment_count": 429
+  },
+  {
+   "name": "rm_tibia",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 27009,
+   "segment_count": 171
+  },
+  {
+   "name": "rm_tarsus1",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 27180,
+   "segment_count": 232
+  },
+  {
+   "name": "rm_tarsus2",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 27412,
+   "segment_count": 292
+  },
+  {
+   "name": "rm_tarsus3",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 27704,
+   "segment_count": 341
+  },
+  {
+   "name": "rm_tarsus4",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 28045,
+   "segment_count": 400
+  },
+  {
+   "name": "rm_tarsus5",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 28445,
+   "segment_count": 395
+  },
+  {
+   "name": "rh_coxa",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 28840,
+   "segment_count": 420
+  },
+  {
+   "name": "rh_trochanterfemur",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 29260,
+   "segment_count": 546
+  },
+  {
+   "name": "rh_tibia",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 29806,
+   "segment_count": 240
+  },
+  {
+   "name": "rh_tarsus1",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 30046,
+   "segment_count": 402
+  },
+  {
+   "name": "rh_tarsus2",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 30448,
+   "segment_count": 338
+  },
+  {
+   "name": "rh_tarsus3",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 30786,
+   "segment_count": 405
+  },
+  {
+   "name": "rh_tarsus4",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 31191,
+   "segment_count": 572
+  },
+  {
+   "name": "rh_tarsus5",
+   "group": "leg",
+   "side": "r",
+   "segment_start": 31763,
+   "segment_count": 499
+  }
+ ],
+ "head_center_um": [
+  762.9,
+  0.0,
+  1363.2
+ ],
+ "brain_note": "brain bbox about 627 x 293 x 173 um (JRC2018 template, not measured here)",
+ "source": {
+  "name": "NeuroMechFly v2 / flygym",
+  "version": "2.1.1",
+  "sha256": "802e586848c37d382988fa4f95200763cddbc07da4ade22816edd253a04dd2fb",
+  "license": "Apache-2.0",
+  "url": "https://files.pythonhosted.org/packages/40/a5/b73ded2014289b06c93fd1ce53e9b179f69f8e60ccfd6b83b5daaa0baea5/flygym-2.1.1-py3-none-any.whl"
+ },
+ "note": "static micro-CT mesh of an adult female; approximate scale; not animated"
+}

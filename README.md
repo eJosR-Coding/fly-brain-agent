@@ -602,6 +602,11 @@ data/raw/flywire_neuron_annotations.tsv
 Source: <https://github.com/flyconnectome/flywire_annotations>. The data belongs to the
 FlyWire consortium and its authors; follow their terms and cite their papers if you use it.
 
+The static fly body drawn by the viewer (`web/public/fly-body.bin` / `.json`) is committed; to rebuild it, download
+`flygym-2.1.1-py3-none-any.whl` from PyPI (the URL and the pinned SHA-256 are in `src/flybrain/fly_body_build.py`;
+the script refuses any other file) and run
+`uv run python scripts/build_fly_body.py --wheel <path-to-wheel>`. The output is deterministic.
+
 ## Development
 
 ```bash
@@ -614,3 +619,5 @@ Work is tracked per feature in [`odd/tasks/`](odd/tasks/), with test-first commi
 ## License
 
 Code: [MIT](LICENSE). FlyWire data is not covered by this license (see [Data](#data)).
+The fly body mesh in `web/public/fly-body.*` comes from NeuroMechFly v2 / flygym, Apache-2.0, see
+`web/public/LICENSE-neuromechfly.txt`.
