@@ -4,6 +4,7 @@ import "./style.css";
 import { mountChat } from "./chat";
 import { parseModels } from "./models";
 import { fetchIndices, loadBrain } from "./brainData";
+import { mountPreview } from "./brainPreview";
 import { createScene, type BrainScene } from "./scene";
 import { Latest, runLatest } from "./latest";
 import { loadLatestActivity } from "./activityLoader";
@@ -396,6 +397,7 @@ async function boot(): Promise<void> {
       }
     }
   });
+  const preview = mountPreview($("stage"), { theme });
   try {
     const brain = await loadBrain();
     pointCount = brain.meta.count;
@@ -409,6 +411,7 @@ async function boot(): Promise<void> {
     ]);
     const ok = <T,>(r: PromiseSettledResult<T>) => (r.status === "fulfilled" ? r.value : undefined);
     brainScene = createScene($("stage"), brain, theme, { regions: ok(regions), landmarks: ok(landmarks), nt: ok(nt) });
+    preview.remove();
     charts = createChartsPanel($("charts"));
     player = createPlayer({
       scene: brainScene,
@@ -436,6 +439,7 @@ async function boot(): Promise<void> {
     setupViewChips(brainScene, theme, ok(regions), ok(nt));
     $("version").textContent = versionLine(brain.meta.count);
   } catch (e) {
+    preview.remove();
     $("version").textContent = `could not load the brain: ${(e as Error).message}`;
   }
 }

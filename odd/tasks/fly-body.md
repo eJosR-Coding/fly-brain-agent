@@ -47,10 +47,16 @@ fly itself be the interface.
       rendered three line views from the committed .bin and judged it reads as a fly (side, top, front); the
       trace is busy with fine lines. Not verified: how it looks in Three.js; license scope of the meshes is an
       assumption (Apache-2.0 of the wheel, no separate asset license found).
-- [ ] T2b brain PREVIEW (user idea 2026-11-16): a small 2D picture of the brain drawn with the same oblique angle as the
-      3D home view and depth-shaded so it reads as 3D. Backend `GET /brain/preview` returns a small uint8 grid (about
-      20 KB, pure numpy, no new dependency, cacheable); the browser draws it on a canvas in the theme colors. It
-      needs NO point positions, so /brain/points is no longer fetched at boot. It is a static picture (no activity).
+- [x] T2b brain PREVIEW (user idea 2026-11-16; route: delegated writer): a small 2D picture of the brain drawn with the same oblique angle as the
+      3D home view (azimuth 16, elevation 10 in ONE Python place, asserted by a test) and depth-shaded. `GET /brain/preview`
+      = 4-byte header + uint8 grid, 256x124 = 31,748 B on the real atlas, 16,734 non-empty cells, first request 12.5 ms,
+      then 1.2 ms (cached in app.state), Cache-Control 1 h. src/flybrain/brain_preview.py (pure numpy) +
+      web/src/brainPreview.ts (parse, RGBA from theme.highlightHex with alpha = brightness, mountPreview). Wired in boot():
+      shown as a placeholder before `await loadBrain`, removed after createScene and in the error path; pointer-events
+      none, fade-in unless reduced motion. /brain/points and the real scene are untouched (T2a does that).
+      RED: collection errors (modules missing). GREEN: pytest 723, web 418 (27 files), build ok (parent re-ran all three).
+      Parent viewed the PNG decoded from the real endpoint: two optic lobes and a textured central brain, depth shading
+      reads as relief. Not verified: how it looks in the real page (flip, 10% inset, alignment with the 3D home view).
 - [ ] T2a brain ON DEMAND: all-or-nothing. boot() stops awaiting the brain; the real Three.js scene (existing
       createScene, unchanged inside) is created when the user zooms (wheel) or clicks the preview, or when a chat
       highlight / path / activity event arrives (auto-open, the latest pending event is replayed once the scene
@@ -80,4 +86,4 @@ Engram mirror `odd/fly-body/tasks`: PENDING (mem_save is blocked by a hook that 
   Open follow-ups. Reviewed boundary is now d5a67ad.
 
 ## Progress
-- 2026-11-16 created after phase 0. T1 done. Next step: T2b.
+- 2026-11-16 created after phase 0. T1, T2b done. Next step: T2a (brain on demand).

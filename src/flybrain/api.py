@@ -29,6 +29,7 @@ from flybrain.agent import MAX_STEPS, build_graph, keep_turns_from_env, stream_e
 from flybrain.agent_mcp import SERVER_NAME
 from flybrain.anatomy import NT_CODES, REGION_CODES, landmarks, nt_codes, region_codes
 from flybrain.atlas import RowIndex, load_atlas
+from flybrain.brain_preview import render_preview
 from flybrain.mcp_server import DEFAULT_ANNOTATIONS, build_server, load_connectome
 from flybrain.experiments import dose_response
 from flybrain.models import CHAT_MODEL_KWARGS, describe_models
@@ -241,6 +242,7 @@ def create_app(
         # little-endian float32, xyz interleaved, atlas row order: GPU-ready, built once
         xyz = atlas.neurons[["x_um", "y_um", "z_um"]].to_numpy()
         app.state.points = np.ascontiguousarray(xyz.astype("<f4")).tobytes()
+        app.state.preview = None  # built lazily on the first /brain/preview
         app.state.regions = region_codes(atlas).tobytes()
         app.state.nt = nt_codes(atlas).tobytes()
         app.state.landmarks = landmarks(atlas)
@@ -357,6 +359,18 @@ def create_app(
     def brain_points():
         return Response(
             app.state.points,
+            media_type="application/octet-stream",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
+    @app.get("/brain/preview")
+    def brain_preview():
+        """Tiny depth-shaded picture at the home angle: [w u16, h u16 LE] + w*h uint8 (see flybrain.brain_preview)."""
+        if app.state.preview is None:
+            xyz = app.state.atlas.neurons[["x_um", "y_um", "z_um"]].to_numpy()
+            app.state.preview = render_preview(xyz)[2]
+        return Response(
+            app.state.preview,
             media_type="application/octet-stream",
             headers={"Cache-Control": "public, max-age=3600"},
         )
