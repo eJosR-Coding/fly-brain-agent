@@ -55,3 +55,48 @@ describe("mountBody", () => {
     expect(host.children.length).toBe(0);
   });
 });
+
+describe("mountBody setPose", () => {
+  const fakeScene = () => ({ invalidate() {}, dispose: vi.fn(), setPose: vi.fn(), jointIds: () => [] });
+
+  it("stores a pose set before the scene exists and applies the latest once on creation", async () => {
+    const scene = fakeScene();
+    const m = mountBody(document.createElement("div"), { theme, load: async () => body, create: () => scene });
+    m.setPose({ wing_l: 10 });
+    m.setPose({ proboscis: 30 });
+    expect(scene.setPose).not.toHaveBeenCalled();
+    await flush();
+    expect(scene.setPose).toHaveBeenCalledTimes(1);
+    expect(scene.setPose).toHaveBeenCalledWith({ proboscis: 30 });
+  });
+  it("applies nothing on creation when no pose was set", async () => {
+    const scene = fakeScene();
+    mountBody(document.createElement("div"), { theme, load: async () => body, create: () => scene });
+    await flush();
+    expect(scene.setPose).not.toHaveBeenCalled();
+  });
+  it("forwards later poses to the scene", async () => {
+    const scene = fakeScene();
+    const m = mountBody(document.createElement("div"), { theme, load: async () => body, create: () => scene });
+    await flush();
+    m.setPose({ wing_r: 5 });
+    expect(scene.setPose).toHaveBeenCalledWith({ wing_r: 5 });
+  });
+  it("is a no-op after remove()", async () => {
+    const scene = fakeScene();
+    const m = mountBody(document.createElement("div"), { theme, load: async () => body, create: () => scene });
+    await flush();
+    m.remove();
+    m.setPose({ wing_r: 5 });
+    expect(scene.setPose).not.toHaveBeenCalled();
+  });
+  it("does not break when a throwing create is followed by setPose, and still cleans up", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const host = document.createElement("div");
+    const m = mountBody(host, { theme, load: async () => body, create: () => { throw new Error("x"); } });
+    m.setPose({ wing_l: 1 });
+    await flush();
+    expect(() => m.setPose({ wing_l: 2 })).not.toThrow();
+    expect(host.querySelector(".body-stage")).toBeNull();
+  });
+});

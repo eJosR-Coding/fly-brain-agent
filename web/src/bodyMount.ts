@@ -1,12 +1,15 @@
 /** Mounts the static fly body into a host element. Failures are swallowed (a console warning): it must never block boot. */
 import { createBodyScene, type BodyScene } from "./body";
 import { loadBody } from "./bodyData";
+import type { JointId } from "./bodyPose";
 import type { Theme } from "./theme";
 
 export const BODY_CAPTION = "static model (NeuroMechFly v2 micro-CT mesh, Apache-2.0), not driven by the brain";
 
 export interface MountedBody {
   remove(): void;
+  /** Joint angles in degrees; joints not listed return to rest. Safe before the scene exists (the latest pose is applied on creation); a no-op after remove(). */
+  setPose(angles: Partial<Record<JointId, number>>): void;
 }
 
 export interface BodyDeps {
@@ -24,6 +27,7 @@ export function mountBody(host: HTMLElement, deps: BodyDeps): MountedBody {
   caption.textContent = BODY_CAPTION;
   let scene: BodyScene | null = null;
   let removed = false;
+  let pose: Partial<Record<JointId, number>> | null = null;
   void (async () => {
     try {
       const body = await (deps.load ?? loadBody)();
@@ -31,14 +35,21 @@ export function mountBody(host: HTMLElement, deps: BodyDeps): MountedBody {
       host.appendChild(stage);
       scene = (deps.create ?? createBodyScene)(stage, body, deps.theme, { reducedMotion: deps.reducedMotion });
       stage.appendChild(caption);
+      if (pose) scene.setPose(pose);
     } catch (e) {
       stage.remove();
       console.warn("fly body not shown:", e);
     }
   })();
   return {
+    setPose(angles) {
+      if (removed) return;
+      pose = angles;
+      scene?.setPose(angles);
+    },
     remove() {
       removed = true;
+      pose = null;
       scene?.dispose();
       scene = null;
       stage.remove();

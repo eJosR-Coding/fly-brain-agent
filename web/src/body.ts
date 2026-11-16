@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { viewFitDistance, type ParsedBody } from "./bodyData";
+import { viewFitDistance, type ParsedBody, type Vec3 } from "./bodyData";
+import type { JointId } from "./bodyPose";
+import { rotationMatrix, splitByJoint } from "./bodyRig";
 import { createOrbitGate, orbitDefault } from "./orbit";
 import { createRenderScheduler } from "./renderScheduler";
 import type { Theme } from "./theme";
@@ -9,6 +11,11 @@ export interface BodyScene {
   /** Ask for a redraw (the scene only draws on demand or while the orbit runs). */
   invalidate(): void;
   dispose(): void;
+  /** Joint angles in degrees (right-hand rule about the rig axis through its pivot). Replaces the WHOLE pose: joints
+   *  not listed return to rest; unknown ids and non-finite angles are ignored. Redraws. */
+  setPose(angles: Partial<Record<JointId, number>>): void;
+  /** The joints this body can move (empty for a body without a rig). */
+  jointIds(): JointId[];
 }
 
 const FOV = 40;
@@ -58,38 +65,69 @@ function assembleBodyScene(
   opts: { reducedMotion?: boolean },
 ): BodyScene {
   const scene = new THREE.Scene();
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(body.positions, 3));
   // depthTest on: the occluder mesh below writes depth, so edges on the far side of the body are hidden
   const material = new THREE.LineBasicMaterial({ color: theme.highlightHex, transparent: true, opacity: LINE_OPACITY, depthTest: true, depthWrite: false });
-  const lines = new THREE.LineSegments(geometry, material);
-  lines.renderOrder = 0;
-  scene.add(lines);
-  undo.push(() => { geometry.dispose(); material.dispose(); });
-
+  undo.push(() => material.dispose());
   // Hidden-line occluder: the fly's surface writes depth but NO colour (the canvas stays transparent), and is
   // drawn first. The polygon offset pushes it slightly back so the edges lying on the surface do not z-fight.
-  let meshGeometry: THREE.BufferGeometry | null = null;
-  let meshMaterial: THREE.MeshBasicMaterial | null = null;
-  if (body.mesh) {
-    meshGeometry = new THREE.BufferGeometry();
-    meshGeometry.setAttribute("position", new THREE.BufferAttribute(body.mesh.positions, 3));
-    meshGeometry.setIndex(new THREE.BufferAttribute(body.mesh.indices, 1));
-    meshMaterial = new THREE.MeshBasicMaterial({
-      colorWrite: false,
-      depthWrite: true,
-      side: THREE.DoubleSide,
-      // Edges lie ON the surface, so they z-fight with the occluder. WebGL polygon offset moves only filled polygons
-      // (never lines), so the occluder is pushed back instead. 1/1 lost many edges; 4/4 kept more without letting
-      // the far legs show through (checked by eye on renders of the real asset).
-      polygonOffset: true,
-      polygonOffsetFactor: 4,
-      polygonOffsetUnits: 4,
+  const meshMaterial = body.mesh
+    ? new THREE.MeshBasicMaterial({
+        colorWrite: false,
+        depthWrite: true,
+        side: THREE.DoubleSide,
+        // Edges lie ON the surface, so they z-fight with the occluder. WebGL polygon offset moves only filled polygons
+        // (never lines), so the occluder is pushed back instead. 1/1 lost many edges; 4/4 kept more without letting
+        // the far legs show through (checked by eye on renders of the real asset).
+        polygonOffset: true,
+        polygonOffsetFactor: 4,
+        polygonOffsetUnits: 4,
+      })
+    : null;
+  if (meshMaterial) undo.push(() => meshMaterial.dispose());
+  const meshPositions = body.mesh ? new THREE.BufferAttribute(body.mesh.positions, 3) : null;
+
+  /** One group holding the lines and the depth-only occluder of one piece of the body. */
+  const addGroup = (lines: Float32Array, indices: Uint16Array | Uint32Array | null): THREE.Group => {
+    const group = new THREE.Group();
+    if (lines.length > 0) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.BufferAttribute(lines, 3));
+      undo.push(() => g.dispose());
+      const obj = new THREE.LineSegments(g, material);
+      obj.renderOrder = 0;
+      obj.frustumCulled = false; // bounds are those of the rest pose; a joint moves out of them
+      group.add(obj);
+    }
+    if (meshMaterial && meshPositions && indices && indices.length > 0) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", meshPositions);
+      g.setIndex(new THREE.BufferAttribute(indices, 1));
+      undo.push(() => g.dispose());
+      const occluder = new THREE.Mesh(g, meshMaterial);
+      occluder.renderOrder = -1;
+      occluder.frustumCulled = false;
+      group.add(occluder);
+    }
+    scene.add(group);
+    return group;
+  };
+
+  // Without a per-part mesh split the joints cannot move the occluder with their lines: stay one static group.
+  const joints = (body.joints ?? []).filter(() => !body.mesh || (body.meshParts ?? []).length > 0);
+  const rigged: Array<{ id: JointId; axis: Vec3; pivot: Vec3; group: THREE.Group }> = [];
+  if (joints.length === 0) {
+    addGroup(body.positions, body.mesh?.indices ?? null);
+  } else {
+    const split = splitByJoint({
+      parts: body.parts, meshParts: body.meshParts ?? [], joints, positions: body.positions, indices: body.mesh?.indices ?? null,
     });
-    const occluder = new THREE.Mesh(meshGeometry, meshMaterial);
-    occluder.renderOrder = -1;
-    scene.add(occluder);
-    undo.push(() => { meshGeometry?.dispose(); meshMaterial?.dispose(); });
+    addGroup(split.rest.lines, split.rest.indices);
+    for (const j of joints) {
+      const piece = split.joints[j.id];
+      const group = addGroup(piece.lines, piece.indices);
+      group.matrixAutoUpdate = false; // the matrix below is the whole transform: vertices stay at their asset positions
+      rigged.push({ id: j.id, axis: j.axis, pivot: j.pivot, group });
+    }
   }
 
   const size = body.radius * 2; // farthest vertex from the centroid, doubled
@@ -153,18 +191,25 @@ function assembleBodyScene(
   invalidate = () => scheduler.invalidate();
   invalidate();
 
+  const setPose = (angles: Partial<Record<JointId, number>>) => {
+    for (const j of rigged) {
+      const deg = angles[j.id];
+      const rad = typeof deg === "number" && Number.isFinite(deg) ? (deg * Math.PI) / 180 : 0;
+      j.group.matrix.fromArray(rotationMatrix(j.axis, rad, j.pivot));
+      j.group.matrixWorldNeedsUpdate = true;
+    }
+    invalidate();
+  };
+
   return {
     invalidate: () => invalidate(),
+    setPose,
+    jointIds: () => rigged.map((j) => j.id),
     dispose() {
-      scheduler.dispose();
-      ro.disconnect();
-      controls.dispose();
-      geometry.dispose();
-      material.dispose();
-      meshGeometry?.dispose();
-      meshMaterial?.dispose();
-      renderer.dispose();
-      renderer.domElement.remove();
+      // the undo list holds every resource in creation order: scheduler, observer, controls, geometries, materials, renderer
+      for (const release of undo.splice(0).reverse()) {
+        try { release(); } catch { /* keep releasing the rest */ }
+      }
     },
   };
 }
