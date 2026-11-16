@@ -2,6 +2,7 @@ import "@fontsource-variable/inter";
 import "@fontsource-variable/jetbrains-mono";
 import "./style.css";
 import { mountChat } from "./chat";
+import { mountChatToggle } from "./chatToggle";
 import { parseModels } from "./models";
 import { fetchIndices, loadBrain, loadBrainMeta } from "./brainData";
 import { mountPreview } from "./brainPreview";
@@ -486,6 +487,7 @@ async function boot(): Promise<void> {
       renderStatus(chat.model);
     },
   });
+  mountChatToggle(document.body, $("chat")); // hide/show the panel; the conversation DOM stays mounted
   renderStatus(chat.model);
   void loadModels().then((list) => chat.setModels(list));
   void loadHealth().then(() => {
