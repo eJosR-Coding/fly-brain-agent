@@ -521,6 +521,519 @@
   "vertex_count": 54861,
   "triangle_count": 109130,
   "index_dtype": "uint16",
-  "bytes": 983946
+  "bytes": 983946,
+  "parts": [
+   {
+    "name": "c_thorax",
+    "triangle_start": 0,
+    "triangle_count": 1466
+   },
+   {
+    "name": "c_abdomen12",
+    "triangle_start": 1466,
+    "triangle_count": 1592
+   },
+   {
+    "name": "c_abdomen3",
+    "triangle_start": 3058,
+    "triangle_count": 1710
+   },
+   {
+    "name": "c_abdomen4",
+    "triangle_start": 4768,
+    "triangle_count": 1560
+   },
+   {
+    "name": "c_abdomen5",
+    "triangle_start": 6328,
+    "triangle_count": 1586
+   },
+   {
+    "name": "c_abdomen6",
+    "triangle_start": 7914,
+    "triangle_count": 1044
+   },
+   {
+    "name": "c_haustellum",
+    "triangle_start": 8958,
+    "triangle_count": 606
+   },
+   {
+    "name": "c_head",
+    "triangle_start": 9564,
+    "triangle_count": 1372
+   },
+   {
+    "name": "c_rostrum",
+    "triangle_start": 10936,
+    "triangle_count": 1278
+   },
+   {
+    "name": "l_eye",
+    "triangle_start": 12214,
+    "triangle_count": 2000
+   },
+   {
+    "name": "l_pedicel",
+    "triangle_start": 14214,
+    "triangle_count": 2000
+   },
+   {
+    "name": "l_funiculus",
+    "triangle_start": 16214,
+    "triangle_count": 530
+   },
+   {
+    "name": "l_arista",
+    "triangle_start": 16744,
+    "triangle_count": 1996
+   },
+   {
+    "name": "l_wing",
+    "triangle_start": 18740,
+    "triangle_count": 1999
+   },
+   {
+    "name": "l_haltere",
+    "triangle_start": 20739,
+    "triangle_count": 824
+   },
+   {
+    "name": "lf_coxa",
+    "triangle_start": 21563,
+    "triangle_count": 1990
+   },
+   {
+    "name": "lf_trochanterfemur",
+    "triangle_start": 23553,
+    "triangle_count": 1602
+   },
+   {
+    "name": "lf_tibia",
+    "triangle_start": 25155,
+    "triangle_count": 1705
+   },
+   {
+    "name": "lf_tarsus1",
+    "triangle_start": 26860,
+    "triangle_count": 1790
+   },
+   {
+    "name": "lf_tarsus2",
+    "triangle_start": 28650,
+    "triangle_count": 1796
+   },
+   {
+    "name": "lf_tarsus3",
+    "triangle_start": 30446,
+    "triangle_count": 2000
+   },
+   {
+    "name": "lf_tarsus4",
+    "triangle_start": 32446,
+    "triangle_count": 1999
+   },
+   {
+    "name": "lf_tarsus5",
+    "triangle_start": 34445,
+    "triangle_count": 2000
+   },
+   {
+    "name": "lm_coxa",
+    "triangle_start": 36445,
+    "triangle_count": 2000
+   },
+   {
+    "name": "lm_trochanterfemur",
+    "triangle_start": 38445,
+    "triangle_count": 822
+   },
+   {
+    "name": "lm_tibia",
+    "triangle_start": 39267,
+    "triangle_count": 676
+   },
+   {
+    "name": "lm_tarsus1",
+    "triangle_start": 39943,
+    "triangle_count": 924
+   },
+   {
+    "name": "lm_tarsus2",
+    "triangle_start": 40867,
+    "triangle_count": 1552
+   },
+   {
+    "name": "lm_tarsus3",
+    "triangle_start": 42419,
+    "triangle_count": 1856
+   },
+   {
+    "name": "lm_tarsus4",
+    "triangle_start": 44275,
+    "triangle_count": 1972
+   },
+   {
+    "name": "lm_tarsus5",
+    "triangle_start": 46247,
+    "triangle_count": 938
+   },
+   {
+    "name": "lh_coxa",
+    "triangle_start": 47185,
+    "triangle_count": 2000
+   },
+   {
+    "name": "lh_trochanterfemur",
+    "triangle_start": 49185,
+    "triangle_count": 2000
+   },
+   {
+    "name": "lh_tibia",
+    "triangle_start": 51185,
+    "triangle_count": 748
+   },
+   {
+    "name": "lh_tarsus1",
+    "triangle_start": 51933,
+    "triangle_count": 773
+   },
+   {
+    "name": "lh_tarsus2",
+    "triangle_start": 52706,
+    "triangle_count": 1972
+   },
+   {
+    "name": "lh_tarsus3",
+    "triangle_start": 54678,
+    "triangle_count": 2000
+   },
+   {
+    "name": "lh_tarsus4",
+    "triangle_start": 56678,
+    "triangle_count": 1994
+   },
+   {
+    "name": "lh_tarsus5",
+    "triangle_start": 58672,
+    "triangle_count": 2000
+   },
+   {
+    "name": "r_eye",
+    "triangle_start": 60672,
+    "triangle_count": 2000
+   },
+   {
+    "name": "r_pedicel",
+    "triangle_start": 62672,
+    "triangle_count": 2000
+   },
+   {
+    "name": "r_funiculus",
+    "triangle_start": 64672,
+    "triangle_count": 530
+   },
+   {
+    "name": "r_arista",
+    "triangle_start": 65202,
+    "triangle_count": 1996
+   },
+   {
+    "name": "r_wing",
+    "triangle_start": 67198,
+    "triangle_count": 1999
+   },
+   {
+    "name": "r_haltere",
+    "triangle_start": 69197,
+    "triangle_count": 824
+   },
+   {
+    "name": "rf_coxa",
+    "triangle_start": 70021,
+    "triangle_count": 1990
+   },
+   {
+    "name": "rf_trochanterfemur",
+    "triangle_start": 72011,
+    "triangle_count": 1602
+   },
+   {
+    "name": "rf_tibia",
+    "triangle_start": 73613,
+    "triangle_count": 1705
+   },
+   {
+    "name": "rf_tarsus1",
+    "triangle_start": 75318,
+    "triangle_count": 1790
+   },
+   {
+    "name": "rf_tarsus2",
+    "triangle_start": 77108,
+    "triangle_count": 1796
+   },
+   {
+    "name": "rf_tarsus3",
+    "triangle_start": 78904,
+    "triangle_count": 2000
+   },
+   {
+    "name": "rf_tarsus4",
+    "triangle_start": 80904,
+    "triangle_count": 1999
+   },
+   {
+    "name": "rf_tarsus5",
+    "triangle_start": 82903,
+    "triangle_count": 2000
+   },
+   {
+    "name": "rm_coxa",
+    "triangle_start": 84903,
+    "triangle_count": 2000
+   },
+   {
+    "name": "rm_trochanterfemur",
+    "triangle_start": 86903,
+    "triangle_count": 822
+   },
+   {
+    "name": "rm_tibia",
+    "triangle_start": 87725,
+    "triangle_count": 676
+   },
+   {
+    "name": "rm_tarsus1",
+    "triangle_start": 88401,
+    "triangle_count": 924
+   },
+   {
+    "name": "rm_tarsus2",
+    "triangle_start": 89325,
+    "triangle_count": 1552
+   },
+   {
+    "name": "rm_tarsus3",
+    "triangle_start": 90877,
+    "triangle_count": 1856
+   },
+   {
+    "name": "rm_tarsus4",
+    "triangle_start": 92733,
+    "triangle_count": 1972
+   },
+   {
+    "name": "rm_tarsus5",
+    "triangle_start": 94705,
+    "triangle_count": 938
+   },
+   {
+    "name": "rh_coxa",
+    "triangle_start": 95643,
+    "triangle_count": 2000
+   },
+   {
+    "name": "rh_trochanterfemur",
+    "triangle_start": 97643,
+    "triangle_count": 2000
+   },
+   {
+    "name": "rh_tibia",
+    "triangle_start": 99643,
+    "triangle_count": 748
+   },
+   {
+    "name": "rh_tarsus1",
+    "triangle_start": 100391,
+    "triangle_count": 773
+   },
+   {
+    "name": "rh_tarsus2",
+    "triangle_start": 101164,
+    "triangle_count": 1972
+   },
+   {
+    "name": "rh_tarsus3",
+    "triangle_start": 103136,
+    "triangle_count": 2000
+   },
+   {
+    "name": "rh_tarsus4",
+    "triangle_start": 105136,
+    "triangle_count": 1994
+   },
+   {
+    "name": "rh_tarsus5",
+    "triangle_start": 107130,
+    "triangle_count": 2000
+   }
+  ],
+  "parts_note": "triangles are concatenated in part order (same order as `parts`); each part owns the contiguous triangle range [triangle_start, triangle_start + triangle_count)"
+ },
+ "rig": {
+  "units": "um",
+  "frame": "fly frame as in the asset: x anterior, y left, z dorsal",
+  "joints": [
+   {
+    "id": "proboscis",
+    "parts": [
+     "c_rostrum",
+     "c_haustellum"
+    ],
+    "pivot_um": [
+     761.4,
+     0.0,
+     1237.6
+    ],
+    "axis": [
+     0.0,
+     -1.0,
+     0.0
+    ],
+    "rest_deg": 0,
+    "range_deg": [
+     0.0,
+     60.0
+    ],
+    "source": "geometry (our choice)"
+   },
+   {
+    "id": "antenna_l",
+    "parts": [
+     "l_pedicel",
+     "l_funiculus",
+     "l_arista"
+    ],
+    "pivot_um": [
+     953.7,
+     86.0,
+     1383.7
+    ],
+    "axis": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "rest_deg": 0,
+    "range_deg": [
+     -30.0,
+     30.0
+    ],
+    "source": "geometry (our choice)"
+   },
+   {
+    "id": "antenna_r",
+    "parts": [
+     "r_pedicel",
+     "r_funiculus",
+     "r_arista"
+    ],
+    "pivot_um": [
+     953.7,
+     -86.0,
+     1383.7
+    ],
+    "axis": [
+     0.0,
+     0.0,
+     -1.0
+    ],
+    "rest_deg": 0,
+    "range_deg": [
+     -30.0,
+     30.0
+    ],
+    "source": "geometry (our choice)"
+   },
+   {
+    "id": "wing_l",
+    "parts": [
+     "l_wing"
+    ],
+    "pivot_um": [
+     -178.0,
+     395.0,
+     1381.0
+    ],
+    "axis": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "rest_deg": 0,
+    "range_deg": [
+     0.0,
+     60.0
+    ],
+    "source": "geometry (our choice)"
+   },
+   {
+    "id": "wing_r",
+    "parts": [
+     "r_wing"
+    ],
+    "pivot_um": [
+     -178.0,
+     -395.0,
+     1381.0
+    ],
+    "axis": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "rest_deg": 0,
+    "range_deg": [
+     0.0,
+     60.0
+    ],
+    "source": "geometry (our choice)"
+   },
+   {
+    "id": "haltere_l",
+    "parts": [
+     "l_haltere"
+    ],
+    "pivot_um": [
+     -310.0,
+     214.0,
+     1151.0
+    ],
+    "axis": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "rest_deg": 0,
+    "range_deg": [
+     -30.0,
+     30.0
+    ],
+    "source": "geometry (our choice)"
+   },
+   {
+    "id": "haltere_r",
+    "parts": [
+     "r_haltere"
+    ],
+    "pivot_um": [
+     -310.0,
+     -214.0,
+     1151.0
+    ],
+    "axis": [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    "rest_deg": 0,
+    "range_deg": [
+     -30.0,
+     30.0
+    ],
+    "source": "geometry (our choice)"
+   }
+  ]
  }
 }

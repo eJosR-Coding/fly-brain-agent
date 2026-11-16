@@ -10,6 +10,10 @@ from flybrain.fly_body_build import (
     MeshPart,
     Part,
     assemble_mesh,
+    assemble_mesh_ranges,
+    build_rig,
+    rotate_about,
+    mirror_joint,
     decode_mesh,
     encode_mesh,
     mirror_mesh_parts,
@@ -524,3 +528,208 @@ def test_a_failure_while_staging_leaves_the_previous_files_untouched(tmp_path, m
     assert [(tmp_path / n).read_bytes() for n in OUT_NAMES[:2]] == [b"mesh0", b"bin0"]
     assert (tmp_path / "fly-body.json").read_text() == "old\n"
     assert sorted(p.name for p in tmp_path.iterdir()) == sorted(OUT_NAMES)
+
+
+# ---- rig (animatable joints) and per-part triangle ranges ------------------------------------
+
+RIG_IDS = ["proboscis", "antenna_l", "antenna_r", "wing_l", "wing_r", "haltere_l", "haltere_r"]
+WHEEL_ENV = "FLYBRAIN_FLYGYM_WHEEL"
+
+
+def synthetic_origins():
+    return {
+        "c_rostrum": np.array([950.0, 0.0, 1000.0]),
+        "l_pedicel": np.array([950.0, 90.0, 1380.0]),
+        "l_wing": np.array([-180.0, 400.0, 1380.0]),
+        "l_haltere": np.array([-300.0, 210.0, 1150.0]),
+    }
+
+
+def synthetic_rostrum():
+    return np.array([[900.0, 0.0, 1250.0], [900.0, 10.0, 1240.0], [800.0, 0.0, 800.0], [700.0, 0.0, 900.0]])
+
+
+def test_rotate_about_zero_degrees_is_identity_and_ninety_keeps_distance_to_the_pivot():
+    pts = np.array([[1.0, 2.0, 3.0], [-4.0, 0.5, 2.0]])
+    pivot, axis = np.array([0.5, 0.5, 0.5]), np.array([0.0, 0.0, 1.0])
+    assert np.allclose(rotate_about(pts, pivot, axis, 0.0), pts)
+    out = rotate_about(pts, pivot, axis, 90.0)
+    assert np.allclose(np.linalg.norm(out - pivot, axis=1), np.linalg.norm(pts - pivot, axis=1))
+    assert np.allclose(out[0], [-1.0, 1.0, 3.0])  # (0.5, 1.5, .) -> (-1.5, 0.5, .) about the pivot, z kept
+    assert np.allclose(rotate_about(pivot[None], pivot, axis, 33.0), pivot[None])  # the pivot never moves
+
+
+def test_rotate_about_a_non_unit_axis_is_normalised():
+    pts = np.array([[1.0, 0.0, 0.0]])
+    assert np.allclose(rotate_about(pts, np.zeros(3), np.array([0.0, 0.0, 5.0]), 90.0), [[0.0, 1.0, 0.0]])
+
+
+def test_build_rig_has_the_contract_shape():
+    rig = build_rig(synthetic_origins(), synthetic_rostrum())
+    assert rig["units"] == "um" and "x anterior" in rig["frame"]
+    assert [j["id"] for j in rig["joints"]] == RIG_IDS
+    for j in rig["joints"]:
+        assert set(j) == {"id", "parts", "pivot_um", "axis", "rest_deg", "range_deg", "source"}
+        assert j["rest_deg"] == 0
+        lo, hi = j["range_deg"]
+        assert lo <= 0 <= hi and lo < hi
+        assert abs(np.linalg.norm(j["axis"]) - 1.0) < 1e-6
+        assert len(j["pivot_um"]) == 3
+        assert j["source"] in ("rigging.yaml", "geometry (our choice)")
+    by = {j["id"]: j for j in rig["joints"]}
+    assert by["proboscis"]["parts"] == ["c_rostrum", "c_haustellum"]
+    assert by["antenna_l"]["parts"] == ["l_pedicel", "l_funiculus", "l_arista"]
+    assert by["antenna_r"]["parts"] == ["r_pedicel", "r_funiculus", "r_arista"]
+    assert by["wing_r"]["parts"] == ["r_wing"] and by["haltere_l"]["parts"] == ["l_haltere"]
+
+
+def test_right_joints_are_the_left_ones_mirrored_on_y():
+    by = {j["id"]: j for j in build_rig(synthetic_origins(), synthetic_rostrum())["joints"]}
+    for side in ("antenna", "wing", "haltere"):
+        left, right = by[f"{side}_l"], by[f"{side}_r"]
+        assert right["pivot_um"] == [left["pivot_um"][0], -left["pivot_um"][1], left["pivot_um"][2]]
+        assert right["range_deg"] == left["range_deg"] and right["source"] == left["source"]
+        # a mirrored rotation: the same angle moves the right part as the mirror image of the left motion
+        pts = np.array([[-900.0, 120.0, 1300.0], [-500.0, 300.0, 1100.0]])
+        ang = 25.0
+        moved_l = rotate_about(pts, np.array(left["pivot_um"]), np.array(left["axis"]), ang)
+        moved_r = rotate_about(mirror_y(pts), np.array(right["pivot_um"]), np.array(right["axis"]), ang)
+        assert np.allclose(mirror_y(moved_l), moved_r)
+
+
+def test_mirror_joint_flips_pivot_y_and_turns_the_axis_as_a_pseudovector():
+    j = {"id": "wing_l", "parts": ["l_wing"], "pivot_um": [1.0, 2.0, 3.0], "axis": [0.0, 0.6, 0.8],
+         "rest_deg": 0, "range_deg": [0, 90], "source": "geometry (our choice)"}
+    r = mirror_joint(j)
+    assert r["id"] == "wing_r" and r["parts"] == ["r_wing"] and r["pivot_um"] == [1.0, -2.0, 3.0]
+    assert r["axis"] == [-0.0 + 0.0, 0.6, -0.8]
+
+
+def test_build_rig_is_deterministic():
+    a = json.dumps(build_rig(synthetic_origins(), synthetic_rostrum()))
+    b = json.dumps(build_rig(synthetic_origins(), synthetic_rostrum()))
+    assert a == b
+
+
+def test_proboscis_pivot_is_the_dorsal_attachment_and_extension_swings_the_tip_forward():
+    rostrum = synthetic_rostrum()
+    j = {j["id"]: j for j in build_rig(synthetic_origins(), rostrum)["joints"]}["proboscis"]
+    assert j["pivot_um"][1] == 0.0 and j["pivot_um"][2] > 1200  # top of the rostrum, on the midline
+    tip = np.array([[700.0, 0.0, 900.0]])
+    moved = rotate_about(tip, np.array(j["pivot_um"]), np.array(j["axis"]), j["range_deg"][1])
+    assert moved[0, 0] > tip[0, 0]  # extension moves the tip anteriorly
+
+
+def test_rig_wings_rise_and_antennae_sweep_outward_with_a_positive_angle():
+    by = {j["id"]: j for j in build_rig(synthetic_origins(), synthetic_rostrum())["joints"]}
+    o = synthetic_origins()
+    wing_tip = np.array([[-2300.0, 0.0, 900.0]])
+    for jid in ("wing_l", "wing_r"):
+        j = by[jid]
+        sign = 1.0 if jid.endswith("l") else -1.0
+        tip = wing_tip * np.array([1.0, sign, 1.0])
+        moved = rotate_about(tip, np.array(j["pivot_um"]), np.array(j["axis"]), 30.0)
+        assert moved[0, 2] > tip[0, 2]
+    arista = np.array([[1150.0, 260.0, 1440.0]])
+    j = by["antenna_l"]
+    moved = rotate_about(arista, np.array(j["pivot_um"]), np.array(j["axis"]), 20.0)
+    assert moved[0, 1] > arista[0, 1]  # positive sweep moves the left antenna tip outward (more +y)
+    assert o["l_pedicel"][1] == j["pivot_um"][1]
+
+
+def test_assemble_mesh_ranges_are_contiguous_per_part_and_count_dropped_triangles():
+    a = MeshPart("c_a", "c", *weld(cube_tris(1.0)))
+    b = MeshPart("c_b", "c", *weld(cube_tris(1.0) + 5))
+    lo, hi = np.array([0.0] * 3), np.array([10.0] * 3)
+    qv, faces, ranges = assemble_mesh_ranges([a, b], lo, hi)
+    assert ranges == [(0, 12), (12, 12)] and len(faces) == 24
+    qv2, faces2 = assemble_mesh([a, b], lo, hi)
+    assert np.array_equal(qv, qv2) and np.array_equal(faces, faces2)
+    # a part whose triangles all collapse after quantization gets an empty range, not a shifted one
+    tiny = MeshPart("c_t", "c", *weld(cube_tris(0.00001) + 2))
+    _, faces3, ranges3 = assemble_mesh_ranges([a, tiny, b], lo * 1.0, hi * 1.0)
+    assert ranges3 == [(0, 12), (12, 0), (12, 12)] and len(faces3) == 24
+
+
+@needs_mesh
+def test_committed_mesh_parts_cover_every_triangle_once_in_part_order():
+    meta = json.loads(ASSET_JSON.read_text())
+    entries = meta["mesh"]["parts"]
+    assert [e["name"] for e in entries] == [p["name"] for p in meta["parts"]]
+    pos = 0
+    for e in entries:
+        assert e["triangle_start"] == pos and e["triangle_count"] >= 0
+        pos += e["triangle_count"]
+    assert pos == meta["mesh"]["triangle_count"]
+    assert all(e["triangle_count"] > 0 for e in entries)
+
+
+@needs_mesh
+def test_committed_mesh_part_ranges_match_the_geometry_of_that_part():
+    meta = json.loads(ASSET_JSON.read_text())
+    lo, hi = np.array(meta["bounds"][0]), np.array(meta["bounds"][1])
+    verts, faces = decode_mesh(MESH_BIN.read_bytes(), meta["mesh"], lo, hi)
+    by = {e["name"]: e for e in meta["mesh"]["parts"]}
+    def centroid(name):
+        e = by[name]
+        f = faces[e["triangle_start"] : e["triangle_start"] + e["triangle_count"]]
+        return verts[f].reshape(-1, 3).mean(axis=0)
+    left, right = centroid("l_wing"), centroid("r_wing")
+    assert abs(left[1] + right[1]) < 5 and abs(left[0] - right[0]) < 5 and abs(left[1]) > 20  # mirrored pair
+    assert centroid("c_head")[0] > centroid("c_abdomen4")[0]
+
+
+@needs_asset
+def test_committed_rig_matches_the_contract_and_the_parts():
+    meta = json.loads(ASSET_JSON.read_text())
+    rig = meta["rig"]
+    assert rig["units"] == "um"
+    names = {p["name"] for p in meta["parts"]}
+    ids = [j["id"] for j in rig["joints"]]
+    assert ids[: len(RIG_IDS)] == RIG_IDS and len(ids) == len(set(ids))
+    lo, hi = np.array(meta["bounds"][0]), np.array(meta["bounds"][1])
+    for j in rig["joints"]:
+        assert j["parts"] and set(j["parts"]) <= names
+        assert abs(np.linalg.norm(j["axis"]) - 1.0) < 1e-6
+        assert (np.array(j["pivot_um"]) >= lo).all() and (np.array(j["pivot_um"]) <= hi).all()
+    by = {j["id"]: j for j in rig["joints"]}
+    for s in ("antenna", "wing", "haltere"):
+        l, r = by[f"{s}_l"], by[f"{s}_r"]
+        assert r["pivot_um"][0] == l["pivot_um"][0] and r["pivot_um"][1] == -l["pivot_um"][1]
+
+
+@needs_asset
+def test_rotating_a_committed_joint_to_its_range_moves_the_part_a_plausible_distance():
+    meta = json.loads(ASSET_JSON.read_text())
+    lo, hi = np.array(meta["bounds"][0]), np.array(meta["bounds"][1])
+    verts, faces = decode_mesh(MESH_BIN.read_bytes(), meta["mesh"], lo, hi)
+    tri = {e["name"]: e for e in meta["mesh"]["parts"]}
+    for j in meta["rig"]["joints"]:
+        idx = np.concatenate([faces[tri[n]["triangle_start"] : tri[n]["triangle_start"] + tri[n]["triangle_count"]].ravel() for n in j["parts"]])
+        pts = verts[np.unique(idx)]
+        pivot, axis = np.array(j["pivot_um"]), np.array(j["axis"])
+        assert np.linalg.norm(pts - pivot, axis=1).min() < 150  # the part is attached at its pivot
+        for ang in j["range_deg"]:
+            moved = rotate_about(pts, pivot, axis, ang)
+            shift = np.linalg.norm(moved - pts, axis=1).max()
+            assert shift < 2500  # no teleporting
+            assert np.allclose(np.linalg.norm(moved - pivot, axis=1), np.linalg.norm(pts - pivot, axis=1))
+        assert np.allclose(rotate_about(pts, pivot, axis, 0), pts)
+
+
+def _wheel():
+    import os
+
+    w = os.environ.get(WHEEL_ENV)
+    return Path(w) if w and Path(w).exists() else None
+
+
+@pytest.mark.skipif(_wheel() is None, reason=f"set {WHEEL_ENV} to the verified flygym wheel")
+def test_a_fresh_build_is_deterministic_and_the_committed_json_is_in_sync(tmp_path):
+    from flybrain.fly_body_build import build
+
+    build(_wheel(), tmp_path / "a")
+    build(_wheel(), tmp_path / "b")
+    for name in ("fly-body.json", "fly-body.bin", "fly-body-mesh.bin"):
+        assert (tmp_path / "a" / name).read_bytes() == (tmp_path / "b" / name).read_bytes()
+        assert (tmp_path / "a" / name).read_bytes() == (PUBLIC / name).read_bytes()
