@@ -166,6 +166,8 @@ Engram mirror `odd/fly-body/tasks`: PENDING (mem_save is blocked by a hook that 
   acknowledged (lineage review-86b70c3f59e0b78f, authority burned). 2 non-blocking findings: R3-001 web/src/main.ts:437-440
   (WARNING; see the lines: the layout/body/preview mounting order in boot()); R3-002 bodyData.ts:131-148 (suggestion,
   viewFitDistance numerics). Open follow-ups. Reviewed boundary is now be52349.
+- T3b slice (base be52349 -> 5a61206, 433 lines, risk medium: fly_body_build.py): consent granted, consolidated native review
+  APPROVED with no findings, acknowledged (lineage review-902ff1b66afb8172, authority burned). Reviewed boundary is now 5a61206.
 
 ## Progress
 - 2026-11-16 created after phase 0. T1, T2b, T2a, T2d, T3, T2c done. Next: the user tries it in a real browser; T5 (animate the body from the brain readouts) is a separate decision.
