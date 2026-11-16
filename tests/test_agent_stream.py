@@ -112,7 +112,20 @@ def test_server_stopped_becomes_error_event():
         checkpointer=InMemorySaver(),
     )
     events = asyncio.run(collect(graph, "hi"))
-    assert events[-1] == {"type": "error", "message": "the flybrain server stopped: ClosedResourceError"}
+    assert events[-1] == {
+        "type": "error",
+        "message": "the flybrain server stopped: ClosedResourceError",
+        "tools_stopped": True,  # the typed marker the API reads (S15), never the text
+    }
+
+
+def test_ordinary_failures_do_not_carry_the_tools_stopped_marker():
+    graph_failing = build_graph(
+        fn_model(lambda m: (_ for _ in ()).throw(RuntimeError("provider exploded"))),
+        [count_neurons], checkpointer=InMemorySaver(),
+    )
+    events = asyncio.run(collect(graph_failing, "hi"))
+    assert "tools_stopped" not in events[-1]
 
 
 def test_empty_reply_is_reported():
