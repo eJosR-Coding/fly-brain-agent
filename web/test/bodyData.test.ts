@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
-import { boundingRadius, centroid, loadBody, parseBody, viewFitDistance, type BodyMeta, type Vec3 } from "../src/bodyData";
+import { describe, expect, it, vi } from "vitest";
+import { boundingRadius, centroid, loadBody, parseBody, parseBodyMesh, viewFitDistance, type BodyMeta, type MeshMeta, type Vec3 } from "../src/bodyData";
 
 // Synthetic asset: bounds x [0,100], y [-50,50], z [10,30] (um); two segments in two parts.
 const meta: BodyMeta = {
@@ -197,5 +197,112 @@ describe("framing of the committed fly", () => {
     expect(Math.max(Math.abs(lo), Math.abs(hi))).toBeCloseTo(0.7, 2);
     expect(fill).toBeGreaterThan(0.55);
     expect(fill).toBeLessThanOrEqual(0.71);
+  });
+});
+
+// Synthetic mesh: 3 vertices (min corner, max corner, midpoint) and one triangle.
+const meshInfo = (over: Partial<MeshMeta> = {}): MeshMeta => ({ file: "fly-body-mesh.bin", vertex_count: 3, triangle_count: 1, index_dtype: "uint16", bytes: 3 * 6 + 6, ...over });
+function meshBin(verts: number[], idx: number[], bytes: 2 | 4 = 2): ArrayBuffer {
+  const b = new ArrayBuffer(verts.length * 2 + idx.length * bytes);
+  const v = new DataView(b);
+  verts.forEach((q, i) => v.setUint16(i * 2, q, true));
+  idx.forEach((q, i) => (bytes === 2 ? v.setUint16(verts.length * 2 + i * 2, q, true) : v.setUint32(verts.length * 2 + i * 4, q, true)));
+  return b;
+}
+const goodMesh = () => meshBin([0, 0, 0, 65535, 65535, 65535, 32768, 32768, 32768], [0, 1, 2]);
+
+describe("parseBodyMesh", () => {
+  it("decodes corners to mm in Three axes (three = y_fly, z_fly, x_fly) and keeps the indices", () => {
+    const m = parseBodyMesh(goodMesh(), { ...meta, mesh: meshInfo() });
+    expect(m.positions.length).toBe(9);
+    expect(Array.from(m.positions.slice(0, 3))).toEqual([-0.05, 0.01, 0].map((v) => expect.closeTo(v, 6)));
+    expect(Array.from(m.positions.slice(3, 6))).toEqual([0.05, 0.03, 0.1].map((v) => expect.closeTo(v, 6)));
+    expect(m.indices).toBeInstanceOf(Uint16Array);
+    expect(Array.from(m.indices)).toEqual([0, 1, 2]);
+  });
+  it("reads uint32 indices when the json says so", () => {
+    const info = meshInfo({ index_dtype: "uint32", bytes: 3 * 6 + 12 });
+    const m = parseBodyMesh(meshBin([0, 0, 0, 1, 1, 1, 2, 2, 2], [2, 1, 0], 4), { ...meta, mesh: info });
+    expect(m.indices).toBeInstanceOf(Uint32Array);
+    expect(Array.from(m.indices)).toEqual([2, 1, 0]);
+  });
+  it("rejects a wrong byte length", () => {
+    expect(() => parseBodyMesh(new ArrayBuffer(10), { ...meta, mesh: meshInfo() })).toThrow(/10 bytes.*24/);
+  });
+  it("rejects an index outside the vertex range", () => {
+    expect(() => parseBodyMesh(meshBin([0, 0, 0, 1, 1, 1, 2, 2, 2], [0, 1, 3]), { ...meta, mesh: meshInfo() })).toThrow(/index 3/);
+  });
+  it("rejects metadata without a mesh and an unknown index type", () => {
+    expect(() => parseBodyMesh(goodMesh(), meta)).toThrow(/mesh/);
+    expect(() => parseBodyMesh(goodMesh(), { ...meta, mesh: meshInfo({ index_dtype: "uint8" as never }) })).toThrow(/index_dtype/);
+  });
+});
+
+describe("loadBody with the mesh", () => {
+  const fakeFetch = (opts: { mesh?: boolean; meshFails?: "http" | "garbage" } = {}) => {
+    const urls: string[] = [];
+    const f = (async (u: string) => {
+      urls.push(u);
+      if (u.endsWith(".json")) return new Response(JSON.stringify(opts.mesh ? { ...meta, mesh: meshInfo() } : meta));
+      if (u.endsWith("mesh.bin")) {
+        if (opts.meshFails === "http") return new Response("no", { status: 404 });
+        return new Response(opts.meshFails === "garbage" ? new ArrayBuffer(5) : goodMesh());
+      }
+      return new Response(good());
+    }) as unknown as typeof fetch;
+    return { f, urls };
+  };
+  it("also fetches /fly-body-mesh.bin when the json has a mesh key and returns it", async () => {
+    const { f, urls } = fakeFetch({ mesh: true });
+    const b = await loadBody(f);
+    expect(urls.sort()).toEqual(["/fly-body-mesh.bin", "/fly-body.bin", "/fly-body.json"]);
+    expect(b.mesh?.indices.length).toBe(3);
+  });
+  it("returns mesh null and does not fetch it when the json has no mesh key", async () => {
+    const { f, urls } = fakeFetch();
+    const b = await loadBody(f);
+    expect(b.mesh).toBeNull();
+    expect(urls).not.toContain("/fly-body-mesh.bin");
+  });
+  it.each(["http", "garbage"] as const)("falls back to the lines only, with one warning, when the mesh fails (%s)", async (kind) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { f } = fakeFetch({ mesh: true, meshFails: kind });
+      const b = await loadBody(f);
+      expect(b.mesh).toBeNull();
+      expect(b.segmentCount).toBe(2);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe("the committed mesh asset", () => {
+  const m = JSON.parse(readFileSync("public/fly-body.json", "utf8")) as BodyMeta;
+  const raw = readFileSync("public/fly-body-mesh.bin");
+  const buf = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) as ArrayBuffer;
+  const lines = parseBody(
+    (() => { const r = readFileSync("public/fly-body.bin"); return r.buffer.slice(r.byteOffset, r.byteOffset + r.byteLength) as ArrayBuffer; })(),
+    m,
+  );
+  it("has the triangle count of the json, valid indices and no NaN", () => {
+    const mesh = parseBodyMesh(buf, m);
+    expect(m.mesh?.triangle_count).toBeGreaterThan(50_000);
+    expect(mesh.indices.length).toBe(m.mesh!.triangle_count * 3);
+    expect(mesh.positions.length).toBe(m.mesh!.vertex_count * 3);
+    for (const v of mesh.positions) expect(Number.isFinite(v)).toBe(true);
+    let max = 0;
+    for (const i of mesh.indices) max = Math.max(max, i);
+    expect(max).toBeLessThan(m.mesh!.vertex_count);
+  });
+  it("decodes inside the line asset bounds", () => {
+    const mesh = parseBodyMesh(buf, m);
+    const eps = 1e-6; // positions are float32
+    for (let i = 0; i < mesh.positions.length; i++) {
+      const a = i % 3;
+      expect(mesh.positions[i]).toBeGreaterThanOrEqual(lines.bounds.min[a] - eps);
+      expect(mesh.positions[i]).toBeLessThanOrEqual(lines.bounds.max[a] + eps);
+    }
   });
 });

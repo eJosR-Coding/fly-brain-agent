@@ -14,7 +14,9 @@ export interface BodyScene {
 const FOV = 40;
 /** Default view: 3/4 front-left (the fly's left is +X, its face +Z), slightly above. */
 const VIEW = { azimuth: 35, elevation: 15 };
-const LINE_OPACITY = 0.6;
+/** Hidden lines are removed by the depth test, so the remaining (front) lines can be stronger than the 0.6 that
+ *  kept the old see-through tangle quiet. 0.9 was chosen by looking at renders of the real body (0.75 read too faint). */
+const LINE_OPACITY = 0.9;
 /** The fly fills about this share of the pane's limiting dimension at the default view. */
 const FILL = 0.7;
 
@@ -38,8 +40,35 @@ export function createBodyScene(
   const scene = new THREE.Scene();
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(body.positions, 3));
-  const material = new THREE.LineBasicMaterial({ color: theme.highlightHex, transparent: true, opacity: LINE_OPACITY, depthWrite: false });
-  scene.add(new THREE.LineSegments(geometry, material));
+  // depthTest on: the occluder mesh below writes depth, so edges on the far side of the body are hidden
+  const material = new THREE.LineBasicMaterial({ color: theme.highlightHex, transparent: true, opacity: LINE_OPACITY, depthTest: true, depthWrite: false });
+  const lines = new THREE.LineSegments(geometry, material);
+  lines.renderOrder = 0;
+  scene.add(lines);
+
+  // Hidden-line occluder: the fly's surface writes depth but NO colour (the canvas stays transparent), and is
+  // drawn first. The polygon offset pushes it slightly back so the edges lying on the surface do not z-fight.
+  let meshGeometry: THREE.BufferGeometry | null = null;
+  let meshMaterial: THREE.MeshBasicMaterial | null = null;
+  if (body.mesh) {
+    meshGeometry = new THREE.BufferGeometry();
+    meshGeometry.setAttribute("position", new THREE.BufferAttribute(body.mesh.positions, 3));
+    meshGeometry.setIndex(new THREE.BufferAttribute(body.mesh.indices, 1));
+    meshMaterial = new THREE.MeshBasicMaterial({
+      colorWrite: false,
+      depthWrite: true,
+      side: THREE.DoubleSide,
+      // Edges lie ON the surface, so they z-fight with the occluder. WebGL polygon offset moves only filled polygons
+      // (never lines), so the occluder is pushed back instead. 1/1 lost many edges; 4/4 kept more without letting
+      // the far legs show through (checked by eye on renders of the real asset).
+      polygonOffset: true,
+      polygonOffsetFactor: 4,
+      polygonOffsetUnits: 4,
+    });
+    const occluder = new THREE.Mesh(meshGeometry, meshMaterial);
+    occluder.renderOrder = -1;
+    scene.add(occluder);
+  }
 
   const size = body.radius * 2; // farthest vertex from the centroid, doubled
   const camera = new THREE.PerspectiveCamera(FOV, 1, size / 200, size * 20);
@@ -107,6 +136,8 @@ export function createBodyScene(
       controls.dispose();
       geometry.dispose();
       material.dispose();
+      meshGeometry?.dispose();
+      meshMaterial?.dispose();
       renderer.dispose();
       renderer.domElement.remove();
     },
