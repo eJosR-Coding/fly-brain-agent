@@ -37,18 +37,23 @@ fly itself be the interface.
       line-segment file `web/public/fly-body.bin` + `fly-body.json` (parts/groups, units um, head center, bounds,
       source and attribution) plus the Apache-2.0 LICENSE/NOTICE text. Resolve the frame question first. Feature
       edges only, quantized, target <= ~400 KB. Tests for parse, edges, quantize, mirror, and the committed asset.
-- [ ] T2 layout (user idea 2026-11-16, replaces the zoom/LOD crossfade): the fly body takes the CENTER stage where the
-      neurons are today; the existing 3D brain scene moves into an INSET panel top-right of the stage (still the
-      same live Three.js scene, orbit/pick/highlight/activity unchanged). A swap control (click the inset) exchanges
-      the two sizes, so the full-size brain stays one click away. The inset also has a hide/show toggle
-      (remembered in localStorage, wrapped in try/catch): hidden = the brain scene is not rendered (saves GPU/CPU
-      per frame) but keeps its state (selection, highlight, loaded activity); it does NOT free the ~18-20 MB of
-      neuron data (no lazy loading). Verify first how createScene/resize, labels,
-      inspector picking, charts and the left controls behave when the brain container is small.
+- [ ] T2b brain PREVIEW (user idea 2026-11-16): a small 2D picture of the brain drawn with the same oblique angle as the
+      3D home view and depth-shaded so it reads as 3D. Backend `GET /brain/preview` returns a small uint8 grid (about
+      20 KB, pure numpy, no new dependency, cacheable); the browser draws it on a canvas in the theme colors. It
+      needs NO point positions, so /brain/points is no longer fetched at boot. It is a static picture (no activity).
+- [ ] T2a brain ON DEMAND: all-or-nothing. boot() stops awaiting the brain; the real Three.js scene (existing
+      createScene, unchanged inside) is created when the user zooms (wheel) or clicks the preview, or when a chat
+      highlight / path / activity event arrives (auto-open, the latest pending event is replayed once the scene
+      exists), with a loading state. charts/player/inspector are wired when the scene appears. Once opened it stays
+      loaded (no unload yet). Open triggers are pure functions with tests.
 - [ ] T3 `web/src/body.ts`: its own small scene+renderer for the fly body (LineSegments from fly-body.bin, theme
-      colors, auto-rotate, orbit, dispose); pure helpers (decode, camera framing, swap/layout decision) tested.
-- [ ] T4 (dropped) lazy loading of the point cloud and distance crossfade: not needed with two views.
+      colors, auto-rotate, orbit, dispose); pure helpers (decode, camera framing) tested.
+- [ ] T2c layout: the body takes the CENTER stage; the brain (preview first, the real scene once opened) is an INSET panel
+      top-right with a hide/show toggle (remembered in localStorage, try/catch; hidden = not rendered, state kept)
+      and a swap control that exchanges the inset and the center sizes (full-size brain one click away).
+- [ ] T4 (dropped) partial lazy loading of the point layers and distance crossfade: all-or-nothing on-demand replaces it.
 - [ ] T5 (later, separate decision) animate the body from the brain readouts, labelled as our own mapping.
+Order: T1 (asset, running) -> T2b -> T2a -> T3 -> T2c.
 
 ## Checks
 TDD strict (source: project config). Runners: `uv run pytest -q` (baseline 688 on main), `pnpm -C web test`
