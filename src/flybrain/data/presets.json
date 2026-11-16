@@ -25,6 +25,7 @@
         720575940629176663,
         720575940611875570
       ],
+      "readout": "mn9",
       "source": "Shiu et al. 2024 (Nature 634, 210-219), example.ipynb in github.com/philshiu/Drosophila_brain_model, commit 91bdd1e, MIT; ids come from FlyWire v630, 20 of 21 exist in v783"
     },
     "mn9": {
