@@ -10,10 +10,16 @@ import { createBrainGate } from "./brainGate";
 import { mountOpenControl } from "./previewOpen";
 import { mountBody } from "./bodyMount";
 import { mountLayout, type Layout } from "./layoutPanes";
+import type { Pane } from "./layoutState";
+import { commitScene } from "./sceneLoad";
+import { shouldOpenOnBoot, shouldOpenOnChange } from "./sceneOpen";
+import { PathOrder } from "./pathOrder";
+import { chartsChipState, simChipsDisabled } from "./chipState";
+import { afterNewChat, EMPTY, legendOf, modeStage, StageHolder, type Stage } from "./stage";
 import { createScene, type BrainScene } from "./scene";
 import { Latest, runLatest } from "./latest";
 import { loadLatestActivity } from "./activityLoader";
-import { deriveStatus, legendView, parseHealth, versionLine, type Health } from "./status";
+import { deriveStatus, parseHealth, versionLine, type Health } from "./status";
 import { readTheme } from "./theme";
 import { loadLandmarks, loadRegions, type Regions } from "./regions";
 import { activityLegend, formatSimulating, loadActivity, parseSimulation, type Activity } from "./activity";
@@ -54,8 +60,13 @@ let simulating = false;
 let sugarChip: HTMLButtonElement | null = null;
 let experimentChips: HTMLButtonElement[] = [];
 let waveLegend = ""; // the legend line of the wave mode (restored when switching back to it)
-let pathShown = false; // cables are on screen (the legend shows their summary)
-let pathToken = 0; // the newest path request wins while the scene is still loading
+let pathShown = false; // cables are on screen (the scene layer; independent of what the legend says)
+/** Ordering of the cables: the newest path wins, and anything that replaces them cancels a path still waiting for the scene. */
+const pathOrder = new PathOrder();
+/** What the legend line says (one owner; the DOM is only a rendering of it). */
+const stageHolder = new StageHolder();
+let chartsHasContent = false; // a recording or an experiment chart is available to plot
+let lastMain: Pane = "body"; // the pane that was large before the last layout change
 /** The recording currently on stage; replayed into the player when the scene appears later (never lost). */
 let shown: { a: Activity; baseline: Activity | null } | null = null;
 let theme: Theme;
@@ -70,6 +81,7 @@ const activityLatest = new Latest();
 export function highlight(indices: ArrayLike<number>): void {
   brainScene?.setPath(null); // a new selection replaces the cables
   pathShown = false;
+  pathOrder.cancel(); // a path still waiting for the scene must not draw over this selection
   brainScene?.setHighlight(indices);
 }
 
@@ -77,19 +89,40 @@ export function clearAll(): void {
   activityLatest.invalidate();
   waveLegend = "";
   charts?.clear();
-  if (chartsChip) chartsChip.disabled = true;
+  chartsHasContent = false;
+  syncChartsChip();
   brainScene?.setHighlight(null);
   brainScene?.setPath(null);
   pathShown = false;
-  pathToken++; // a path still waiting for the scene is dropped
+  pathOrder.cancel(); // a path still waiting for the scene is dropped
   shown = null;
   player?.clear();
 }
 
-/** Legend line while an activity wave is showing (lit dot, like a selection). */
-function renderActivityLegend(text: string): void {
-  $("legend-text").textContent = text;
-  $("legend-selected").classList.add("on");
+/** Take the legend: record the new stage, then render it. */
+function setStage(s: Stage): void {
+  stageHolder.set(s);
+  paintLegend(s);
+}
+
+function paintLegend(s: Stage): void {
+  const v = legendOf(s);
+  $("legend-text").textContent = v.text;
+  $("legend-selected").classList.toggle("on", v.active);
+}
+
+/** The charts chip is derived: enabled when there is something to plot, active when the panel is open. */
+function syncChartsChip(): void {
+  if (!chartsChip) return;
+  const v = chartsChipState({ hasContent: chartsHasContent, panelOpen: charts?.open === true });
+  chartsChip.disabled = v.disabled;
+  chartsChip.classList.toggle("active", v.active);
+}
+
+/** The simulator chips are derived from the run in flight, the chat stream and the server's capability. */
+function renderSimChips(): void {
+  const off = simChipsDisabled({ simulating, streaming, simulationOff: health?.simulation === false });
+  for (const b of simChips()) b.disabled = off;
 }
 
 /** A recording plus, for a silenced run, its baseline (so the difference map is available). */
@@ -101,12 +134,14 @@ async function loadWithBaseline(id: string): Promise<{ a: Activity; baseline: Ac
 
 function showActivity({ a, baseline }: { a: Activity; baseline: Activity | null }, text: string): void {
   waveLegend = text;
+  pathOrder.cancel(); // a recording replaces the cables' story: a path still waiting must not draw
   shown = { a, baseline };
   player?.load(a, baseline); // no player yet: loadScene replays `shown` once the scene exists
   charts?.show(a, baseline);
-  if (chartsChip) chartsChip.disabled = false;
+  chartsHasContent = true;
+  syncChartsChip();
   setActiveChip(null);
-  renderActivityLegend(text);
+  setStage({ kind: "wave", text });
 }
 
 /** "give sugar": POST /api/simulate (no LLM), then fetch the frames and play them. */
@@ -114,10 +149,15 @@ async function giveSugar(): Promise<void> {
   if (simulating) return;
   openBrain(); // the wave is shown on the real scene: start loading it while the simulation runs
   simulating = true;
-  for (const b of simChips()) b.disabled = true;
+  renderSimChips();
   latest.invalidate(); // a search finishing later must not replace the wave
   const started = performance.now();
-  const pending = () => renderLegend(null, formatSimulating(SUGAR_RUN.duration_ms, (performance.now() - started) / 1000));
+  // the progress text owns the legend only until something else (a recording from the chat) takes it
+  const lease = stageHolder.lease();
+  const pending = () => {
+    const s: Stage = { kind: "message", text: formatSimulating(SUGAR_RUN.duration_ms, (performance.now() - started) / 1000) };
+    if (lease.paint(s)) paintLegend(s);
+  };
   pending();
   const tick = window.setInterval(pending, 1000);
   try {
@@ -130,17 +170,18 @@ async function giveSugar(): Promise<void> {
     if (!res.ok) throw new Error(typeof body.detail === "string" ? body.detail : `HTTP ${res.status}`);
     const sim = parseSimulation(body);
     if (typeof sim === "string") throw new Error(`unexpected simulation answer: ${sim}`);
-    const shown = await loadLatestActivity(activityLatest, () => loadWithBaseline(sim.simulationId), (loaded) => {
+    const applied = await loadLatestActivity(activityLatest, () => loadWithBaseline(sim.simulationId), (loaded) => {
       showActivity(loaded, activityLegend(sim.active, loaded.a.nRows, sim.readoutHz === null ? null : { label: "MN9", hz: sim.readoutHz }));
       setActiveChip("give sugar");
     });
-    if (!shown) return; // a newer recording (from the chat) took the stage while this one loaded
+    if (!applied) return; // a newer recording (from the chat) took the stage while this one loaded
   } catch (e) {
     renderLegend(null, `simulation failed: ${(e as Error).message}`);
   } finally {
     window.clearInterval(tick);
     simulating = false;
-    for (const b of simChips()) b.disabled = health?.simulation === false;
+    renderSimChips();
+    if (lease.release()) paintLegend(stageHolder.current); // nothing replaced the progress text: back to what was there
   }
 }
 
@@ -157,10 +198,8 @@ function showExperimentChart(c: ExperimentChart): void {
       renderLegend(null, `could not open that run: ${(e as Error).message}`));
   });
   charts?.setOpen(true);
-  if (chartsChip) {
-    chartsChip.disabled = false;
-    chartsChip.classList.add("active");
-  }
+  chartsHasContent = true;
+  syncChartsChip();
 }
 
 /** The no-LLM experiment chips: the sugar -> MN9 dose-response sweep and the 8-candidate silencing screen. */
@@ -168,9 +207,10 @@ async function runExperiment(path: "dose_response" | "screen", chip: HTMLButtonE
   if (simulating || !charts) return;
   openBrain();
   simulating = true;
-  for (const b of simChips()) b.disabled = true;
+  renderSimChips();
   latest.invalidate();
   const started = performance.now();
+  const lease = stageHolder.lease(); // the progress text must not overwrite a recording that took the legend meanwhile
   chip.textContent = `${label} · starting`;
   let finished = false; // a poll still in flight must not overwrite the final legend
   const poll = async () => {
@@ -182,7 +222,8 @@ async function runExperiment(path: "dose_response" | "screen", chip: HTMLButtonE
       if (finished) return;
       const secs = Math.floor((performance.now() - started) / 1000);
       if (prog) chip.textContent = formatExperimentProgress(prog);
-      renderLegend(null, `${prog ? formatExperimentProgress(prog) : `${label} · starting`} · ${secs} s · model run on the whole brain`);
+      const s: Stage = { kind: "message", text: `${prog ? formatExperimentProgress(prog) : `${label} · starting`} · ${secs} s · model run on the whole brain` };
+      if (lease.paint(s)) paintLegend(s);
     } catch {
       /* the next tick tries again */
     }
@@ -208,7 +249,8 @@ async function runExperiment(path: "dose_response" | "screen", chip: HTMLButtonE
     window.clearInterval(tick);
     chip.textContent = label;
     simulating = false;
-    for (const b of simChips()) b.disabled = health?.simulation === false;
+    renderSimChips();
+    if (lease.release()) paintLegend(stageHolder.current);
   }
 }
 
@@ -218,9 +260,7 @@ export async function resolveIndices(p: { indices: number[] | null; fetch?: stri
 }
 
 function renderLegend(total: number | null, message?: string): void {
-  const v = legendView(total, message);
-  $("legend-text").textContent = v.text;
-  $("legend-selected").classList.toggle("on", v.active);
+  setStage(total === null ? (message ? { kind: "message", text: message } : EMPTY) : { kind: "selection", total, msg: message });
 }
 
 function setActiveChip(label: string | null): void {
@@ -306,10 +346,11 @@ function setupChips(): void {
     });
     hlItems.appendChild(b);
   }
+  renderSimChips();
 }
 
 /** Mode, orbit and camera chips, shown once the scene is up. */
-function setupViewChips(scene: BrainScene, theme: Theme, regions?: Regions, nt?: Transmitters): void {
+function setupViewChips(scene: BrainScene, theme: Theme, regions?: Regions, nt?: Transmitters): () => void {
   const viewItems = addGroup($("views"), "view", "VIEW");
   const mk = (label: string, title: string, onClick: (b: HTMLButtonElement) => void, extra = "", into: HTMLElement = viewItems) => {
     const b = document.createElement("button");
@@ -335,11 +376,11 @@ function setupViewChips(scene: BrainScene, theme: Theme, regions?: Regions, nt?:
     modes.push(mk("transmitters", "tint the neurons by predicted neurotransmitter", () => select("transmitters"), "mode"));
   }
   renderKey($("key"), "REGIONS", regionRows());
-  chartsChip = mk("charts", "spike raster of the busiest neurons and the readout trace over time", (b) => {
+  chartsChip = mk("charts", "spike raster of the busiest neurons and the readout trace over time", () => {
     charts?.setOpen(!charts.open);
-    b.classList.toggle("active", charts?.open === true);
+    syncChartsChip();
   }, "toggle");
-  chartsChip.disabled = true; // needs a recording
+  syncChartsChip(); // needs a recording; active if the panel was opened (by an experiment) before the scene existed
   mk("orbit", "slow auto-orbit; pauses while you drag", (b) => {
     scene.setOrbit(!scene.orbitOn);
     b.classList.toggle("active", scene.orbitOn);
@@ -347,6 +388,10 @@ function setupViewChips(scene: BrainScene, theme: Theme, regions?: Regions, nt?:
   const camera = addSubgroup(viewItems, "camera");
   mk("front", "reset the camera to a straight front view", () => scene.setView("front"), "", camera);
   mk("3/4", "reset the camera to the default three-quarter view", () => scene.setView("home"), "", camera);
+  return () => {
+    viewItems.parentElement?.remove(); // the whole VIEW group
+    chartsChip = null;
+  };
 }
 
 async function loadHealth(): Promise<void> {
@@ -385,41 +430,49 @@ async function loadScene(): Promise<BrainScene> {
       ntTable ? loadNt(brain.meta.count, ntTable) : Promise.reject(new Error("no transmitter table in /brain/meta")),
     ]);
     const ok = <T,>(r: PromiseSettledResult<T>) => (r.status === "fulfilled" ? r.value : undefined);
-    const scene = createScene(layout.brainHost, brain, theme, { regions: ok(regions), landmarks: ok(landmarks), nt: ok(nt) });
-    brainScene = scene;
-    pointCount = brain.meta.count;
-    openControl?.remove();
-    preview?.remove();
-    player = createPlayer({
-      scene,
-      root: $("timeline"),
-      reducedMotion: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true,
-      speed: theme.playbackSpeed,
-      onTime: (ms) => charts?.setTime(ms),
-      onMode: (_mode, legend) => {
-        if (legend !== null) renderActivityLegend(legend);
-        else if (waveLegend) renderActivityLegend(waveLegend);
+    // All-or-nothing: wire everything first, publish (brainScene, placeholders removed) last. A failure rolls the
+    // wiring back and disposes the scene, so the preview and its retry control stay and a retry builds ONE scene.
+    let newPlayer: Player | null = null;
+    return commitScene<BrainScene>({
+      create: () => createScene(layout.brainHost, brain, theme, { regions: ok(regions), landmarks: ok(landmarks), nt: ok(nt) }),
+      wire: (scene, undo) => {
+        const inspector = mountInspector({
+          stage: layout.brainHost, // the card is placed in the same box as the canvas (the brain pane), not the whole stage
+          scene,
+          pointCount: brain.meta.count,
+          onShowPartners: (rows, label) => {
+            latest.invalidate();
+            highlight(rows);
+            setActiveChip(null);
+            setStage({ kind: "selection", total: null, msg: label, lit: true });
+          },
+        });
+        undo(() => inspector.dispose());
+        undo(setupViewChips(scene, theme, ok(regions), ok(nt)));
+        newPlayer = createPlayer({
+          scene,
+          root: $("timeline"),
+          reducedMotion: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true,
+          speed: theme.playbackSpeed,
+          onTime: (ms) => charts?.setTime(ms),
+          onMode: (_mode, legend) => {
+            const next = modeStage(stageHolder.current, legend, waveLegend);
+            if (next !== stageHolder.current) setStage(next);
+          },
+        });
+        const p = newPlayer;
+        undo(() => p.clear());
+        if (shown) p.load(shown.a, shown.baseline); // a recording that arrived before the scene existed
+      },
+      publish: (scene) => {
+        brainScene = scene;
+        pointCount = brain.meta.count;
+        player = newPlayer;
+        openControl?.remove();
+        preview?.remove();
+        $("version").textContent = versionLine(brain.meta.count);
       },
     });
-    mountInspector({
-      stage: layout.brainHost, // the card is placed in the same box as the canvas (the brain pane), not the whole stage
-      scene,
-      pointCount,
-      onShowPartners: (rows, label) => {
-        latest.invalidate();
-        highlight(rows);
-        setActiveChip(null);
-        renderLegend(null, label);
-        $("legend-selected").classList.add("on");
-      },
-    });
-    setupViewChips(scene, theme, ok(regions), ok(nt));
-    if (shown) {
-      player.load(shown.a, shown.baseline); // a recording that arrived before the scene existed
-      if (chartsChip) chartsChip.disabled = false;
-    }
-    $("version").textContent = versionLine(brain.meta.count);
-    return scene;
   } catch (e) {
     $("version").textContent = `could not load the brain: ${(e as Error).message}`;
     throw e;
@@ -436,8 +489,12 @@ async function boot(): Promise<void> {
   // Body large and brain inset by default, remembered. Swapping is a CSS class change: no scene is rebuilt.
   layout = mountLayout($("stage"), {
     // showing the brain large from its preview means the user wants the real thing: load it (idempotent)
-    onChange: (s) => { if (s.main === "brain") openBrain(); },
+    onChange: (s) => {
+      if (shouldOpenOnChange(lastMain, s)) openBrain();
+      lastMain = s.main;
+    },
   });
+  lastMain = layout.state().main;
   $("version").textContent = versionLine(null);
   // the neuron count comes from the small meta document: it must not wait for the (on-demand) positions
   void loadBrainMeta()
@@ -450,7 +507,7 @@ async function boot(): Promise<void> {
   charts = createChartsPanel($("charts")); // charts do not need the scene
   const chat = mountChat($("chat"), {
     // Events that need the scene wait for it (gate.ensure) instead of being dropped. While it loads only the
-    // NEWEST of each kind survives: highlight and activity through their Latest tokens, the path through pathToken.
+    // NEWEST of each kind survives: highlight and activity through their Latest tokens, the path through pathOrder.
     onHighlight: (p) =>
       runLatest(latest, async () => {
         const idx = await resolveIndices(p);
@@ -462,22 +519,31 @@ async function boot(): Promise<void> {
         highlight(idx);
         setActiveChip(null);
         renderLegend(p.total);
-      }).then(() => undefined),
+      }).then(
+        (applied) => pathOrder.highlightSettled(applied), // false: a newer selection took over, its cables must not be drawn
+        (e) => {
+          pathOrder.highlightSettled(true); // a failed (not superseded) highlight still lets its path draw
+          throw e;
+        },
+      ),
     onPath: async (p) => {
-      const token = ++pathToken;
+      const token = pathOrder.begin();
+      if (token === null) return; // its own highlight was superseded
       const scene = await gate.ensure();
-      if (token !== pathToken) return; // a newer path, a new chat or a clear came meanwhile
+      if (!pathOrder.isCurrent(token)) return; // a newer path, a highlight, a recording, a new chat or a clear came meanwhile
       if (pointCount !== null && p.rows.some((r) => r >= pointCount!)) throw new Error("path row outside the brain");
       scene.setPath(p);
       pathShown = true;
-      renderActivityLegend(pathLegend(p)); // lit dot + the route's summary
+      setStage({ kind: "path", text: pathLegend(p) }); // lit dot + the route's summary
     },
     onNewChat: () => {
-      pathToken++;
-      if (!pathShown) return;
-      brainScene?.setPath(null);
-      pathShown = false;
-      renderLegend(null);
+      pathOrder.cancel();
+      if (pathShown) {
+        brainScene?.setPath(null);
+        pathShown = false;
+      }
+      const next = afterNewChat(stageHolder.current); // only a path summary is cleared, never a recording's legend
+      if (next !== stageHolder.current) setStage(next);
     },
     onActivity: async (a) => {
       // The recording is shown even if the scene cannot load (charts work); `shown` replays it into a later scene.
@@ -494,6 +560,7 @@ async function boot(): Promise<void> {
     onStreaming: (s) => {
       streaming = s;
       renderStatus(chat.model);
+      renderSimChips();
     },
   });
   mountChatToggle(document.body, $("chat")); // hide/show the panel; the conversation DOM stays mounted
@@ -502,17 +569,17 @@ async function boot(): Promise<void> {
   void loadHealth().then(() => {
     renderStatus(chat.model);
     if (health?.simulation === false) {
-      for (const b of simChips()) {
-        b.disabled = true;
-        b.title = "the simulator is not set up on this server (run flybrain-build-sim-weights)";
-      }
+      for (const b of simChips()) b.title = "the simulator is not set up on this server (run flybrain-build-sim-weights)";
     }
+    renderSimChips();
   });
   // The fly body is the default center pane; the brain preview (then the real scene, on demand) lives in the brain pane.
   const calm = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
   mountBody(layout.bodyHost, { theme, reducedMotion: calm });
   preview = mountPreview(layout.brainHost, { theme });
   openControl = mountOpenControl(layout.brainHost, gate);
+  // the layout only reports changes, never its initial state: a remembered "brain large" opens the scene here
+  if (shouldOpenOnBoot(layout.state())) openBrain();
 }
 
 void boot();
