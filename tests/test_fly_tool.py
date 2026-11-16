@@ -353,3 +353,22 @@ def test_the_prompt_routes_presets_and_conversational_commands_to_fly_not_stimul
     assert "dale" in low  # the Spanish command form of 'give'
     assert "stimulate(preset" not in low  # the competing instruction is gone
     assert "only for a selection_id" in low
+
+
+@pytest.mark.parametrize("field", ["remove", "silence", "readouts"])
+def test_the_name_lists_are_bounded(tiny_atlas, store, sims, doll, field):  # noqa: F811
+    with pytest.raises(ValueError, match=rf"{field}: at most {tools.MAX_DOLL_NAMES} names"):
+        fly(tiny_atlas, store, sims, doll, stimuli={"orn": 50}, **{field: ["orn"] * (tools.MAX_DOLL_NAMES + 1)})
+    assert doll.conditions() == {"stimuli": {}, "silenced": [], "readouts": []}
+
+
+@pytest.mark.parametrize("field", ["remove", "silence", "readouts"])
+def test_a_name_longer_than_the_limit_is_refused(tiny_atlas, store, sims, doll, field):  # noqa: F811
+    with pytest.raises(ValueError, match=rf"{field}: names are at most {tools.MAX_DOLL_NAME_LEN} characters"):
+        fly(tiny_atlas, store, sims, doll, stimuli={"orn": 50}, **{field: ["x" * (tools.MAX_DOLL_NAME_LEN + 1)]})
+    assert doll.conditions() == {"stimuli": {}, "silenced": [], "readouts": []}
+
+
+def test_a_stimulus_name_longer_than_the_limit_is_refused(tiny_atlas, store, sims, doll):  # noqa: F811
+    with pytest.raises(ValueError, match="stimuli: names are at most"):
+        fly(tiny_atlas, store, sims, doll, stimuli={"x" * (tools.MAX_DOLL_NAME_LEN + 1): 50})

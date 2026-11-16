@@ -9,8 +9,8 @@ import numpy as np
 
 from flybrain.atlas import Atlas, RowIndex, clean_filter
 from flybrain.connectome import Connectome, ConnectomeError
-from flybrain.plain import plain_description
 from flybrain.doll import Doll, describe_change
+from flybrain.plain import plain_description
 from flybrain.selections import SelectionStore
 from flybrain.simulation import StimulusSchedule
 from flybrain.stats import compare, summarize, verdict
@@ -19,6 +19,7 @@ SAMPLE_SIZE = 5
 MAX_PAGE = 25  # list_selection rows per call (a page is ~100 chars per neuron in the context)
 DEFAULT_PAGE = 20
 PAGE_FIELDS = ("root_id", "cell_type", "super_class", "side")
+DEFAULT_SEED = 0  # fixed simulation seed: the same inputs give the same run, so the cache and comparisons work
 MAX_TOP = 100  # count_neurons never shows more groups than this
 
 # tool filter name -> atlas column, for the closed sets we can list in a no-match hint
@@ -539,19 +540,21 @@ def _activity_lists(atlas: Atlas, rates: np.ndarray):
     """(active rows above ACTIVE_HZ, top responders, top non-sensory) of a run, shared by stimulate and fly."""
     active = np.flatnonzero(rates > ACTIVE_HZ)
     order = active[np.argsort(-rates[active], kind="stable")][:TOP_RESPONDERS]
-    super_classes = atlas.neurons["super_class"].to_numpy()
-    top = [{**item, "super_class": _text(super_classes[int(r)]), "rate_hz": round(float(rates[r]), 1)}
-           for item, r in zip(_label(atlas, order), order)]
     non_sensory = non_sensory_rows(atlas, active)
     non_sensory = non_sensory[np.argsort(-rates[non_sensory], kind="stable")][:TOP_NON_SENSORY]
-    top_non_sensory = [{**item, "super_class": _text(super_classes[int(r)]), "rate_hz": round(float(rates[r]), 1)}
-                       for item, r in zip(_label(atlas, non_sensory), non_sensory)]
+    super_classes = atlas.neurons["super_class"].to_numpy()
+
+    def rows_out(rows):
+        return [{**item, "super_class": _text(super_classes[int(r)]), "rate_hz": round(float(rates[r]), 1)}
+                for item, r in zip(_label(atlas, rows), rows)]
+
+    top, top_non_sensory = rows_out(order), rows_out(non_sensory)
     return active, top, top_non_sensory
 
 
 def stimulate(
     atlas: Atlas, store: SelectionStore, sims, selection_id=None, rate_hz=100, duration_ms=500, trials=None,
-    silence_selection_id=None, readout_selection_id=None, seed: int = 0, preset: str | None = None,
+    silence_selection_id=None, readout_selection_id=None, seed: int = DEFAULT_SEED, preset: str | None = None,
 ) -> dict:
     """Poisson-drive a selection (or a published preset) in the whole-brain LIF model; return a small activity summary.
 
@@ -658,7 +661,9 @@ def stimulate(
 
 # --- the doll: persistent conditions, all stimuli run together ----------------------------------
 
-DOLL_TOP = 5
+DOLL_TOP = 5  # responders listed per call: the doll answers conversationally, stimulate keeps its longer lists
+MAX_DOLL_NAMES = 20  # entries per remove/silence/readouts list
+MAX_DOLL_NAME_LEN = 64  # characters per preset name
 EXPLORATORY_NOTE = "an exploratory mapping is part of these conditions: not validated against the paper"
 
 
@@ -673,9 +678,20 @@ def _of_role(presets: dict, role: str) -> list[str]:
     return sorted(k for k, v in presets.items() if v.get("role", "stimulus") == role)
 
 
+def _bounded_names(field: str, names) -> list:
+    """The names of one fly() argument, refused loudly when there are too many or one is too long."""
+    names = list(names or ())
+    if len(names) > MAX_DOLL_NAMES:
+        raise ValueError(f"{field}: at most {MAX_DOLL_NAMES} names, got {len(names)}")
+    if any(isinstance(n, str) and len(n) > MAX_DOLL_NAME_LEN for n in names):
+        raise ValueError(f"{field}: names are at most {MAX_DOLL_NAME_LEN} characters")
+    return names
+
+
 def _check_role(presets: dict, name: str, role: str) -> None:
-    if presets.get(name, {}).get("role", "stimulus") != role or name not in presets:
-        raise ValueError(f"{name!r} is not a {role} preset; valid {role} presets: {', '.join(_of_role(presets, role))}")
+    if name in presets and presets[name].get("role", "stimulus") == role:
+        return
+    raise ValueError(f"{name!r} is not a {role} preset; valid {role} presets: {', '.join(_of_role(presets, role))}")
 
 
 def fly(
@@ -702,20 +718,23 @@ def _fly_locked(atlas, store, sims, doll, stimuli, remove, silence, readouts, re
     notes: list[str] = []
     if stimuli is not None and not isinstance(stimuli, dict):
         raise TypeError("stimuli must be a dict of preset name -> rate in Hz")
+    _bounded_names("stimuli", stimuli or {})
+    remove, silence, readouts = (_bounded_names(f, v) for f, v in
+                                 (("remove", remove), ("silence", silence), ("readouts", readouts)))
     new_stimuli = {}
     for name, rate in (stimuli or {}).items():
         key = _preset_key(name)
         _check_role(presets, key, "stimulus")
         new_stimuli[key] = _clamp("rate_hz", _number("rate_hz", rate), MIN_RATE_HZ, MAX_RATE_HZ, notes)
-    new_silence = [_preset_key(n) for n in silence or ()]
-    new_readouts = [_preset_key(n) for n in readouts or ()]
+    new_silence = [_preset_key(n) for n in silence]
+    new_readouts = [_preset_key(n) for n in readouts]
     for key in new_readouts:
         _check_role(presets, key, "readout")
     for key in [*new_stimuli, *new_silence, *new_readouts]:
         _preset_ticket(atlas, store, key)  # unknown or empty presets fail here, before any change
     duration = round(_clamp("duration_ms", _number("duration_ms", duration_ms), MIN_DURATION_MS, MAX_DURATION_MS, notes), 1)
     n_trials = _clamp("trials", _int("trials", DEFAULT_TRIALS if trials is None else trials), 1, MAX_TRIALS, notes)
-    notes += doll.apply(stimuli=new_stimuli, remove=[_preset_key(n) for n in remove or ()], silence=new_silence,
+    notes += doll.apply(stimuli=new_stimuli, remove=[_preset_key(n) for n in remove], silence=new_silence,
                         readouts=new_readouts, reset=bool(reset))
     conditions = doll.conditions()
     if not doll.has_stimulus():
@@ -749,7 +768,7 @@ def _fly_locked(atlas, store, sims, doll, stimuli, remove, silence, readouts, re
     t0 = time.perf_counter()
     with sims.exclusive():
         sims.simulation()  # lazy load; SimulationUnavailable says what to download/build
-        res, cached = sims.run_schedule(StimulusSchedule(segments), duration, n_trials, seed=0,
+        res, cached = sims.run_schedule(StimulusSchedule(segments), duration, n_trials, seed=DEFAULT_SEED,
                                         silence_rows=silence_rows, bin_ms=bin_ms)
     runtime = time.perf_counter() - t0
 

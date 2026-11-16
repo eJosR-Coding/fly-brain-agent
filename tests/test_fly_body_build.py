@@ -28,6 +28,7 @@ from flybrain.fly_body_build import (
     quantize,
     verify_sha256,
     weld,
+    write_outputs,
 )
 
 REPO = Path(__file__).resolve().parent.parent
@@ -78,6 +79,20 @@ def test_parse_stl_reads_binary_triangles():
     got = parse_stl(stl_bytes(tris))
     assert got.shape == (12, 3, 3)
     assert np.allclose(got, tris)
+
+
+def test_parse_stl_rejects_non_finite_coordinates():
+    for bad in (np.nan, np.inf, -np.inf):
+        tris = cube_tris()
+        tris[0, 0, 0] = bad
+        with pytest.raises(ValueError, match="finite"):
+            parse_stl(stl_bytes(tris))
+
+
+def test_parse_stl_rejects_a_size_that_is_not_84_plus_50_n():
+    data = stl_bytes(cube_tris())
+    with pytest.raises(ValueError, match="does not match"):
+        parse_stl(data[:-1])
 
 
 def test_parse_stl_rejects_truncated_and_empty_files():
@@ -206,6 +221,21 @@ def test_encode_is_deterministic():
     parts = [Part("c_cube", "head", "c", seg)]
     lo, hi = np.zeros(3), np.full(3, 100.0)
     assert encode_segments(parts, lo, hi) == encode_segments(parts, lo, hi)
+
+
+def test_encode_segments_handles_no_parts_and_empty_parts_without_misaligning_the_index():
+    seg = np.array([[[0.0, 0, 0], [10.0, 20, 30]]])
+    lo, hi = np.zeros(3), np.array([10.0, 20.0, 30.0])
+    assert encode_segments([], lo, hi) == (b"", [])
+    parts = [Part("c_a", "head", "c", seg), Part("c_e", "head", "c", np.zeros((0, 2, 3))),
+             Part("c_f", "head", "c", np.zeros(0)), Part("c_b", "head", "c", seg)]
+    blob, index = encode_segments(parts, lo, hi)
+    assert len(blob) == 24 and index == [(0, 1), (1, 0), (1, 0), (1, 1)]
+
+
+def test_encode_segments_refuses_a_malformed_part_loudly():
+    with pytest.raises(ValueError, match="c_bad"):
+        encode_segments([Part("c_bad", "head", "c", np.zeros((4, 3)))], np.zeros(3), np.ones(3))
 
 
 # ---- frame transform ------------------------------------------------------------------
@@ -443,3 +473,54 @@ def test_committed_mesh_matches_its_metadata_and_decodes_inside_the_line_bounds(
     segs = decode_segments(ASSET_BIN.read_bytes(), lo, hi).reshape(-1, 3)
     assert np.abs(verts.max(axis=0) - segs.max(axis=0)).max() < 5.0
     assert np.abs(verts.min(axis=0) - segs.min(axis=0)).max() < 5.0
+
+
+# ---- atomic outputs ---------------------------------------------------------------------
+
+OUT_NAMES = ("fly-body-mesh.bin", "fly-body.bin", "fly-body.json")
+
+
+def test_write_outputs_writes_the_three_files_and_leaves_no_temp_files(tmp_path):
+    write_outputs(tmp_path, b"mesh", b"bin", "{}\n")
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(OUT_NAMES)
+    assert (tmp_path / "fly-body-mesh.bin").read_bytes() == b"mesh"
+    assert (tmp_path / "fly-body.bin").read_bytes() == b"bin"
+    assert (tmp_path / "fly-body.json").read_text() == "{}\n"
+
+
+def test_an_interrupted_write_never_leaves_a_mixed_set(tmp_path, monkeypatch):
+    write_outputs(tmp_path, b"mesh0", b"bin0", "old\n")
+    import os
+
+    real_replace = os.replace
+    calls = []
+
+    def flaky(src, dst):
+        calls.append(Path(dst).name)
+        if Path(dst).name == "fly-body.json":
+            raise OSError("interrupted")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", flaky)
+    with pytest.raises(OSError):
+        write_outputs(tmp_path, b"mesh1", b"bin1", "new\n")
+    assert calls[-1] == "fly-body.json"  # the json is committed last
+    assert (tmp_path / "fly-body.json").read_text() == "old\n"  # the json still describes the old set...
+    assert not [p for p in tmp_path.iterdir() if p.name not in OUT_NAMES]  # ...and no temp file is left behind
+
+
+def test_a_failure_while_staging_leaves_the_previous_files_untouched(tmp_path, monkeypatch):
+    write_outputs(tmp_path, b"mesh0", b"bin0", "old\n")
+    real_write = Path.write_bytes
+
+    def boom(self, data):
+        if b"bin1" == data:
+            raise OSError("disk full")
+        return real_write(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", boom)
+    with pytest.raises(OSError):
+        write_outputs(tmp_path, b"mesh1", b"bin1", "new\n")
+    assert [(tmp_path / n).read_bytes() for n in OUT_NAMES[:2]] == [b"mesh0", b"bin0"]
+    assert (tmp_path / "fly-body.json").read_text() == "old\n"
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(OUT_NAMES)

@@ -82,6 +82,10 @@ Engram mirror `odd/fly-doll/tasks`: PENDING (mem_save is blocked by a hook that 
   stimuli/silence/readouts lists (tools.py:700-712), duplicated activity-rows code (tools.py:545-549), import order
   (tools.py:10-14), magic seed and DOLL_TOP (tools.py:662-663), role check reads inverted (tools.py:567-569).
   Reviewed boundary is now 92c0d8a.
+  Follow-up on feat/stack-16-review-followups: FIXED bounded input of the fly lists (20 names of 64 characters,
+  tests RED -> GREEN); FIXED duplicated activity-rows code (one local helper, stimulate output byte-identical, existing
+  test green); FIXED import order; FIXED magic seed (named DEFAULT_SEED, keyword in mcp_server) and DOLL_TOP (commented);
+  FIXED role check reads positively (no behavior change). Open: shared doll across conversations (documented, kept).
 
 ## Progress
 - 2026-11-16 created after phase 0. T1-T3 done. Next: decide how to scope the doll (per conversation / idle reset), then the pending native review of fc188ba (high risk, consent needed).

@@ -181,7 +181,11 @@ export function boundingRadius(positions: ArrayLike<number>, center: Vec3): numb
 
 /** Camera distance from `target` along the view direction (azimuth/elevation in degrees, as in body.ts) at which the
  *  vertices' projection reaches `fill` (0..1) of the limiting half-extent of the view. Exact for a perspective camera:
- *  a vertex at depth offset w toward the camera and lateral offset l needs d >= w + |l| / (fill * tan(half fov)). */
+ *  a vertex at depth offset w toward the camera and lateral offset l needs d >= w + |l| / (fill * tan(half fov)).
+ *
+ *  Guards: `aspect` is floored at 0.01 and `fill` at 0.05 so a collapsed container or a zero fill cannot divide by
+ *  zero; every vertex keeps the camera 1e-3 in front of it. Degenerate input: no vertices returns 1 (a harmless
+ *  distance); vertices all on the target (zero radius) return 1e-3, the smallest distance that keeps them in front. */
 export function viewFitDistance(
   positions: ArrayLike<number>,
   target: Vec3,

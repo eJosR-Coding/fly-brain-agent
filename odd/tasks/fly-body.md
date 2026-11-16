@@ -150,6 +150,10 @@ Engram mirror `odd/fly-body/tasks`: PENDING (mem_save is blocked by a hook that 
   written separately (not atomic, an interruption leaves an inconsistent pair); R3-002 :195-196 encode_segments edge
   case; R3-003 tests/test_fly_body_build.py:276-337 (suggestion); R3-004 :110-112 parse_stl strictness (suggestion).
   Open follow-ups. Reviewed boundary is now d5a67ad.
+  Follow-up on feat/stack-16-review-followups: FIXED R3-001 (outputs staged as temp files, os.replace, json last;
+  monkeypatched-failure tests); FIXED R3-002 (encode_segments: empty list/part and malformed shape; tests); FIXED
+  R3-004 (parse_stl rejects non-finite coordinates; the 84 + 50*n size check already existed, now tested). Committed
+  assets rebuilt from the pinned wheel: byte-identical. Open: R3-003 (test-organisation suggestion, not changed).
 - T2b+T2a slice (base d5a67ad -> 6dc522b, 909 lines, risk medium): consent granted, consolidated native review
   APPROVED, acknowledged (lineage review-3a747dd3521e020c, authority burned). 1 non-blocking WARNING, web/src/main.ts:385-390:
   `brainScene` is assigned right after createScene and the preview/control are removed before the player, inspector
@@ -162,6 +166,10 @@ Engram mirror `odd/fly-body/tasks`: PENDING (mem_save is blocked by a hook that 
   context undisposed (small leak); R3-002/R3-003 chatToggle.ts:44-48 and :39-41 focus handling around inert/hidden
   controls (focus moves on every state change); R3-004 bodyData.ts:50-55 (suggestion). Open follow-ups.
   Reviewed boundary is now 2e306a5.
+  Follow-up on feat/stack-16-review-followups: FIXED R3-001 (createBodyScene releases renderer, canvas, geometry,
+  controls and observers when its setup throws; bodyMount catch kept; tests); FIXED R3-002/R3-003 (focus moves only
+  after a user click, not at mount, from a stored preference or from toggle(); tests). Open: R3-004 (unclear
+  suggestion, not changed).
 - T2c slice (base 2e306a5 -> be52349, 696 lines, risk medium): consent granted, consolidated native review APPROVED,
   acknowledged (lineage review-86b70c3f59e0b78f, authority burned). 2 non-blocking findings: R3-001 web/src/main.ts:437-440
   (WARNING; see the lines: the layout/body/preview mounting order in boot()); R3-002 bodyData.ts:131-148 (suggestion,

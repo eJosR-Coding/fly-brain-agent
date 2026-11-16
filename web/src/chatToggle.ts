@@ -42,10 +42,11 @@ export function mountChatToggle(root: HTMLElement, chat: HTMLElement, opts: { st
     if (store === undefined) saveCollapsed(state);
     else saveCollapsed(state, store);
     render();
-    (state ? tab : hide).focus({ preventScroll: true }); // focus follows the control that is now visible
   };
-  const onHide = () => set(true);
-  const onShow = () => set(false);
+  // Focus follows the control that is now visible, but only after the user clicked one: never at mount,
+  // from a stored preference or from a programmatic toggle().
+  const onHide = () => { set(true); tab.focus({ preventScroll: true }); };
+  const onShow = () => { set(false); hide.focus({ preventScroll: true }); };
   hide.addEventListener("click", onHide);
   tab.addEventListener("click", onShow);
   render();
