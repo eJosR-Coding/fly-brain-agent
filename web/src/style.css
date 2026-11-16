@@ -61,7 +61,7 @@ button, input { font-family: inherit; }
   background: radial-gradient(ellipse 60% 55% at 50% 52%, var(--vignette-center) 0%, var(--vignette-edge) 100%); }
 #stage canvas { display: block; width: 100%; height: 100%; }
 /* placeholder picture of the brain while the real scene loads: never takes pointer events or space */
-.brain-preview { position: absolute; inset: 10%; pointer-events: none; opacity: 0; transition: opacity 0.6s ease; }
+.brain-preview { position: absolute; inset: 12% 8% 26% 8%; /* bottom margin keeps the picture clear of the control rows */  pointer-events: none; opacity: 0; transition: opacity 0.6s ease; }
 .brain-preview.on { opacity: 0.9; }
 .brain-preview canvas { object-fit: contain; image-rendering: auto; }
 @media (prefers-reduced-motion: reduce) { .brain-preview { transition: none; } }
@@ -229,6 +229,25 @@ body.has-charts #key { display: none; }
 #new-chat:hover:not(:disabled) { color: var(--fg); border-color: var(--muted); }
 #new-chat:focus-visible { outline: 1px solid var(--fg); outline-offset: 2px; }
 #new-chat:disabled { opacity: .4; cursor: default; }
+#chat-hide, #chat-show { font: 400 11px/normal var(--font-mono); letter-spacing: 1px; text-transform: uppercase; color: var(--muted);
+  background: transparent; border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 8px; cursor: pointer; white-space: nowrap; }
+#chat-hide { margin-left: 10px; flex: none; }
+#chat-hide:hover, #chat-show:hover { color: var(--fg); border-color: var(--muted); }
+#chat-hide:focus-visible, #chat-show:focus-visible { outline: 1px solid var(--fg); outline-offset: 2px; }
+/* the show tab: always reachable on the right edge, only while the chat is hidden */
+#chat-show { position: fixed; right: 0; top: 50%; z-index: 5; transform: translateY(-50%); border-right: 0;
+  border-radius: var(--radius) 0 0 var(--radius); background: var(--panel-bg); padding: 12px 8px; writing-mode: vertical-rl; display: none; }
+body.chat-collapsed #chat-show { display: block; }
+#chat { transition: transform 180ms ease, visibility 0s linear 0s; }
+@media (min-width: 721px) {
+  body.chat-collapsed { --panel-width: 0px; }
+  body.chat-collapsed #chat { visibility: hidden; transform: translateX(100%); transition: transform 180ms ease, visibility 0s linear 180ms; }
+}
+@media (max-width: 720px) {
+  /* the chat is a bottom block here: the toggle is not offered and a stored "hidden" never hides it */
+  #chat-hide, #chat-show, body.chat-collapsed #chat-show { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { #chat, body.chat-collapsed #chat { transition: none; } }
 #agent-label { font: 500 13px/normal var(--font-mono); letter-spacing: 1px; color: var(--fg); }
 #model { font: 400 11px/normal var(--font-mono); letter-spacing: 0.1px; color: var(--status-val); white-space: nowrap;
   min-width: 0; overflow: hidden; text-overflow: ellipsis; } /* long ids shrink, never push the header */

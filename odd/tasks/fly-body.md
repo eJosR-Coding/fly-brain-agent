@@ -76,6 +76,17 @@ fly itself be the interface.
       reload; a stale-cache concern after any change to the picture (ETag or a version query would fix it).
       Caveat from the writer: if loadScene throws after createScene (e.g. in createPlayer) a retry would build a
       second scene (judged rare).
+- [x] T2d collapsible agent chat (user recommendation 2026-11-16; route: delegated writer). `web/src/panelState.ts` (localStorage
+      key flybrain.chat.collapsed, try/catch, default shown) + `web/src/chatToggle.ts` (class chat-collapsed on body,
+      `inert` on the chat while collapsed, aria-expanded/aria-controls/labels, focus moves to the visible control, a
+      "hide" button in #chat-head and a vertical "AGENT" tab on the right edge while collapsed). CSS: collapsed =
+      `--panel-width: 0px` (stage and status re-anchor by themselves), chat visibility hidden + 180 ms translate, never
+      display:none or remounted; hidden on screens <= 720 px (the chat is a bottom block there). RED: 2 test files
+      failed on missing modules. GREEN: web 447 (31 files), build ok, pytest 723 (parent re-ran). Parent browser check
+      (headless Firefox with the preference seeded by a temporary page, removed): chat gone, stage full width, status
+      block re-anchored, "AGENT" tab visible. FOUND AND FIXED: in the wide collapsed stage the preview grew over the
+      control rows -> inset 12% 8% 26% 8%. NOT verified: the click itself, the transition, ESC/focus behavior.
+      Known: the preview still looks pixelated when upscaled ~4x on a wide stage (blur tried and reverted: no visible gain).
 - [ ] T3 `web/src/body.ts`: its own small scene+renderer for the fly body (LineSegments from fly-body.bin, theme
       colors, auto-rotate, orbit, dispose); pure helpers (decode, camera framing) tested.
 - [ ] T2c layout: the body takes the CENTER stage; the brain (preview first, the real scene once opened) is an INSET panel
