@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { frameDistance, type ParsedBody } from "./bodyData";
+import { viewFitDistance, type ParsedBody } from "./bodyData";
 import { createOrbitGate, orbitDefault } from "./orbit";
 import { createRenderScheduler } from "./renderScheduler";
 import type { Theme } from "./theme";
@@ -15,6 +15,8 @@ const FOV = 40;
 /** Default view: 3/4 front-left (the fly's left is +X, its face +Z), slightly above. */
 const VIEW = { azimuth: 35, elevation: 15 };
 const LINE_OPACITY = 0.6;
+/** The fly fills about this share of the pane's limiting dimension at the default view. */
+const FILL = 0.7;
 
 /** The static fly body as light line segments on the page's own background. Throws a clear Error without WebGL. */
 export function createBodyScene(
@@ -39,13 +41,9 @@ export function createBodyScene(
   const material = new THREE.LineBasicMaterial({ color: theme.highlightHex, transparent: true, opacity: LINE_OPACITY, depthWrite: false });
   scene.add(new THREE.LineSegments(geometry, material));
 
-  const size = Math.hypot(
-    body.bounds.max[0] - body.bounds.min[0],
-    body.bounds.max[1] - body.bounds.min[1],
-    body.bounds.max[2] - body.bounds.min[2],
-  );
+  const size = body.radius * 2; // farthest vertex from the centroid, doubled
   const camera = new THREE.PerspectiveCamera(FOV, 1, size / 200, size * 20);
-  const target = new THREE.Vector3(...body.center);
+  const target = new THREE.Vector3(...body.centroid);
   let invalidate = () => {};
 
   const controls = new OrbitControls(camera, renderer.domElement);
@@ -61,7 +59,7 @@ export function createBodyScene(
   controls.addEventListener("change", () => invalidate());
 
   const place = (aspect: number) => {
-    const d = frameDistance(body.bounds, FOV, aspect);
+    const d = viewFitDistance(body.positions, [target.x, target.y, target.z], VIEW.azimuth, VIEW.elevation, FOV, aspect, FILL);
     const az = (VIEW.azimuth * Math.PI) / 180;
     const el = (VIEW.elevation * Math.PI) / 180;
     camera.position.set(

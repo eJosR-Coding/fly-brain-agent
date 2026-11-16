@@ -9,6 +9,7 @@ import { mountPreview } from "./brainPreview";
 import { createBrainGate } from "./brainGate";
 import { mountOpenControl } from "./previewOpen";
 import { mountBody } from "./bodyMount";
+import { mountLayout, type Layout } from "./layoutPanes";
 import { createScene, type BrainScene } from "./scene";
 import { Latest, runLatest } from "./latest";
 import { loadLatestActivity } from "./activityLoader";
@@ -384,7 +385,7 @@ async function loadScene(): Promise<BrainScene> {
       ntTable ? loadNt(brain.meta.count, ntTable) : Promise.reject(new Error("no transmitter table in /brain/meta")),
     ]);
     const ok = <T,>(r: PromiseSettledResult<T>) => (r.status === "fulfilled" ? r.value : undefined);
-    const scene = createScene($("stage"), brain, theme, { regions: ok(regions), landmarks: ok(landmarks), nt: ok(nt) });
+    const scene = createScene(layout.brainHost, brain, theme, { regions: ok(regions), landmarks: ok(landmarks), nt: ok(nt) });
     brainScene = scene;
     pointCount = brain.meta.count;
     openControl?.remove();
@@ -401,7 +402,7 @@ async function loadScene(): Promise<BrainScene> {
       },
     });
     mountInspector({
-      stage: $("stage"),
+      stage: layout.brainHost, // the card is placed in the same box as the canvas (the brain pane), not the whole stage
       scene,
       pointCount,
       onShowPartners: (rows, label) => {
@@ -425,11 +426,18 @@ async function loadScene(): Promise<BrainScene> {
   }
 }
 
+/** The stage panes (body, brain); created first thing in boot(), before anything can ask for the real scene. */
+let layout: Layout;
 let preview: ReturnType<typeof mountPreview> | null = null;
 let openControl: ReturnType<typeof mountOpenControl> | null = null;
 
 async function boot(): Promise<void> {
   theme = readTheme();
+  // Body large and brain inset by default, remembered. Swapping is a CSS class change: no scene is rebuilt.
+  layout = mountLayout($("stage"), {
+    // showing the brain large from its preview means the user wants the real thing: load it (idempotent)
+    onChange: (s) => { if (s.main === "brain") openBrain(); },
+  });
   $("version").textContent = versionLine(null);
   // the neuron count comes from the small meta document: it must not wait for the (on-demand) positions
   void loadBrainMeta()
@@ -500,16 +508,11 @@ async function boot(): Promise<void> {
       }
     }
   });
-  // The preview stays as the whole default stage; the real scene replaces it only when asked for.
-  // ?body=1: the static fly body takes the stage. The brain preview and open control are skipped entirely
-  // (brain events from the chat still load the real scene through the gate, drawn over the body).
-  if (new URLSearchParams(location.search).get("body") === "1") {
-    const calm = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
-    mountBody($("stage"), { theme, reducedMotion: calm });
-    return;
-  }
-  preview = mountPreview($("stage"), { theme });
-  openControl = mountOpenControl($("stage"), gate);
+  // The fly body is the default center pane; the brain preview (then the real scene, on demand) lives in the brain pane.
+  const calm = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  mountBody(layout.bodyHost, { theme, reducedMotion: calm });
+  preview = mountPreview(layout.brainHost, { theme });
+  openControl = mountOpenControl(layout.brainHost, gate);
 }
 
 void boot();
