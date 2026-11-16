@@ -42,10 +42,16 @@ User approved on 2026-11-16 the core: (1) doll state, (2) combined stimuli with 
       (parent re-ran, and cross-checked the ids against the atlas). Not given a default readout: bitter, water.
       Notes: annotation drift v630 -> v783: of Shiu's 20 sugar ids present, 9 are annotated sugar and 5 high_salt;
       his water set holds 7 annotated sugar. Shiu's sets stay the reference for reproducing the paper.
-- [ ] T2 doll tool `fly`: persistent conditions (stimuli by name with rate, silenced sets, readouts), add/replace/
-      remove/reset in one call, runs ALL stimuli together through run_schedule, returns the usual summary + the
-      readouts with their meaning/validation + `change_vs_previous` (readout and active-neuron deltas) +
-      the current conditions. ONE tool to keep the tool-definition budget small. Prompt update.
+- [x] T2 doll tool `fly` (route: delegated writer). New src/flybrain/doll.py (pure state, atomic apply: reset ->
+      remove -> set), tools.fly (one StimulusSchedule segment per stimulus, own rate; silence rows unioned; shared
+      helper `_activity_lists` extracted, `stimulate` output unchanged), one Doll per MCP server (shared by all
+      conversations, lost on restart), prompt guidance. RED: collection ModuleNotFoundError; GREEN: 741 passed
+      (parent re-ran). Tool-defs budget 8500 -> 9650 (+1150; fly definition 1164 chars); prompt now ~1792 of the
+      1800-char cap (about 8 chars of headroom: the next prompt change must trim something).
+      REAL BRAIN (500 ms, 3 trials): sugar 100 -> 342 active, MN9 63.3 Hz (6.9 s); + bitter 100 -> 299 active, MN9
+      4.0 Hz (-59.3, 6.5 s; the earlier 0/24 was the 24-neuron proboscis group, MN9 is one neuron); remove bitter
+      -> back to 342 / 63.3 (cache hit); reset -> ran false; jo_ce 100 -> 219 active, abn1 (grooming) 25.3 Hz.
+      No runaway warnings. Caveat: after a reset the first run reports "removed sugar" vs the last run.
 - [ ] T3 agent evaluation on the real chat path: scripted conversation ("dale azucar", "ahora amargo", "quita el
       amargo", "reinicia", "apaga X") with 2-3 models; record rounds, seconds, tokens, correctness; fix the prompt.
 
@@ -58,4 +64,4 @@ feat/stimulate-presets (approved 2026-11-16; follow-up fix 3ff6e7d is under budg
 Engram mirror `odd/fly-doll/tasks`: PENDING (mem_save is blocked by a hook that rewrites its input).
 
 ## Progress
-- 2026-11-16 created after phase 0. T1 done. Next step: T2.
+- 2026-11-16 created after phase 0. T1, T2 done. Next step: T3 (chat evaluation).
