@@ -14,6 +14,14 @@ Pipeline (every decision is deliberate, none accidental):
 
 Binary layout of fly-body.bin: no header, little-endian, per segment 6 x uint16 = x0 y0 z0 x1 y1 z1, parts
 concatenated in the order given by fly-body.json (12 bytes per segment).
+
+A second asset, fly-body-mesh.bin, holds the welded triangle surface of ALL parts (same transforms, same
+mirror, same dropped mid-plane faces). The viewer draws it colourless into the depth buffer only, so the feature
+edges behind the surface are hidden (hidden-line look). Layout, little-endian, no header: `vertex_count` vertices
+as 3 x uint16 (x y z, quantized over the SAME bounds as fly-body.bin, one decode rule), then `triangle_count`
+triangles as 3 indices each, uint16 when vertex_count <= 65535 else uint32 (fly-body.json `mesh.index_dtype`).
+Vertices are deduplicated after quantization across all parts; `mesh.vertex_count`, `mesh.triangle_count` and
+`mesh.bytes` are in the json.
 """
 
 import argparse
@@ -56,6 +64,14 @@ class Part:
     group: str
     side: str  # c (central), l, r
     segments: np.ndarray  # (n, 2, 3) float, micrometres
+
+
+@dataclass(frozen=True)
+class MeshPart:
+    name: str
+    side: str  # c (central), l, r
+    verts: np.ndarray  # (n, 3) float, micrometres
+    faces: np.ndarray  # (m, 3) int indices into verts
 
 
 # ---- anatomy (fused trochanter+femur model, the NeuroMechFly default) -------------------
@@ -203,6 +219,51 @@ def decode_segments(blob: bytes, lo, hi) -> np.ndarray:
     return dequantize(q, lo, hi)
 
 
+def mirror_mesh_parts(parts: list[MeshPart]) -> list[MeshPart]:
+    """Central parts once, then the left parts, then their right-hand mirror images; winding is flipped."""
+    left = [p for p in parts if p.side == "l"]
+    right = [MeshPart("r" + p.name[1:], "r", mirror_y(p.verts), np.ascontiguousarray(p.faces[:, ::-1])) for p in left]
+    return [p for p in parts if p.side == "c"] + left + right
+
+
+def surface_faces(name: str, verts: np.ndarray, faces: np.ndarray, tol: float = 2.0) -> np.ndarray:
+    """The faces that belong to the visible skin: central parts lose their internal mid-plane wall."""
+    return drop_midplane_faces(verts, faces, tol) if name[0] == "c" else faces
+
+
+def assemble_mesh(parts: list[MeshPart], lo, hi):
+    """All parts -> one indexed mesh: (quantized vertices (n, 3) uint16, faces (m, 3) int).
+
+    Vertices are quantized first, then deduplicated across parts; triangles that collapse are dropped.
+    """
+    qv = np.concatenate([quantize(p.verts, lo, hi) for p in parts])
+    offsets = np.cumsum([0] + [len(p.verts) for p in parts[:-1]])
+    faces = np.concatenate([p.faces + o for p, o in zip(parts, offsets)])
+    uniq, inverse = np.unique(qv, axis=0, return_inverse=True)
+    faces = inverse.reshape(-1)[faces]
+    ok = (faces[:, 0] != faces[:, 1]) & (faces[:, 1] != faces[:, 2]) & (faces[:, 0] != faces[:, 2])
+    return uniq.astype("<u2"), faces[ok].astype(np.int64)
+
+
+def encode_mesh(qverts: np.ndarray, faces: np.ndarray):
+    """-> (blob, info): vertices as uint16 x3, then triangle indices (uint16 if they fit, else uint32)."""
+    if len(faces) and (faces.min() < 0 or faces.max() >= len(qverts)):
+        raise ValueError("mesh face index out of range")
+    dtype = "uint16" if len(qverts) <= 65535 else "uint32"
+    blob = qverts.astype("<u2").tobytes() + faces.astype("<u2" if dtype == "uint16" else "<u4").tobytes()
+    info = {"vertex_count": len(qverts), "triangle_count": len(faces), "index_dtype": dtype, "bytes": len(blob)}
+    return blob, info
+
+
+def decode_mesh(blob: bytes, info: dict, lo, hi):
+    """-> (vertices (n, 3) float um, faces (m, 3) int)."""
+    n, m = info["vertex_count"], info["triangle_count"]
+    idx = "<u2" if info["index_dtype"] == "uint16" else "<u4"
+    q = np.frombuffer(blob, dtype="<u2", count=n * 3).reshape(-1, 3)
+    faces = np.frombuffer(blob, dtype=idx, count=m * 3, offset=n * 6).reshape(-1, 3).astype(np.int64)
+    return dequantize(q, lo, hi), faces
+
+
 # ---- rigging, pose, kinematics ------------------------------------------------------------
 
 _NUM = r"[-+0-9.eE]+"
@@ -308,25 +369,31 @@ def verify_sha256(path, expected: str) -> None:
 
 def build_parts(wheel, angle_deg: float = DEFAULT_ANGLE_DEG) -> list[Part]:
     """Central + left parts in the neutral pose, world frame, micrometres (right side not yet added)."""
+    return build_parts_and_meshes(wheel, angle_deg)[0]
+
+
+def build_parts_and_meshes(wheel, angle_deg: float = DEFAULT_ANGLE_DEG):
+    """Like build_parts, plus the welded surface of every part (mid-plane faces already dropped)."""
     with zipfile.ZipFile(wheel) as z:
         rigging = parse_rigging(z.read(RIGGING_MEMBER).decode())
         order, angles = parse_pose(z.read(POSE_MEMBER).decode())
         transforms = body_transforms(rigging, PARENT, order, angles)
-        parts = []
+        parts, meshes = [], []
         for name in PART_ORDER:
             R, t = transforms[name]
             tris = parse_stl(z.read(f"{MESH_DIR}{name}.stl")) * UM_PER_M
             verts, faces = weld(tris @ R.T + t)  # world frame first: the midplane is y = 0 there
-            if name[0] == "c":
-                faces = drop_midplane_faces(verts, faces)
+            faces = surface_faces(name, verts, faces)
             parts.append(Part(name, group_of(name), name[0], feature_edges(verts, faces, angle_deg)))
-    return parts
+            meshes.append(MeshPart(name, name[0], verts, faces))
+    return parts, meshes
 
 
 def build(wheel, out_dir=DEFAULT_OUT_DIR, angle_deg: float = DEFAULT_ANGLE_DEG, expected_sha256: str = WHEEL_SHA256) -> dict:
     wheel, out_dir = Path(wheel), Path(out_dir)
     verify_sha256(wheel, expected_sha256)
-    parts = mirror_parts(build_parts(wheel, angle_deg))
+    raw_parts, raw_meshes = build_parts_and_meshes(wheel, angle_deg)
+    parts = mirror_parts(raw_parts)
     allseg = np.concatenate([p.segments for p in parts])
     lo, hi = allseg.reshape(-1, 3).min(axis=0), allseg.reshape(-1, 3).max(axis=0)
     lo, hi = np.round(lo - 0.5, 1), np.round(hi + 0.5, 1)  # fixed padding, decoder-visible
@@ -355,12 +422,20 @@ def build(wheel, out_dir=DEFAULT_OUT_DIR, angle_deg: float = DEFAULT_ANGLE_DEG, 
         },
         "note": "static micro-CT mesh of an adult female; approximate scale; not animated",
     }
+    mesh_blob, mesh_info = encode_mesh(*assemble_mesh(mirror_mesh_parts(raw_meshes), lo, hi))
+    meta["mesh"] = {
+        "file": "fly-body-mesh.bin",
+        "format": "little-endian: vertex_count x (uint16 x y z, same bounds and quantization as fly-body.bin), then "
+        "triangle_count x 3 vertex indices of index_dtype; depth-only occluder for hidden-line drawing",
+        **mesh_info,
+    }
     out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "fly-body-mesh.bin").write_bytes(mesh_blob)
     (out_dir / "fly-body.bin").write_bytes(blob)
     (out_dir / "fly-body.json").write_text(json.dumps(meta, indent=1) + "\n")
     with zipfile.ZipFile(wheel) as z:
         (out_dir / "LICENSE-neuromechfly.txt").write_bytes(z.read(LICENSE_MEMBER))
-    return {"segments": len(allseg), "bytes": len(blob), "parts": len(parts), "bounds": meta["bounds"]}
+    return {"segments": len(allseg), "bytes": len(blob), "parts": len(parts), "bounds": meta["bounds"], "mesh": mesh_info}
 
 
 def main(argv=None) -> None:
@@ -373,7 +448,7 @@ def main(argv=None) -> None:
         stats = build(args.wheel, args.out, args.angle)
     except ValueError as e:
         p.error(str(e))
-    print(f"{stats['parts']} parts, {stats['segments']:,} segments, {stats['bytes'] / 1e3:.0f} KB -> {args.out}")
+    print(f"{stats['parts']} parts, {stats['segments']:,} segments, {stats['bytes'] / 1e3:.0f} KB + mesh {stats['mesh']['bytes'] / 1e3:.0f} KB -> {args.out}")
 
 
 if __name__ == "__main__":

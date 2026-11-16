@@ -514,5 +514,13 @@
   "license": "Apache-2.0",
   "url": "https://files.pythonhosted.org/packages/40/a5/b73ded2014289b06c93fd1ce53e9b179f69f8e60ccfd6b83b5daaa0baea5/flygym-2.1.1-py3-none-any.whl"
  },
- "note": "static micro-CT mesh of an adult female; approximate scale; not animated"
+ "note": "static micro-CT mesh of an adult female; approximate scale; not animated",
+ "mesh": {
+  "file": "fly-body-mesh.bin",
+  "format": "little-endian: vertex_count x (uint16 x y z, same bounds and quantization as fly-body.bin), then triangle_count x 3 vertex indices of index_dtype; depth-only occluder for hidden-line drawing",
+  "vertex_count": 54861,
+  "triangle_count": 109130,
+  "index_dtype": "uint16",
+  "bytes": 983946
+ }
 }

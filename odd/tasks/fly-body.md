@@ -120,6 +120,19 @@ fly itself be the interface.
       pane shows only its caption because the body is WebGL (not captured). NOT verified: any WebGL look (body in the
       center, real brain in the inset), picking in the small pane, swapping with the real scene open, the 128 px offset
       against every health state, the narrow layout on a phone, the clicks themselves.
+- [x] T3b hidden-line look (user feedback 2026-11-16: the transparent wireframe read as a tangle of "nerves / connections").
+      Route: delegated writer + parent tuning. Build script now also writes `web/public/fly-body-mesh.bin` (welded triangle
+      mesh of all parts, same assembly/mirror/quantization as the lines, mid-plane faces dropped; 54,861 vertices, 109,130
+      triangles, uint16 indices, 983,946 B) and adds ONLY a `mesh` key to fly-body.json; fly-body.bin is byte-identical
+      (sha256 0810bb68...b3c2), the build is deterministic (two runs identical). Viewer: `parseBodyMesh`, `loadBody` fetches
+      the mesh (any failure -> one console.warn and the lines-only body as before), body.ts draws a depth-only occluder
+      (colorWrite false, depthWrite true, DoubleSide, renderOrder -1) before the lines (depthTest on, depthWrite off).
+      RED: ImportError (MeshPart) / 11 web failures; GREEN: pytest 731, web 508 (34 files), build ok (parent re-ran).
+      PARENT RENDER CHECK (canvas -> toDataURL image): the tangle is gone and the fly reads as a body (eye, thorax, wing,
+      legs). First render (polygon offset 1/1, opacity 0.75) was too faint and broken by z-fighting (WebGL polygon offset
+      moves only filled polygons, never lines); tuned to offset 4/4 and opacity 0.9 by eye. Still sparse on the abdomen
+      side in this 3/4 view (the folded wings cover it). Not verified: the real page, per-frame cost of 109k triangles on
+      a weak GPU, other azimuths while it auto-rotates.
 - [ ] T4 (dropped) partial lazy loading of the point layers and distance crossfade: all-or-nothing on-demand replaces it.
 - [ ] T5 (later, separate decision) animate the body from the brain readouts, labelled as our own mapping.
 Order: T1 (asset, running) -> T2b -> T2a -> T3 -> T2c.

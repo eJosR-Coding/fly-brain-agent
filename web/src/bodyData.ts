@@ -12,11 +12,28 @@ export interface BodyPartMeta {
   segment_count: number;
 }
 
+/** The optional `mesh` block of fly-body.json: layout of fly-body-mesh.bin (vertices uint16 x3, then triangle indices). */
+export interface MeshMeta {
+  file: string;
+  vertex_count: number;
+  triangle_count: number;
+  index_dtype: "uint16" | "uint32";
+  bytes: number;
+}
+
+export interface BodyMesh {
+  /** xyz per vertex, millimetres, Three.js axes */
+  positions: Float32Array;
+  /** 3 indices per triangle */
+  indices: Uint16Array | Uint32Array;
+}
+
 export interface BodyMeta {
   /** [min, max] in micrometres, fly frame: x anterior(+), y left(+), z dorsal(+) */
   bounds: [Vec3, Vec3];
   head_center_um: Vec3;
   parts: BodyPartMeta[];
+  mesh?: MeshMeta;
 }
 
 export interface BodyPart {
@@ -39,6 +56,8 @@ export interface ParsedBody {
   radius: number;
   headCenter: Vec3;
   parts: BodyPart[];
+  /** depth-only occluder surface for the hidden-line look; null when absent or failed to load */
+  mesh: BodyMesh | null;
 }
 
 const BYTES_PER_SEGMENT = 12;
@@ -83,7 +102,37 @@ export function parseBody(buffer: ArrayBuffer, meta: BodyMeta): ParsedBody {
     radius: boundingRadius(positions, mid),
     headCenter: toThree(hx * UM_TO_MM, hy * UM_TO_MM, hz * UM_TO_MM),
     parts: meta.parts.map((p) => ({ name: p.name, group: p.group, side: p.side, start: p.segment_start, count: p.segment_count })),
+    mesh: null,
   };
+}
+
+/** fly-body-mesh.bin -> positions (mm, Three axes, same decode rule as the lines) and triangle indices. */
+export function parseBodyMesh(buffer: ArrayBuffer, meta: BodyMeta): BodyMesh {
+  const info = meta.mesh;
+  if (!info) throw new Error("fly body json has no mesh block");
+  if (info.index_dtype !== "uint16" && info.index_dtype !== "uint32") throw new Error(`unknown mesh index_dtype ${String(info.index_dtype)}`);
+  const idxBytes = info.index_dtype === "uint16" ? 2 : 4;
+  const need = info.vertex_count * 6 + info.triangle_count * 3 * idxBytes;
+  if (buffer.byteLength !== need) {
+    throw new Error(`fly body mesh is ${buffer.byteLength} bytes, its metadata describes ${info.vertex_count} vertices and ${info.triangle_count} triangles (needs ${need})`);
+  }
+  const [lo, hi] = meta.bounds;
+  const view = new DataView(buffer);
+  const positions = new Float32Array(info.vertex_count * 3);
+  for (let i = 0; i < info.vertex_count; i++) {
+    const q = (a: number) => view.getUint16((i * 3 + a) * 2, true);
+    const fx = (lo[0] + (q(0) / 65535) * (hi[0] - lo[0])) * UM_TO_MM;
+    const fy = (lo[1] + (q(1) / 65535) * (hi[1] - lo[1])) * UM_TO_MM;
+    const fz = (lo[2] + (q(2) / 65535) * (hi[2] - lo[2])) * UM_TO_MM;
+    positions.set(toThree(fx, fy, fz), i * 3);
+  }
+  // slice() copies into an aligned buffer: the index block starts at an arbitrary even offset
+  const block = buffer.slice(info.vertex_count * 6);
+  const indices = info.index_dtype === "uint16" ? new Uint16Array(block) : new Uint32Array(block);
+  for (let i = 0; i < indices.length; i++) {
+    if (indices[i] >= info.vertex_count) throw new Error(`fly body mesh index ${indices[i]} is out of range (${info.vertex_count} vertices)`);
+  }
+  return { positions, indices };
 }
 
 /** The body is a static file in web/public, served from the site root (not under /api). */
@@ -94,7 +143,17 @@ export async function loadBody(fetchFn: typeof fetch = fetch, base = "/"): Promi
     return res;
   };
   const [metaRes, binRes] = await Promise.all([get("fly-body.json"), get("fly-body.bin")]);
-  return parseBody(await binRes.arrayBuffer(), (await metaRes.json()) as BodyMeta);
+  const meta = (await metaRes.json()) as BodyMeta;
+  const body = parseBody(await binRes.arrayBuffer(), meta);
+  if (meta.mesh) {
+    // the occluder is an enhancement: if it fails the body still draws, as plain lines
+    try {
+      body.mesh = parseBodyMesh(await (await get(meta.mesh.file)).arrayBuffer(), meta);
+    } catch (e) {
+      console.warn(`fly body mesh unavailable, drawing the lines only: ${(e as Error).message}`);
+    }
+  }
+  return body;
 }
 
 /** Mean of all vertices (xyz triplets); [0, 0, 0] for an empty buffer. */

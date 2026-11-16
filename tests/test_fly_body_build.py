@@ -7,7 +7,13 @@ import numpy as np
 import pytest
 
 from flybrain.fly_body_build import (
+    MeshPart,
     Part,
+    assemble_mesh,
+    decode_mesh,
+    encode_mesh,
+    mirror_mesh_parts,
+    surface_faces,
     body_transforms,
     decode_segments,
     dequantize,
@@ -335,3 +341,105 @@ def test_asset_metadata_credits_the_source_and_license_file_exists():
     assert "not animated" in meta["note"]
     lic = PUBLIC / "LICENSE-neuromechfly.txt"
     assert lic.exists() and "Apache License" in lic.read_text()
+
+
+# ---- surface mesh (hidden-line occluder) ----------------------------------------------
+
+LO, HI = np.array([-1.0, -2.0, -1.0]), np.array([3.0, 2.0, 3.0])
+
+
+def cube_mesh(size=1.0, offset=(0.0, 0.0, 0.0)):
+    return weld(cube_tris(size) + np.asarray(offset))
+
+
+def test_welded_cube_mesh_has_8_vertices_and_12_triangles():
+    verts, faces = cube_mesh()
+    assert verts.shape == (8, 3) and faces.shape == (12, 3)
+
+
+def test_mirror_mesh_parts_gives_both_sides_and_flips_winding():
+    v, f = cube_mesh(1.0, (0.0, 0.5, 0.0))
+    out = mirror_mesh_parts([MeshPart("c_a", "c", v, f), MeshPart("l_b", "l", v, f)])
+    assert [p.name for p in out] == ["c_a", "l_b", "r_b"]
+    right = out[2]
+    assert np.array_equal(right.verts[:, 1], -v[:, 1])
+    assert np.array_equal(right.faces, f[:, ::-1])  # winding flipped so normals stay outward
+
+    def volume(vv, ff):  # signed volume: positive for outward-facing triangles
+        return np.einsum("ij,ij->i", vv[ff[:, 0]], np.cross(vv[ff[:, 1]], vv[ff[:, 2]])).sum() / 6
+
+    assert np.sign(volume(right.verts, right.faces)) == np.sign(volume(v, f))
+
+
+def test_surface_faces_drops_midplane_faces_of_central_parts_only():
+    box = cube_tris(2.0) - [0.0, 1.0, 0.0]
+    septum = [[[0, 0, 0], [2, 0, 0], [2, 0, 2]]]
+    verts, faces = weld(np.concatenate([box, septum]))
+    assert len(faces) == 13
+    assert len(surface_faces("c_thorax", verts, faces, tol=0.01)) == 12
+    assert len(surface_faces("l_wing", verts, faces, tol=0.01)) == 13
+
+
+def test_assemble_mesh_merges_shared_vertices_across_parts_and_indexes_validly():
+    a, b = cube_mesh(1.0), cube_mesh(1.0, (1.0, 0.0, 0.0))  # two cubes sharing a face of 4 vertices
+    qv, faces = assemble_mesh([MeshPart("c_a", "c", *a), MeshPart("c_b", "c", *b)], LO, HI)
+    assert qv.dtype == np.uint16 and qv.shape == (12, 3)
+    assert len(faces) == 24
+    assert faces.min() >= 0 and faces.max() < len(qv)
+
+
+def test_mesh_round_trip_error_is_within_the_quantization_step():
+    v, f = cube_mesh(1.3, (0.37, -0.81, 0.11))
+    qv, faces = assemble_mesh([MeshPart("c_a", "c", v, f)], LO, HI)
+    blob, info = encode_mesh(qv, faces)
+    assert info["vertex_count"] == 8 and info["triangle_count"] == 12 and info["bytes"] == len(blob)
+    dv, df = decode_mesh(blob, info, LO, HI)
+    step = (HI - LO) / 65535
+    assert np.array_equal(df, faces)
+    # every decoded vertex sits within half a quantization step of an original vertex
+    dist = np.abs(dv[:, None, :] - v[None, :, :]).max(axis=2).min(axis=1)
+    assert (dist <= (step / 2).max() + 1e-9).all()
+
+
+def test_encode_mesh_uses_uint16_indices_when_they_fit_and_uint32_otherwise():
+    qv = np.zeros((4, 3), dtype="<u2")
+    faces = np.array([[0, 1, 2], [1, 2, 3]])
+    blob, info = encode_mesh(qv, faces)
+    assert info["index_dtype"] == "uint16" and len(blob) == 4 * 6 + 2 * 6
+    qv = np.zeros((70000, 3), dtype="<u2")
+    blob, info = encode_mesh(qv, np.array([[0, 1, 69999]]))
+    assert info["index_dtype"] == "uint32" and len(blob) == 70000 * 6 + 12
+    dv, df = decode_mesh(blob, info, np.zeros(3), np.ones(3))
+    assert df.tolist() == [[0, 1, 69999]]
+
+
+def test_encode_mesh_is_deterministic_and_rejects_bad_indices():
+    v, f = cube_mesh()
+    qv, faces = assemble_mesh([MeshPart("c_a", "c", v, f)], LO, HI)
+    assert encode_mesh(qv, faces)[0] == encode_mesh(qv, faces)[0]
+    with pytest.raises(ValueError):
+        encode_mesh(qv, np.array([[0, 1, 99]]))
+
+
+MESH_BIN = PUBLIC / "fly-body-mesh.bin"
+needs_mesh = pytest.mark.skipif(
+    not (ASSET_JSON.exists() and ASSET_BIN.exists() and MESH_BIN.exists()), reason="mesh asset not built"
+)
+
+
+@needs_mesh
+def test_committed_mesh_matches_its_metadata_and_decodes_inside_the_line_bounds():
+    meta = json.loads(ASSET_JSON.read_text())
+    info = meta["mesh"]
+    blob = MESH_BIN.read_bytes()
+    assert len(blob) == info["bytes"] <= 1_500_000
+    assert info["triangle_count"] > 50_000
+    lo, hi = np.array(meta["bounds"][0]), np.array(meta["bounds"][1])
+    verts, faces = decode_mesh(blob, info, lo, hi)
+    assert verts.shape == (info["vertex_count"], 3) and faces.shape == (info["triangle_count"], 3)
+    assert faces.min() >= 0 and faces.max() < info["vertex_count"]
+    assert (verts >= lo - 1e-6).all() and (verts <= hi + 1e-6).all()
+    # same global bounds as the line asset, and the line segments' extent matches the mesh's within the padding
+    segs = decode_segments(ASSET_BIN.read_bytes(), lo, hi).reshape(-1, 3)
+    assert np.abs(verts.max(axis=0) - segs.max(axis=0)).max() < 5.0
+    assert np.abs(verts.min(axis=0) - segs.min(axis=0)).max() < 5.0
