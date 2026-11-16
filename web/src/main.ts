@@ -3,8 +3,10 @@ import "@fontsource-variable/jetbrains-mono";
 import "./style.css";
 import { mountChat } from "./chat";
 import { parseModels } from "./models";
-import { fetchIndices, loadBrain } from "./brainData";
+import { fetchIndices, loadBrain, loadBrainMeta } from "./brainData";
 import { mountPreview } from "./brainPreview";
+import { createBrainGate } from "./brainGate";
+import { mountOpenControl } from "./previewOpen";
 import { createScene, type BrainScene } from "./scene";
 import { Latest, runLatest } from "./latest";
 import { loadLatestActivity } from "./activityLoader";
@@ -50,6 +52,12 @@ let sugarChip: HTMLButtonElement | null = null;
 let experimentChips: HTMLButtonElement[] = [];
 let waveLegend = ""; // the legend line of the wave mode (restored when switching back to it)
 let pathShown = false; // cables are on screen (the legend shows their summary)
+let pathToken = 0; // the newest path request wins while the scene is still loading
+/** The recording currently on stage; replayed into the player when the scene appears later (never lost). */
+let shown: { a: Activity; baseline: Activity | null } | null = null;
+let theme: Theme;
+/** The real scene is built only on demand (all-or-nothing, never unloaded). Everything that needs it goes through here. */
+const gate = createBrainGate<BrainScene>({ load: loadScene });
 /** Shared by chips and chat: whichever selection was requested last wins. */
 const latest = new Latest();
 /** Recordings have their own token: the newest requested one is the one shown, whatever order the loads finish in. */
@@ -70,6 +78,8 @@ export function clearAll(): void {
   brainScene?.setHighlight(null);
   brainScene?.setPath(null);
   pathShown = false;
+  pathToken++; // a path still waiting for the scene is dropped
+  shown = null;
   player?.clear();
 }
 
@@ -88,7 +98,8 @@ async function loadWithBaseline(id: string): Promise<{ a: Activity; baseline: Ac
 
 function showActivity({ a, baseline }: { a: Activity; baseline: Activity | null }, text: string): void {
   waveLegend = text;
-  player?.load(a, baseline);
+  shown = { a, baseline };
+  player?.load(a, baseline); // no player yet: loadScene replays `shown` once the scene exists
   charts?.show(a, baseline);
   if (chartsChip) chartsChip.disabled = false;
   setActiveChip(null);
@@ -97,7 +108,8 @@ function showActivity({ a, baseline }: { a: Activity; baseline: Activity | null 
 
 /** "give sugar": POST /api/simulate (no LLM), then fetch the frames and play them. */
 async function giveSugar(): Promise<void> {
-  if (simulating || !player) return;
+  if (simulating) return;
+  openBrain(); // the wave is shown on the real scene: start loading it while the simulation runs
   simulating = true;
   for (const b of simChips()) b.disabled = true;
   latest.invalidate(); // a search finishing later must not replace the wave
@@ -151,6 +163,7 @@ function showExperimentChart(c: ExperimentChart): void {
 /** The no-LLM experiment chips: the sugar -> MN9 dose-response sweep and the 8-candidate silencing screen. */
 async function runExperiment(path: "dose_response" | "screen", chip: HTMLButtonElement, label: string): Promise<void> {
   if (simulating || !charts) return;
+  openBrain();
   simulating = true;
   for (const b of simChips()) b.disabled = true;
   latest.invalidate();
@@ -259,6 +272,7 @@ function setupChips(): void {
     b.className = chip.params ? "chip" : "chip sep";
     b.textContent = chip.label;
     b.addEventListener("click", async () => {
+      if (chip.params) openBrain();
       if (!chip.params) {
         latest.invalidate();
         clearAll();
@@ -273,7 +287,9 @@ function setupChips(): void {
             const res = await fetch(`/api/neurons/search?${new URLSearchParams(chip.params!)}`);
             const body = await res.json();
             if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
-            return { body, idx: await resolveIndices(body) };
+            const idx = await resolveIndices(body);
+            await gate.ensure();
+            return { body, idx };
           },
           ({ body, idx }) => {
             highlight(idx);
@@ -348,30 +364,114 @@ async function loadModels(): Promise<ReturnType<typeof parseModels>> {
   }
 }
 
+/** Fire-and-forget open for actions whose result is replayed or tolerated without the scene (failure shows in the preview hint). */
+function openBrain(): void {
+  void gate.ensure().catch(() => undefined);
+}
+
+/** Everything that happens when the real scene is wanted: the brain, the optional layers, the scene and its wiring. */
+async function loadScene(): Promise<BrainScene> {
+  try {
+    const brain = await loadBrain();
+    // Region tones and landmarks are optional context: the cloud renders without them.
+    const table = brain.meta.regions;
+    const ntTable = brain.meta.nt;
+    const [regions, landmarks, nt] = await Promise.allSettled([
+      table ? loadRegions(brain.meta.count, table) : Promise.reject(new Error("no region table in /brain/meta")),
+      loadLandmarks(),
+      ntTable ? loadNt(brain.meta.count, ntTable) : Promise.reject(new Error("no transmitter table in /brain/meta")),
+    ]);
+    const ok = <T,>(r: PromiseSettledResult<T>) => (r.status === "fulfilled" ? r.value : undefined);
+    const scene = createScene($("stage"), brain, theme, { regions: ok(regions), landmarks: ok(landmarks), nt: ok(nt) });
+    brainScene = scene;
+    pointCount = brain.meta.count;
+    openControl?.remove();
+    preview?.remove();
+    player = createPlayer({
+      scene,
+      root: $("timeline"),
+      reducedMotion: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true,
+      speed: theme.playbackSpeed,
+      onTime: (ms) => charts?.setTime(ms),
+      onMode: (_mode, legend) => {
+        if (legend !== null) renderActivityLegend(legend);
+        else if (waveLegend) renderActivityLegend(waveLegend);
+      },
+    });
+    mountInspector({
+      stage: $("stage"),
+      scene,
+      pointCount,
+      onShowPartners: (rows, label) => {
+        latest.invalidate();
+        highlight(rows);
+        setActiveChip(null);
+        renderLegend(null, label);
+        $("legend-selected").classList.add("on");
+      },
+    });
+    setupViewChips(scene, theme, ok(regions), ok(nt));
+    if (shown) {
+      player.load(shown.a, shown.baseline); // a recording that arrived before the scene existed
+      if (chartsChip) chartsChip.disabled = false;
+    }
+    $("version").textContent = versionLine(brain.meta.count);
+    return scene;
+  } catch (e) {
+    $("version").textContent = `could not load the brain: ${(e as Error).message}`;
+    throw e;
+  }
+}
+
+let preview: ReturnType<typeof mountPreview> | null = null;
+let openControl: ReturnType<typeof mountOpenControl> | null = null;
+
 async function boot(): Promise<void> {
-  const theme = readTheme();
+  theme = readTheme();
   $("version").textContent = versionLine(null);
+  // the neuron count comes from the small meta document: it must not wait for the (on-demand) positions
+  void loadBrainMeta()
+    .then((meta) => {
+      if (!brainScene) $("version").textContent = versionLine(meta.count);
+    })
+    .catch(() => {}); // the preview and the real load report their own errors
   renderLegend(null);
   setupChips();
+  charts = createChartsPanel($("charts")); // charts do not need the scene
   const chat = mountChat($("chat"), {
+    // Events that need the scene wait for it (gate.ensure) instead of being dropped. While it loads only the
+    // NEWEST of each kind survives: highlight and activity through their Latest tokens, the path through pathToken.
     onHighlight: (p) =>
-      runLatest(latest, () => resolveIndices(p), (idx) => {
+      runLatest(latest, async () => {
+        const idx = await resolveIndices(p);
+        await gate.ensure();
+        // the point count was unknown when the event was parsed: check the range now
+        if (pointCount !== null) for (let i = 0; i < idx.length; i++) if (idx[i] >= pointCount) throw new Error(`index ${idx[i]} is outside 0..${pointCount - 1}`);
+        return idx;
+      }, (idx) => {
         highlight(idx);
         setActiveChip(null);
         renderLegend(p.total);
       }).then(() => undefined),
-    onPath: (p) => {
-      brainScene?.setPath(p);
+    onPath: async (p) => {
+      const token = ++pathToken;
+      const scene = await gate.ensure();
+      if (token !== pathToken) return; // a newer path, a new chat or a clear came meanwhile
+      if (pointCount !== null && p.rows.some((r) => r >= pointCount!)) throw new Error("path row outside the brain");
+      scene.setPath(p);
       pathShown = true;
       renderActivityLegend(pathLegend(p)); // lit dot + the route's summary
     },
     onNewChat: () => {
+      pathToken++;
       if (!pathShown) return;
       brainScene?.setPath(null);
       pathShown = false;
       renderLegend(null);
     },
     onActivity: async (a) => {
+      // The recording is shown even if the scene cannot load (charts work); `shown` replays it into a later scene.
+      openBrain();
       await loadLatestActivity(activityLatest, () => loadWithBaseline(a.simulationId), (loaded) =>
         showActivity(loaded, activityLegend(loaded.a.activeCount, loaded.a.nRows, null)));
     },
@@ -397,51 +497,9 @@ async function boot(): Promise<void> {
       }
     }
   });
-  const preview = mountPreview($("stage"), { theme });
-  try {
-    const brain = await loadBrain();
-    pointCount = brain.meta.count;
-    // Region tones and landmarks are optional context: the cloud renders without them.
-    const table = brain.meta.regions;
-    const ntTable = brain.meta.nt;
-    const [regions, landmarks, nt] = await Promise.allSettled([
-      table ? loadRegions(brain.meta.count, table) : Promise.reject(new Error("no region table in /brain/meta")),
-      loadLandmarks(),
-      ntTable ? loadNt(brain.meta.count, ntTable) : Promise.reject(new Error("no transmitter table in /brain/meta")),
-    ]);
-    const ok = <T,>(r: PromiseSettledResult<T>) => (r.status === "fulfilled" ? r.value : undefined);
-    brainScene = createScene($("stage"), brain, theme, { regions: ok(regions), landmarks: ok(landmarks), nt: ok(nt) });
-    preview.remove();
-    charts = createChartsPanel($("charts"));
-    player = createPlayer({
-      scene: brainScene,
-      root: $("timeline"),
-      reducedMotion: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true,
-      speed: theme.playbackSpeed,
-      onTime: (ms) => charts?.setTime(ms),
-      onMode: (_mode, legend) => {
-        if (legend !== null) renderActivityLegend(legend);
-        else if (waveLegend) renderActivityLegend(waveLegend);
-      },
-    });
-    mountInspector({
-      stage: $("stage"),
-      scene: brainScene,
-      pointCount,
-      onShowPartners: (rows, label) => {
-        latest.invalidate();
-        highlight(rows);
-        setActiveChip(null);
-        renderLegend(null, label);
-        $("legend-selected").classList.add("on");
-      },
-    });
-    setupViewChips(brainScene, theme, ok(regions), ok(nt));
-    $("version").textContent = versionLine(brain.meta.count);
-  } catch (e) {
-    preview.remove();
-    $("version").textContent = `could not load the brain: ${(e as Error).message}`;
-  }
+  // The preview stays as the whole default stage; the real scene replaces it only when asked for.
+  preview = mountPreview($("stage"), { theme });
+  openControl = mountOpenControl($("stage"), gate);
 }
 
 void boot();

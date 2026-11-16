@@ -14,9 +14,9 @@ import numpy as np
 HOME_AZIMUTH_DEG = 16
 HOME_ELEVATION_DEG = 10
 
-LONG_SIDE = 256  # cells on the longer side, padding included
+LONG_SIDE = 384  # cells on the longer side, padding included
 PAD = 4  # empty cells on every edge
-_GAMMA = 0.8
+_GAMMA = 0.6  # lower = brighter midtones; 384 cells with 0.6 compared best against 256/0.8 and the noisier 512 grids
 
 
 def _camera_basis() -> tuple[np.ndarray, np.ndarray, np.ndarray]:

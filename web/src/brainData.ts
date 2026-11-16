@@ -52,8 +52,13 @@ async function ok(res: Response, what: string): Promise<Response> {
   return res;
 }
 
+/** The small description of the brain (count, extent). No positions: cheap enough to ask at page load. */
+export async function loadBrainMeta(fetchFn: typeof fetch = fetch, base = "/api"): Promise<BrainMeta> {
+  return (await (await ok(await fetchFn(`${base}/brain/meta`), "brain meta")).json()) as BrainMeta;
+}
+
 export async function loadBrain(fetchFn: typeof fetch = fetch, base = "/api"): Promise<Brain> {
-  const meta = (await (await ok(await fetchFn(`${base}/brain/meta`), "brain meta")).json()) as BrainMeta;
+  const meta = await loadBrainMeta(fetchFn, base);
   const buf = await (await ok(await fetchFn(`${base}/brain/points`), "brain points")).arrayBuffer();
   if (buf.byteLength !== meta.bytes) {
     throw new Error(`brain points are ${buf.byteLength} bytes, meta says ${meta.bytes}`);

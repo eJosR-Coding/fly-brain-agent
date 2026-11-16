@@ -57,11 +57,25 @@ fly itself be the interface.
       RED: collection errors (modules missing). GREEN: pytest 723, web 418 (27 files), build ok (parent re-ran all three).
       Parent viewed the PNG decoded from the real endpoint: two optic lobes and a textured central brain, depth shading
       reads as relief. Not verified: how it looks in the real page (flip, 10% inset, alignment with the 3D home view).
-- [ ] T2a brain ON DEMAND: all-or-nothing. boot() stops awaiting the brain; the real Three.js scene (existing
-      createScene, unchanged inside) is created when the user zooms (wheel) or clicks the preview, or when a chat
-      highlight / path / activity event arrives (auto-open, the latest pending event is replayed once the scene
-      exists), with a loading state. charts/player/inspector are wired when the scene appears. Once opened it stays
-      loaded (no unload yet). Open triggers are pure functions with tests.
+- [x] T2a brain ON DEMAND (route: delegated writer + parent fixes). boot() no longer awaits the brain: the 2D preview is the
+      default stage with a focusable control (role=button, hint "zoom or click to load the neurons"); the real scene
+      (existing createScene) is created by `gate.ensure()` on wheel zoom-in, click, Enter/Space, a chat highlight/path/
+      activity event, RUN/VIEW/HIGHLIGHT chips, and replays only the latest pending event once ready. New pure
+      `web/src/brainGate.ts` (idle|loading|ready|failed, shared load, retry after failure) and `web/src/previewOpen.ts`.
+      RED: two new test files failed on missing modules. GREEN: web 436 (29 files), pytest 723, build ok (parent
+      re-ran). Untested glue in main.ts (no WebGL in this repo): loadScene wiring, the openBrain call sites, the
+      onHighlight/onPath/onActivity integration with pathToken/shown replay, pointCount re-validation.
+      PARENT BROWSER CHECK (headless Firefox, throwaway profile, a wrapper page delaying the load event 6 s): the
+      page shows the preview with the hint and no 3D scene; FOUND AND FIXED: (1) the header said "FlyWire v783 ·
+      loading" forever -> `loadBrainMeta()` (small meta JSON) fills "139,248 neurons" at boot, 2 tests RED -> GREEN;
+      (2) the preview looked pixelated and grey -> compared 4 variants on the real atlas, kept 384 cells / gamma
+      0.6 (70,276 B; 512 grids get speckled), 2 size tests updated on purpose. Verified by screenshot: the preview and
+      the header. NOT verified: clicking/zooming opens the real scene, the loading state, retry, replay of pending
+      events (headless Firefox cannot click; unit tests cover the gate and the control only).
+      Caveat: /brain/preview is cached for 1 h (like /brain/points), so a browser keeps the old image until a hard
+      reload; a stale-cache concern after any change to the picture (ETag or a version query would fix it).
+      Caveat from the writer: if loadScene throws after createScene (e.g. in createPlayer) a retry would build a
+      second scene (judged rare).
 - [ ] T3 `web/src/body.ts`: its own small scene+renderer for the fly body (LineSegments from fly-body.bin, theme
       colors, auto-rotate, orbit, dispose); pure helpers (decode, camera framing) tested.
 - [ ] T2c layout: the body takes the CENTER stage; the brain (preview first, the real scene once opened) is an INSET panel
@@ -86,4 +100,4 @@ Engram mirror `odd/fly-body/tasks`: PENDING (mem_save is blocked by a hook that 
   Open follow-ups. Reviewed boundary is now d5a67ad.
 
 ## Progress
-- 2026-11-16 created after phase 0. T1, T2b done. Next step: T2a (brain on demand).
+- 2026-11-16 created after phase 0. T1, T2b, T2a done. Next: user tries click/zoom in the real browser, then T3 (body module).

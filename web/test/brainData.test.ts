@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeBounds, decodeIndices, loadBrain } from "../src/brainData";
+import { computeBounds, decodeIndices, loadBrain, loadBrainMeta } from "../src/brainData";
 
 const meta = { count: 2, bytes: 24, dtype: "float32", endianness: "little", layout: "xyz-interleaved", order: "atlas rows", extent_um: [10, 20, 30] };
 
@@ -56,5 +56,23 @@ describe("helpers", () => {
 
   it("decodeIndices rejects a buffer that is not a multiple of 4", () => {
     expect(() => decodeIndices(new ArrayBuffer(5))).toThrow(/multiple of 4/);
+  });
+});
+
+describe("loadBrainMeta", () => {
+  it("reads only the small meta document, never the positions", async () => {
+    const seen: string[] = [];
+    const f = (async (url: string) => {
+      seen.push(url);
+      return url === "/api/brain/meta" ? new Response(JSON.stringify(meta)) : new Response("nope", { status: 404 });
+    }) as unknown as typeof fetch;
+    const m = await loadBrainMeta(f);
+    expect(m.count).toBe(2);
+    expect(seen).toEqual(["/api/brain/meta"]);
+  });
+
+  it("rejects on an http error", async () => {
+    const f = (async () => new Response("x", { status: 500 })) as unknown as typeof fetch;
+    await expect(loadBrainMeta(f)).rejects.toThrow(/brain meta failed: HTTP 500/);
   });
 });
