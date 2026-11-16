@@ -1,8 +1,9 @@
 # Fly body: zoom out of the brain and see the fly
 
 ## Objective
-In the web viewer, zoomed IN you see the neurons as today; zoomed OUT you see a 3D fly body (white lines on black,
-the app's style) with the brain sitting inside its head at real relative scale. The user asked for this on
+In the web viewer the fly body (3D, white lines on black, the app's style) is the center stage and the live brain
+is a smaller panel top-right (swappable). The first idea was a zoom in/out with the brain inside the head at real scale;
+the user proposed the two-panel layout instead (simpler, no lazy loading). The user asked for this on
 2026-11-16 ("el siguiente paso es darle cuerpo": a zoom in/out where zoomed out you see the body). The user
 rejected graphical widgets earlier (Terrarium panel); this one is the user's own idea, keep it minimal and let the
 fly itself be the interface.
@@ -36,11 +37,14 @@ fly itself be the interface.
       line-segment file `web/public/fly-body.bin` + `fly-body.json` (parts/groups, units um, head center, bounds,
       source and attribution) plus the Apache-2.0 LICENSE/NOTICE text. Resolve the frame question first. Feature
       edges only, quantized, target <= ~400 KB. Tests for parse, edges, quantize, mirror, and the committed asset.
-- [ ] T2 `web/src/lod.ts` (pure): distance -> {bodyOpacity, brainOpacity} crossfade with hysteresis; tests.
-- [ ] T3 `web/src/body.ts` + scene integration: LineSegments group placed with the head center at the brain, real
-      scale, renderOrder 0, theme colors, dispose; camera min/max distance; fade driven by lod.ts in the render
-      callback; labels hidden when the brain is faded out.
-- [ ] T4 (deferred, probably later or never) lazy loading of the point cloud: highest risk, small memory gain.
+- [ ] T2 layout (user idea 2026-11-16, replaces the zoom/LOD crossfade): the fly body takes the CENTER stage where the
+      neurons are today; the existing 3D brain scene moves into an INSET panel top-right of the stage (still the
+      same live Three.js scene, orbit/pick/highlight/activity unchanged). A swap control (click the inset) exchanges
+      the two sizes, so the full-size brain stays one click away. Verify first how createScene/resize, labels,
+      inspector picking, charts and the left controls behave when the brain container is small.
+- [ ] T3 `web/src/body.ts`: its own small scene+renderer for the fly body (LineSegments from fly-body.bin, theme
+      colors, auto-rotate, orbit, dispose); pure helpers (decode, camera framing, swap/layout decision) tested.
+- [ ] T4 (dropped) lazy loading of the point cloud and distance crossfade: not needed with two views.
 - [ ] T5 (later, separate decision) animate the body from the brain readouts, labelled as our own mapping.
 
 ## Checks
