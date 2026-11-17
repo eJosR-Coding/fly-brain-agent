@@ -100,3 +100,41 @@ describe("mountBody setPose", () => {
     expect(host.querySelector(".body-stage")).toBeNull();
   });
 });
+
+describe("mountBody setCaption", () => {
+  const fakeScene = () => ({ invalidate() {}, dispose: vi.fn(), setPose: vi.fn(), jointIds: () => [] });
+
+  it("stores a caption set before the scene exists and shows it once the scene is created", async () => {
+    const host = document.createElement("div");
+    const m = mountBody(host, { theme, load: async () => body, create: fakeScene });
+    m.setCaption("first");
+    m.setCaption("latest");
+    expect(host.querySelector(".body-caption")).toBeNull();
+    await flush();
+    expect(host.querySelector(".body-caption")?.textContent).toBe("latest");
+  });
+  it("starts with the honest default caption", async () => {
+    const host = document.createElement("div");
+    mountBody(host, { theme, load: async () => body, create: fakeScene });
+    await flush();
+    const text = host.querySelector(".body-caption")?.textContent ?? "";
+    expect(text).toContain("mapping chosen by us");
+    expect(text).not.toContain("not driven by the brain");
+  });
+  it("updates the caption after creation", async () => {
+    const host = document.createElement("div");
+    const m = mountBody(host, { theme, load: async () => body, create: fakeScene });
+    await flush();
+    m.setCaption("while running");
+    expect(host.querySelector(".body-caption")?.textContent).toBe("while running");
+  });
+  it("is a no-op after remove()", async () => {
+    const host = document.createElement("div");
+    const m = mountBody(host, { theme, load: async () => body, create: fakeScene });
+    await flush();
+    const cap = host.querySelector(".body-caption") as HTMLElement;
+    m.remove();
+    m.setCaption("late");
+    expect(cap.textContent).not.toBe("late");
+  });
+});

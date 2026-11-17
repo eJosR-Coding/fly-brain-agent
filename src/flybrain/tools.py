@@ -639,18 +639,26 @@ def stimulate(
         if readout is not None:
             out["readout_stats"] = readout_stats(base.group_trial_hz(readout), res.group_trial_hz(readout))
         notes.append("silencing runs a baseline too, so it costs 2x the runtime (same random seed for both)")
-    trace = (_readout_trace(atlas, readout, bin_ms, n_trials, store.get(readout_selection_id).description)
-             if readout is not None else None)
+    readout_description = store.get(readout_selection_id).description if readout is not None else ""
+    trace = _readout_trace(atlas, readout, bin_ms, n_trials, readout_description) if readout is not None else None
+    # a readout that came from a preset is recorded under the preset's name (the body follows readouts by name)
+    readout_name = (readout_description.removeprefix("preset ").strip().lower()
+                    if readout_description.startswith("preset ") else None)
+
+    def readouts_of(result):
+        return None if trace is None else [{"name": readout_name, **trace(result)}]
+
     run_record = dict(
         rows=res.active_rows, frames=np.minimum(res.frames, 255).astype(np.uint8), bin_ms=bin_ms,
         duration_ms=duration, trials=n_trials, stimulus=out["stimulus"], active_count=len(active),
-        silenced_rows=silence, readout=None if trace is None else trace(res),
+        silenced_rows=silence, readout=None if trace is None else trace(res), readouts=readouts_of(res),
     )
     if base is not None:  # keep the baseline too: the viewer draws the difference between the two
         base_record = dict(
             rows=base.active_rows, frames=np.minimum(base.frames, 255).astype(np.uint8), bin_ms=bin_ms,
             duration_ms=duration, trials=n_trials, stimulus=out["stimulus"],
             active_count=int((base.rate_hz > ACTIVE_HZ).sum()), readout=None if trace is None else trace(base),
+            readouts=readouts_of(base),
         )
         _, out["simulation_id"] = sims.add_pair(base_record, run_record)  # one hold: the pair cannot dangle
     else:

@@ -257,6 +257,22 @@ def test_readout_trace_names_a_preset_group_after_the_preset_and_lists_its_rows(
     assert ro["label"] == "ORN" and ro["rows"] == [62]
 
 
+def test_a_preset_readout_is_recorded_under_the_preset_name_so_the_body_can_follow_it(tiny_atlas, store, sims):
+    orn = tools.preset_selection(tiny_atlas, store, "orn", presets=PRESETS)["selection_id"]
+    rec = sims.get(run(tiny_atlas, store, sims, readout_selection_id=orn)["simulation_id"])
+    assert [r["name"] for r in rec.readouts] == ["orn"]
+    assert rec.readouts[0]["hz"] == rec.readout["hz"]
+
+
+def test_a_preset_readout_keeps_its_name_in_the_silenced_baseline_pair(tiny_atlas, store, sims):
+    orn = tools.preset_selection(tiny_atlas, store, "orn", presets=PRESETS)["selection_id"]
+    epg = ticket(tiny_atlas, store, cell_type="EPG")
+    out = run(tiny_atlas, store, sims, silence_selection_id=epg, readout_selection_id=orn)
+    rec = sims.get(out["simulation_id"])
+    assert [r["name"] for r in rec.readouts] == ["orn"]
+    assert [r["name"] for r in sims.get(rec.compare_id).readouts] == ["orn"]
+
+
 def test_readout_rows_are_capped(tiny_atlas, store, sims):
     pen = ticket(tiny_atlas, store, cell_type="PEN_a")
     ro = sims.get(run(tiny_atlas, store, sims, readout_selection_id=pen)["simulation_id"]).readout

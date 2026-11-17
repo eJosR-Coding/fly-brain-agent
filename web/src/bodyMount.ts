@@ -1,15 +1,18 @@
 /** Mounts the static fly body into a host element. Failures are swallowed (a console warning): it must never block boot. */
 import { createBodyScene, type BodyScene } from "./body";
 import { loadBody } from "./bodyData";
+import { DEFAULT_BODY_CAPTION } from "./bodyAnimation";
 import type { JointId } from "./bodyPose";
 import type { Theme } from "./theme";
 
-export const BODY_CAPTION = "static model (NeuroMechFly v2 micro-CT mesh, Apache-2.0), not driven by the brain";
+export const BODY_CAPTION = DEFAULT_BODY_CAPTION;
 
 export interface MountedBody {
   remove(): void;
   /** Joint angles in degrees; joints not listed return to rest. Safe before the scene exists (the latest pose is applied on creation); a no-op after remove(). */
   setPose(angles: Partial<Record<JointId, number>>): void;
+  /** The line under the body. Safe before the scene exists (the latest text is shown on creation); a no-op after remove(). */
+  setCaption(text: string): void;
 }
 
 export interface BodyDeps {
@@ -42,6 +45,10 @@ export function mountBody(host: HTMLElement, deps: BodyDeps): MountedBody {
     }
   })();
   return {
+    setCaption(text) {
+      if (removed) return;
+      caption.textContent = text;
+    },
     setPose(angles) {
       if (removed) return;
       pose = angles;
