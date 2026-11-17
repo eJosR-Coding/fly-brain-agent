@@ -2,6 +2,8 @@
  *  Pure decoding (no DOM, no three). Bin: per segment two endpoints, each uint16 x,y,z little-endian (12 bytes),
  *  quantized per axis over meta.bounds (um = min + q / 65535 * (max - min)). */
 
+import type { JointId } from "./bodyPose";
+
 export type Vec3 = [number, number, number];
 
 export interface BodyPartMeta {
@@ -19,6 +21,34 @@ export interface MeshMeta {
   triangle_count: number;
   index_dtype: "uint16" | "uint32";
   bytes: number;
+  /** triangle range of each part inside the concatenated triangle list (part order) */
+  parts?: Array<{ name: string; triangle_start: number; triangle_count: number }>;
+}
+
+/** One entry of the `rig` block (fly frame, micrometres), as written by the asset build. */
+export interface RigJointMeta {
+  id: string;
+  parts: string[];
+  pivot_um: Vec3;
+  axis: Vec3;
+  rest_deg?: number;
+  range_deg?: [number, number];
+  source?: string;
+}
+
+/** A joint in the viewer frame: rotation by an angle about `axis` (unit) through `pivot` (mm, Three axes). */
+export interface RigJoint {
+  id: JointId;
+  parts: string[];
+  pivot: Vec3;
+  axis: Vec3;
+}
+
+/** A contiguous range inside a per-part list (segments of the lines, or triangles of the mesh). */
+export interface PartRange {
+  name: string;
+  start: number;
+  count: number;
 }
 
 export interface BodyMesh {
@@ -34,6 +64,7 @@ export interface BodyMeta {
   head_center_um: Vec3;
   parts: BodyPartMeta[];
   mesh?: MeshMeta;
+  rig?: { units?: string; frame?: string; joints: RigJointMeta[] };
 }
 
 export interface BodyPart {
@@ -58,6 +89,10 @@ export interface ParsedBody {
   parts: BodyPart[];
   /** depth-only occluder surface for the hidden-line look; null when absent or failed to load */
   mesh: BodyMesh | null;
+  /** movable joints (empty for a body without `rig`) */
+  joints: RigJoint[];
+  /** triangle range of each part in `mesh.indices` (empty when the json has no per-part mesh ranges) */
+  meshParts: PartRange[];
 }
 
 const BYTES_PER_SEGMENT = 12;
@@ -103,7 +138,32 @@ export function parseBody(buffer: ArrayBuffer, meta: BodyMeta): ParsedBody {
     headCenter: toThree(hx * UM_TO_MM, hy * UM_TO_MM, hz * UM_TO_MM),
     parts: meta.parts.map((p) => ({ name: p.name, group: p.group, side: p.side, start: p.segment_start, count: p.segment_count })),
     mesh: null,
+    joints: parseRig(meta),
+    meshParts: (meta.mesh?.parts ?? []).map((p) => ({ name: p.name, start: p.triangle_start, count: p.triangle_count })),
   };
+}
+
+/** `rig` joints converted into the viewer frame. A joint that cannot be applied (unknown part, bad pivot or axis) is
+ *  dropped with one warning: the body then simply has no such joint and stays at rest there. */
+function parseRig(meta: BodyMeta): RigJoint[] {
+  const known = new Set(meta.parts.map((p) => p.name));
+  const out: RigJoint[] = [];
+  const isVec3 = (v: unknown): v is Vec3 => Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === "number" && Number.isFinite(n));
+  for (const j of meta.rig?.joints ?? []) {
+    const unknown = Array.isArray(j.parts) ? j.parts.filter((n) => !known.has(n)) : ["(no parts)"];
+    if (unknown.length > 0) { console.warn(`fly body joint ${j.id} dropped: unknown part ${unknown.join(", ")}`); continue; }
+    if (!isVec3(j.pivot_um) || !isVec3(j.axis)) { console.warn(`fly body joint ${j.id} dropped: malformed pivot or axis`); continue; }
+    const axis = toThree(j.axis[0], j.axis[1], j.axis[2]);
+    const len = Math.hypot(axis[0], axis[1], axis[2]);
+    if (!(len > 1e-9)) { console.warn(`fly body joint ${j.id} dropped: zero axis`); continue; }
+    out.push({
+      id: j.id as JointId,
+      parts: [...j.parts],
+      pivot: toThree(j.pivot_um[0] * UM_TO_MM, j.pivot_um[1] * UM_TO_MM, j.pivot_um[2] * UM_TO_MM),
+      axis: [axis[0] / len, axis[1] / len, axis[2] / len],
+    });
+  }
+  return out;
 }
 
 /** fly-body-mesh.bin -> positions (mm, Three axes, same decode rule as the lines) and triangle indices. */

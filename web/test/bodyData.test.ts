@@ -324,3 +324,78 @@ describe("viewFitDistance degenerate input", () => {
     expect(d).toBeGreaterThan(0);
   });
 });
+
+describe("rig parsing", () => {
+  const rigMeta = (joints: unknown[]): BodyMeta => ({
+    ...meta,
+    mesh: { file: "m.bin", vertex_count: 3, triangle_count: 2, index_dtype: "uint16", bytes: 0, parts: [
+      { name: "c_head", triangle_start: 0, triangle_count: 1 },
+      { name: "l_wing", triangle_start: 1, triangle_count: 1 },
+    ] } as MeshMeta,
+    rig: { units: "um", frame: "x", joints } as never,
+  });
+  const joint = { id: "wing_l", parts: ["l_wing"], pivot_um: [10, 20, 30], axis: [1, 0, 0], rest_deg: 0, range_deg: [0, 60], source: "geometry (our choice)" };
+
+  it("converts pivot to mm and permutes pivot and axis into the Three frame", () => {
+    const b = parseBody(good(), rigMeta([joint]));
+    expect(b.joints).toHaveLength(1);
+    expect(b.joints[0].id).toBe("wing_l");
+    expect(b.joints[0].parts).toEqual(["l_wing"]);
+    // three = (y, z, x): pivot_um [10,20,30] -> mm [0.02, 0.03, 0.01]; axis fly +x -> Three +Z
+    expect(Array.from(b.joints[0].pivot)).toEqual([0.02, 0.03, 0.01].map((v) => expect.closeTo(v, 9)));
+    expect(Array.from(b.joints[0].axis)).toEqual([0, 0, 1]);
+  });
+  it("normalizes the axis to unit length", () => {
+    const b = parseBody(good(), rigMeta([{ ...joint, axis: [0, 3, 4] }]));
+    const a = b.joints[0].axis;
+    expect(Math.hypot(a[0], a[1], a[2])).toBeCloseTo(1, 9);
+    expect(a[0]).toBeCloseTo(0.6, 9); // fly y 3/5 -> Three X
+    expect(a[1]).toBeCloseTo(0.8, 9); // fly z 4/5 -> Three Y
+  });
+  it("loads a body without rig with no joints", () => {
+    const b = parseBody(good(), meta);
+    expect(b.joints).toEqual([]);
+    expect(b.meshParts).toEqual([]);
+  });
+  it("drops a joint naming an unknown part, with one warning", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const b = parseBody(good(), rigMeta([joint, { ...joint, id: "wing_r", parts: ["r_wing_typo"] }]));
+      expect(b.joints.map((j) => j.id)).toEqual(["wing_l"]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+  it("drops a joint with a zero or malformed axis or pivot, with one warning each", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const b = parseBody(good(), rigMeta([{ ...joint, axis: [0, 0, 0] }, { ...joint, id: "wing_r", pivot_um: [1, 2] }]));
+      expect(b.joints).toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+  it("exposes the per-part triangle ranges of the mesh block", () => {
+    const b = parseBody(good(), rigMeta([joint]));
+    expect(b.meshParts).toEqual([
+      { name: "c_head", start: 0, count: 1 },
+      { name: "l_wing", start: 1, count: 1 },
+    ]);
+  });
+});
+
+describe("the committed rig", () => {
+  const m = JSON.parse(readFileSync("public/fly-body.json", "utf8")) as BodyMeta;
+  const r = readFileSync("public/fly-body.bin");
+  const body = parseBody(r.buffer.slice(r.byteOffset, r.byteOffset + r.byteLength) as ArrayBuffer, m);
+  it("loads the proboscis, antennae, wings and halteres with unit axes", () => {
+    const ids = body.joints.map((j) => j.id);
+    for (const id of ["proboscis", "antenna_l", "antenna_r", "wing_l", "wing_r", "haltere_l", "haltere_r"]) expect(ids).toContain(id);
+    for (const j of body.joints) expect(Math.hypot(...j.axis)).toBeCloseTo(1, 9);
+  });
+  it("has a triangle range for every part of the lines", () => {
+    expect(body.meshParts.map((p) => p.name)).toEqual(body.parts.map((p) => p.name));
+  });
+});
