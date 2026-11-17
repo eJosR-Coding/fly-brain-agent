@@ -441,7 +441,13 @@ export function mountChat(root: HTMLElement, opts: ChatOptions): ChatHandle {
   const paintStream = () => {
     frame = 0;
     if (streamEl) {
-      streamEl.replaceChildren(renderMarkdown(streamText));
+      // this runs inside an animation frame: a throw here would be an uncaught error, so a markdown failure shows plain text
+      try {
+        streamEl.replaceChildren(renderMarkdown(streamText));
+      } catch (e) {
+        console.error("could not render the streamed answer, showing it as plain text", e);
+        streamEl.replaceChildren(document.createTextNode(streamText));
+      }
       follow();
     }
   };

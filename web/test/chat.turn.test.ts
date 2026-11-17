@@ -70,7 +70,27 @@ describe("chat turn lifecycle", () => {
     expect(f).toHaveBeenCalledTimes(1);
   });
 
+  it("a markdown render failure while streaming is logged and falls back to plain text, never uncaught", async () => {
+    const errors: string[] = [];
+    const onError = (e: ErrorEvent) => { errors.push(e.message); e.preventDefault(); };
+    window.addEventListener("error", onError);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { q, submit } = mount();
+    const c = controlled();
+    vi.stubGlobal("fetch", async () => c.res);
+    submit("hi");
+    c.push('event: answer_delta\ndata: {"text":"BOOM"}\n\n');
+    await vi.waitFor(() => expect(q("#log").textContent).toContain("BOOM"), { timeout: 2000 }); // the raw text is shown
+    await new Promise((r) => setTimeout(r, 30));
+    window.removeEventListener("error", onError);
+    expect(errors).toEqual([]); // nothing escaped from the animation frame
+    expect(log).toHaveBeenCalled();
+    c.close();
+    log.mockRestore();
+  });
+
   it("input is re-enabled even when onDone's cleanup throws", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
     const { q, submit } = mount();
     vi.stubGlobal("fetch", async () => {
       const c = controlled();
@@ -81,6 +101,7 @@ describe("chat turn lifecycle", () => {
     submit("hi");
     await vi.waitFor(() => expect(q<HTMLInputElement>("#input").disabled).toBe(false), { timeout: 2000 });
     expect(q<HTMLButtonElement>("#send").disabled).toBe(false);
+    log.mockRestore();
   });
 
   it("events that arrive after done never touch the next turn", async () => {
