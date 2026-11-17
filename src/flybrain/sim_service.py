@@ -9,7 +9,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -68,6 +68,9 @@ class ActivityRecord:
     compare_id: str | None = None  # silenced runs: the id of the baseline recording (same stimulus and seed)
     silenced_rows: np.ndarray | None = None  # silenced runs: atlas rows whose outgoing synapses were zeroed
     readout: dict | None = None  # {"label", "neurons", "hz": mean rate of the readout group per bin}
+    # every watched readout, in order: {"name": preset name or None, "label", "neurons", "rows", "hz"};
+    # readout stays the first one's trace (without the name)
+    readouts: list = field(default_factory=list)
 
     @property
     def n_bins(self) -> int:
@@ -197,10 +200,10 @@ class SimulationService:
 
     def add(self, rows, frames, bin_ms: float, duration_ms: float, trials: int, stimulus: dict,
             active_count: int | None = None, compare_id: str | None = None, silenced_rows=None,
-            readout: dict | None = None) -> str:
+            readout: dict | None = None, readouts: list | None = None) -> str:
         with self._record_lock:
             return self._store(rows, frames, bin_ms, duration_ms, trials, stimulus, active_count, compare_id,
-                               silenced_rows, readout)
+                               silenced_rows, readout, readouts)
 
     def add_pair(self, base: dict, run: dict) -> tuple[str, str]:
         """Store a baseline and its silenced run under ONE hold of the record lock; returns (base_id, run_id).
@@ -219,18 +222,20 @@ class SimulationService:
 
     def _make_record(self, rows, frames, bin_ms: float, duration_ms: float, trials: int, stimulus: dict,
                      active_count: int | None = None, compare_id: str | None = None, silenced_rows=None,
-                     readout: dict | None = None) -> ActivityRecord:
+                     readout: dict | None = None, readouts: list | None = None) -> ActivityRecord:
         """A new record with a fresh id (not yet stored). Call with the record lock held."""
         while True:
             sim_id = f"sim_{secrets.token_hex(3)}"
             if sim_id not in self._records and sim_id not in self._expired:
                 break
+        if readouts is None:  # a single unnamed readout (stimulate) or none
+            readouts = [] if readout is None else [{"name": None, **readout}]
         return ActivityRecord(
             sim_id, np.asarray(rows, dtype="<u4"), np.asarray(frames, dtype=np.uint8),
             float(bin_ms), float(duration_ms), int(trials), dict(stimulus),
             None if active_count is None else int(active_count),
             compare_id, None if silenced_rows is None else np.asarray(silenced_rows, dtype="<u4"),
-            None if readout is None else dict(readout),
+            None if readout is None else dict(readout), [dict(r) for r in readouts],
         )
 
     def _store(self, *args) -> str:

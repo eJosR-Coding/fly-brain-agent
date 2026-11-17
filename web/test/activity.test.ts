@@ -320,6 +320,19 @@ describe("comparison fields", () => {
     expect(a.readout).toEqual({ label: "MN9", neurons: 1, rows: [7], hz: [10.5, 20] });
   });
 
+  it("parses every readout of the recording and keeps old recordings (no readouts) undefined", async () => {
+    const meta = (extra: Record<string, unknown>) =>
+      (async (url: string) =>
+        url.endsWith("/frames") ? new Response(wire([7], [[1, 3]])) : Response.json({ bin_ms: 5, n_bins: 2, n_rows: 1, duration_ms: 10, ...extra })) as unknown as typeof fetch;
+    const ro = (name: unknown, hz: unknown) => ({ name, label: "L", neurons: 2, rows: [7, 8], hz });
+    const a = await loadActivity("sim_x", meta({ readouts: [ro("mn9", [1, 2]), ro(null, [3, 4])] }));
+    expect(a.readouts).toEqual([ro("mn9", [1, 2]), ro(null, [3, 4])]);
+    expect((await loadActivity("sim_x", meta({}))).readouts).toBeUndefined();
+    expect((await loadActivity("sim_x", meta({ readouts: "nope" }))).readouts).toBeUndefined();
+    const bad = await loadActivity("sim_x", meta({ readouts: [ro("a", [1, NaN]), ro("b", ["x"]), 5, null, { name: "c" }, ro(7, [1]), ro("ok", [9])] }));
+    expect(bad.readouts).toEqual([ro("ok", [9])]);
+  });
+
   it("ignores malformed comparison fields instead of failing", async () => {
     const f = (async (url: string) =>
       url.endsWith("/frames")

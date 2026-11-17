@@ -22,8 +22,11 @@ export interface Activity {
   silencedRows: number[] | null;
   /** readout group (e.g. MN9): its mean rate per time bin, in Hz */
   readout: Readout | null;
+  /** every watched readout of the run, in order; absent for recordings made before this field existed */
+  readouts?: NamedReadout[];
 }
 
+export interface NamedReadout extends Readout { /** the preset name, null for a single unnamed readout */ name: string | null }
 export interface Readout { label: string; neurons: number; /** a few atlas rows of the group */ rows: number[]; hz: number[] }
 
 /** Decode `GET /simulations/{id}/frames`: nRows uint32 LE row indices, then nRows * nBins uint8 counts. */
@@ -217,7 +220,7 @@ export async function loadActivity(id: string, fetchFn: typeof fetch = fetch, ba
 }
 
 /** The optional comparison fields of a simulation meta; anything malformed is dropped, never fatal. */
-export function parseComparison(meta: Record<string, unknown>): Pick<Activity, "trials" | "compareId" | "silencedRows" | "readout"> {
+export function parseComparison(meta: Record<string, unknown>): Pick<Activity, "trials" | "compareId" | "silencedRows" | "readout" | "readouts"> {
   const trials = typeof meta.trials === "number" && Number.isInteger(meta.trials) && meta.trials >= 1 ? meta.trials : 1;
   const compareId = typeof meta.compare_id === "string" && meta.compare_id ? meta.compare_id : null;
   const rows = meta.silenced_rows;
@@ -230,5 +233,24 @@ export function parseComparison(meta: Record<string, unknown>): Pick<Activity, "
         rows: Array.isArray(ro.rows) ? (ro.rows as unknown[]).filter((r): r is number => typeof r === "number" && Number.isInteger(r)) : [],
       }
     : null;
-  return { trials, compareId, silencedRows, readout };
+  return { trials, compareId, silencedRows, readout, readouts: parseReadouts(meta.readouts) };
+}
+
+/** The `readouts` list of a meta: undefined when absent or not a list; malformed entries are dropped. */
+function parseReadouts(raw: unknown): NamedReadout[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: NamedReadout[] = [];
+  for (const e of raw as unknown[]) {
+    if (!e || typeof e !== "object") continue;
+    const r = e as Record<string, unknown>;
+    const name = r.name === null ? null : typeof r.name === "string" ? r.name : undefined;
+    if (name === undefined || typeof r.label !== "string") continue;
+    if (!Array.isArray(r.hz) || !r.hz.every((v) => typeof v === "number" && Number.isFinite(v))) continue;
+    out.push({
+      name, label: r.label, neurons: typeof r.neurons === "number" ? r.neurons : 0,
+      rows: Array.isArray(r.rows) ? (r.rows as unknown[]).filter((x): x is number => typeof x === "number" && Number.isInteger(x)) : [],
+      hz: r.hz as number[],
+    });
+  }
+  return out;
 }

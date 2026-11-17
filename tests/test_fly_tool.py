@@ -219,6 +219,26 @@ def test_the_run_is_recorded_for_the_viewer_with_a_readout_trace(tiny_atlas, sto
     assert rec.readout["label"] == "EPG" and rec.active_count == out["active_neurons"]
 
 
+def test_every_watched_readout_is_recorded_in_the_doll_order(tiny_atlas, store, sims, doll):
+    out = fly(tiny_atlas, store, sims, doll, stimuli={"orn": 300}, readouts=["pen0"])
+    rec = sims.get(out["simulation_id"])
+    assert [r["name"] for r in rec.readouts] == ["epg", "pen0"]  # derived first, then explicit
+    assert rec.readouts[0] == {"name": "epg", **rec.readout}  # the first is the legacy readout
+    assert rec.readouts[1]["neurons"] == 1 and len(rec.readouts[1]["hz"]) == rec.n_bins
+    assert set(rec.readouts[1]) == {"name", "label", "neurons", "rows", "hz"}
+
+
+def test_a_run_without_a_readout_records_an_empty_list(tiny_atlas, store, sims, doll):
+    out = fly(tiny_atlas, store, sims, doll, stimuli={"t4": 300})
+    rec = sims.get(out["simulation_id"])
+    assert rec.readout is None and rec.readouts == []
+
+
+def test_the_chat_result_does_not_carry_the_traces(tiny_atlas, store, sims, doll):
+    out = fly(tiny_atlas, store, sims, doll, stimuli={"orn": 300}, readouts=["pen0"])
+    assert all(set(r) == {"name", "meaning", "validation", "neurons", "mean_hz", "max_hz"} for r in out["readouts"])
+
+
 def test_a_repeated_run_is_served_from_the_cache(tiny_atlas, store, sims, doll):
     fly(tiny_atlas, store, sims, doll, stimuli={"orn": 300})
     assert fly(tiny_atlas, store, sims, doll)["cached"] is True
