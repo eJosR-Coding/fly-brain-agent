@@ -240,18 +240,29 @@ def surface_faces(name: str, verts: np.ndarray, faces: np.ndarray, tol: float = 
     return drop_midplane_faces(verts, faces, tol) if name[0] == "c" else faces
 
 
-def assemble_mesh(parts: list[MeshPart], lo, hi):
-    """All parts -> one indexed mesh: (quantized vertices (n, 3) uint16, faces (m, 3) int).
+def assemble_mesh_ranges(parts: list[MeshPart], lo, hi):
+    """All parts -> one indexed mesh plus each part's triangle range.
 
-    Vertices are quantized first, then deduplicated across parts; triangles that collapse are dropped.
+    Returns (quantized vertices (n, 3) uint16, faces (m, 3) int, [(triangle_start, triangle_count) per part]).
+    Vertices are quantized first, then deduplicated across parts; triangles that collapse are dropped. Triangles
+    stay in part order, so every part owns one contiguous range (a part that collapses completely gets count 0).
     """
     qv = np.concatenate([quantize(p.verts, lo, hi) for p in parts])
     offsets = np.cumsum([0] + [len(p.verts) for p in parts[:-1]])
     faces = np.concatenate([p.faces + o for p, o in zip(parts, offsets)])
+    owner = np.concatenate([np.full(len(p.faces), i) for i, p in enumerate(parts)])
     uniq, inverse = np.unique(qv, axis=0, return_inverse=True)
     faces = inverse.reshape(-1)[faces]
     ok = (faces[:, 0] != faces[:, 1]) & (faces[:, 1] != faces[:, 2]) & (faces[:, 0] != faces[:, 2])
-    return uniq.astype("<u2"), faces[ok].astype(np.int64)
+    counts = np.bincount(owner[ok], minlength=len(parts))
+    starts = np.cumsum(np.r_[0, counts[:-1]])
+    return uniq.astype("<u2"), faces[ok].astype(np.int64), [(int(a), int(c)) for a, c in zip(starts, counts)]
+
+
+def assemble_mesh(parts: list[MeshPart], lo, hi):
+    """All parts -> one indexed mesh: (quantized vertices (n, 3) uint16, faces (m, 3) int); see assemble_mesh_ranges."""
+    qv, faces, _ = assemble_mesh_ranges(parts, lo, hi)
+    return qv, faces
 
 
 def encode_mesh(qverts: np.ndarray, faces: np.ndarray):
@@ -367,6 +378,81 @@ def body_transforms(rigging: dict, parent: dict, order: list, angles: dict) -> d
     return cache
 
 
+# ---- rig: animatable joints ---------------------------------------------------------------
+
+RIG_FRAME = "fly frame as in the asset: x anterior, y left, z dorsal"
+GEOMETRY = "geometry (our choice)"
+# pivot = the part's own frame origin in the neutral pose (rigging.yaml pos/quat composed down the tree: the
+# socket where flygym attaches it); the hinge DIRECTION is our choice because rigging.yaml stores no axes.
+LEFT_JOINTS = [
+    # id, left parts, axis (x anterior, y left, z dorsal), range in degrees
+    ("antenna_l", ["l_pedicel", "l_funiculus", "l_arista"], (0.0, 0.0, 1.0), (-30.0, 30.0)),  # sweep about dorsal
+    ("wing_l", ["l_wing"], (0.0, 1.0, 0.0), (0.0, 60.0)),  # raise: lateral axis, the folded wing lies along -x
+    ("haltere_l", ["l_haltere"], (1.0, 0.0, 0.0), (-30.0, 30.0)),  # beat about the antero-posterior axis
+]
+PIVOT_BODY = {"antenna_l": "l_pedicel", "wing_l": "l_wing", "haltere_l": "l_haltere"}
+PROBOSCIS_AXIS = (0.0, -1.0, 0.0)  # positive angle swings the hanging proboscis forward (extension)
+PROBOSCIS_RANGE = (0.0, 60.0)
+
+
+def _clean(vec) -> list:
+    return [float(v) + 0.0 for v in np.round(np.asarray(vec, dtype=np.float64), 6)]
+
+
+def mirror_joint(joint: dict) -> dict:
+    """Right-hand twin of a left joint: pivot y flips like the mesh mirror; the axis, a rotation axis
+    (pseudovector), turns by -M so that the same angle moves both sides as mirror images."""
+    ax = np.asarray(joint["axis"], dtype=np.float64)
+    parts = ["r" + n[1:] for n in joint["parts"]]
+    px, py, pz = joint["pivot_um"]
+    return {**joint, "id": joint["id"][:-1] + "r", "parts": parts, "pivot_um": [px, -py + 0.0, pz],
+            "axis": _clean([-ax[0], ax[1], -ax[2]])}
+
+
+def build_rig(origins: dict, rostrum_verts: np.ndarray) -> dict:
+    """Joints of the animatable body, in the asset frame and units.
+
+    `origins` maps the left/central body names (c_rostrum, l_pedicel, l_wing, l_haltere) to their world frame
+    origin in micrometres; `rostrum_verts` are the world vertices of c_rostrum. Right-hand joints are mirrored.
+    """
+    joints = []
+    rv = np.asarray(rostrum_verts, dtype=np.float64)
+    z = rv[:, 2]
+    top = rv[z >= z.max() - 0.05 * (z.max() - z.min())]  # the dorsal end of the rostrum, where it joins the head
+    base = np.round([top[:, 0].mean(), 0.0, top[:, 2].mean()], 1)
+    joints.append({"id": "proboscis", "parts": ["c_rostrum", "c_haustellum"], "pivot_um": _clean(base),
+                   "axis": _clean(PROBOSCIS_AXIS), "rest_deg": 0, "range_deg": list(PROBOSCIS_RANGE), "source": GEOMETRY})
+    left = []
+    for jid, parts, axis, rng in LEFT_JOINTS:
+        pivot = np.round(np.asarray(origins[PIVOT_BODY[jid]], dtype=np.float64), 1)
+        left.append({"id": jid, "parts": parts, "pivot_um": _clean(pivot), "axis": _clean(axis), "rest_deg": 0,
+                     "range_deg": list(rng), "source": GEOMETRY})
+    by = {j["id"]: j for j in left}
+    for kind in ("antenna", "wing", "haltere"):
+        joints += [by[f"{kind}_l"], mirror_joint(by[f"{kind}_l"])]
+    # legs are not rigged: each leg is a chain of 8 links with 2-3 hinge axes per link, not one hinge
+    return {"units": "um", "frame": RIG_FRAME, "joints": joints}
+
+
+def rotate_about(points: np.ndarray, pivot, axis, angle_deg: float) -> np.ndarray:
+    """Rotate points by angle_deg (right-handed) about the unit direction of `axis` through `pivot`."""
+    k = np.asarray(axis, dtype=np.float64)
+    k = k / np.linalg.norm(k)
+    pivot = np.asarray(pivot, dtype=np.float64)
+    a = np.radians(angle_deg)
+    v = np.asarray(points, dtype=np.float64) - pivot
+    out = v * np.cos(a) + np.cross(k, v) * np.sin(a) + k * (v @ k)[..., None] * (1 - np.cos(a))
+    return out + pivot
+
+
+def body_origins(wheel) -> dict:
+    """World frame origin (micrometres, neutral pose) of every body in the kinematic tree."""
+    with zipfile.ZipFile(wheel) as z:
+        rigging = parse_rigging(z.read(RIGGING_MEMBER).decode())
+        order, angles = parse_pose(z.read(POSE_MEMBER).decode())
+    return {n: t for n, (_, t) in body_transforms(rigging, PARENT, order, angles).items()}
+
+
 # ---- build --------------------------------------------------------------------------------
 
 
@@ -453,13 +539,22 @@ def build(wheel, out_dir=DEFAULT_OUT_DIR, angle_deg: float = DEFAULT_ANGLE_DEG, 
         },
         "note": "static micro-CT mesh of an adult female; approximate scale; not animated",
     }
-    mesh_blob, mesh_info = encode_mesh(*assemble_mesh(mirror_mesh_parts(raw_meshes), lo, hi))
+    mesh_parts = mirror_mesh_parts(raw_meshes)
+    qverts, mfaces, ranges = assemble_mesh_ranges(mesh_parts, lo, hi)
+    mesh_blob, mesh_info = encode_mesh(qverts, mfaces)
     meta["mesh"] = {
         "file": "fly-body-mesh.bin",
         "format": "little-endian: vertex_count x (uint16 x y z, same bounds and quantization as fly-body.bin), then "
         "triangle_count x 3 vertex indices of index_dtype; depth-only occluder for hidden-line drawing",
         **mesh_info,
+        "parts": [
+            {"name": p.name, "triangle_start": a, "triangle_count": c} for p, (a, c) in zip(mesh_parts, ranges)
+        ],
+        "parts_note": "triangles are concatenated in part order (same order as `parts`); each part owns the "
+        "contiguous triangle range [triangle_start, triangle_start + triangle_count)",
     }
+    rostrum = next(m for m in raw_meshes if m.name == "c_rostrum")
+    meta["rig"] = build_rig(body_origins(wheel), rostrum.verts)
     out_dir.mkdir(parents=True, exist_ok=True)
     write_outputs(out_dir, mesh_blob, blob, json.dumps(meta, indent=1) + "\n")
     with zipfile.ZipFile(wheel) as z:
