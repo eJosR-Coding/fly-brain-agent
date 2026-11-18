@@ -284,3 +284,33 @@ def test_load_eyes_from_the_real_column_file_gives_two_disjoint_mirrored_eyes():
     assert set(eyes) == {"left", "right"}
     assert not set(eyes["left"].cell_rows) & set(eyes["right"].cell_rows)
     assert 700 < len(eyes["right"].p) < 1000 and len(eyes["right"].cell_rows) > 5000
+
+
+# -- calibration (CL1 calibration: temporal tuning and the rate scale) ----------------------------------------------
+
+def test_the_delay_time_constant_follows_from_the_stated_optimal_temporal_frequency():
+    # a first-order low-pass delay in a Reichardt correlator peaks at f = 1 / (2 pi tau)
+    assert fly_eye.HRC_OPTIMAL_TF_HZ == 3.0
+    assert fly_eye.TAU_LP_MS == pytest.approx(1000.0 / (2 * np.pi * fly_eye.HRC_OPTIMAL_TF_HZ), rel=1e-3)
+
+
+def test_a_low_contrast_grating_is_tuned_to_the_stated_temporal_frequency():
+    eye = patch()
+    inner = np.hypot(eye.p, eye.q) < 8
+    lam = np.radians(30.0)
+
+    def mean_drive(tf):
+        speed = np.degrees(lam) * tf
+        lum = lambda t: 0.5 + 0.05 * np.sin(2 * np.pi * (eye.h - np.radians(speed) * t) / lam)  # 10% contrast: linear regime
+        on, off = run(eye, lum, n_chunks=60, skip=30)
+        return cell_mean(eye, on, off, "T4", "a", inner)
+
+    tfs = (1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0)
+    drive = [mean_drive(f) for f in tfs]
+    assert 2.0 <= tfs[int(np.argmax(drive))] <= 3.5, dict(zip(tfs, np.round(drive, 4)))
+    assert drive[0] < 0.8 * max(drive) and drive[-1] < 0.8 * max(drive)  # band-pass, not low- or high-pass
+
+
+def test_the_rate_scale_is_a_named_constant_with_its_calibration_status():
+    assert isinstance(fly_eye.MAX_RATE_CALIBRATED, bool)
+    assert 1.0 <= fly_eye.MAX_RATE_HZ <= 300.0
