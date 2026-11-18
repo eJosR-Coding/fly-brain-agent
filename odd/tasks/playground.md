@@ -22,6 +22,12 @@ live. Requested 2026-11-18.
 ## Tasks
 - [ ] P1 kinematic body for the live session (gait phase + blending + root motion inside the cube; tests).
 - [ ] P2 glass cube sandbox in the viewer (transparent walls, floor, fly inside, objects rendered; camera).
+      Progress P2 (branch wip/pg-p2, uncommitted; includes the live viewer client G3b): web/src/bodyCube.ts (pure geometry; 50 mm
+      interior, 10x10 floor cells, 24 mm follow span), bodySandbox.ts (faint depth-tested glass faces + theme-line edges + floor
+      grid + objects layer), bodyObjects.ts (`setObjects([{id, kind: sugar|coffee, pos_mm, size_mm}])` validation), body.ts /
+      bodyMount.ts `setSandbox(on)` / `setObjects(list)`; live client liveFrames / livePlayback / liveSession / liveClient (jitter
+      buffer, own time base, close codes, no auto-reconnect), vite `/api` proxy `ws: true`; dev entry = "live (dev)" chip +
+      `window.flyLive` until P4. Web 940 tests, build and tsc clean. Not yet seen in a real browser/GPU or against a real socket.
 - [ ] P3 world state + contact: objects, contact detection (proboscis/tarsi near an object) -> taste stimulus in the live brain.
 - [ ] P4 agent tools: world actions (add sugar/coffee cubes, clear) within the tool budget; the chat drives the live world.
 - [ ] P5 caffeine neurons: identify caffeine-sensitive gustatory neurons in FlyWire with sources.

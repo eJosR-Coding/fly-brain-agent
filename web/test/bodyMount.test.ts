@@ -201,3 +201,41 @@ describe("mountBody setWorld", () => {
     expect(scene.setWorld).not.toHaveBeenCalled();
   });
 });
+
+describe("mountBody setSandbox / setObjects", () => {
+  const fakeScene = () => ({
+    invalidate() {}, dispose: vi.fn(), setSandbox: vi.fn(), setObjects: vi.fn(() => ({ errors: ["x"] })),
+  });
+  const list = [{ id: "a", kind: "sugar", pos_mm: [0, 1, 0], size_mm: 2 }];
+
+  it("applies the sandbox and the objects set before the scene exists, once, on creation", async () => {
+    const scene = fakeScene();
+    const m = mountBody(document.createElement("div"), { theme, load: async () => body, create: () => scene as never });
+    m.setSandbox(true);
+    expect(m.setObjects(list)).toEqual({ errors: [] }); // nothing to validate against yet
+    await flush();
+    expect(scene.setSandbox.mock.calls).toEqual([[true]]);
+    expect(scene.setObjects.mock.calls).toEqual([[list]]);
+  });
+  it("passes later changes straight through and returns the scene's validation errors", async () => {
+    const scene = fakeScene();
+    const m = mountBody(document.createElement("div"), { theme, load: async () => body, create: () => scene as never });
+    await flush();
+    expect(scene.setSandbox).not.toHaveBeenCalled(); // never asked for: nothing is applied
+    expect(scene.setObjects).not.toHaveBeenCalled();
+    m.setSandbox(true);
+    m.setSandbox(false);
+    expect(scene.setSandbox.mock.calls).toEqual([[true], [false]]);
+    expect(m.setObjects(list)).toEqual({ errors: ["x"] });
+  });
+  it("is a no-op after remove()", async () => {
+    const scene = fakeScene();
+    const m = mountBody(document.createElement("div"), { theme, load: async () => body, create: () => scene as never });
+    await flush();
+    m.remove();
+    m.setSandbox(true);
+    expect(m.setObjects(list)).toEqual({ errors: [] });
+    expect(scene.setSandbox).not.toHaveBeenCalled();
+    expect(scene.setObjects).not.toHaveBeenCalled();
+  });
+});
