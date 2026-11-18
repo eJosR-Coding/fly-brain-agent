@@ -1,0 +1,31 @@
+# Playground: a glass-cube world the user drives through the chat, with the full brain live
+
+## Objective
+No buttons: the user writes "dale azúcar", "dale café", "muéstrale este video", "sube la temperatura" and the agent
+changes a live world. The fly lives inside a transparent glass cube with a floor; objects (sugar or coffee cubes from a
+dispenser) appear inside; when the fly touches one, the matching taste neurons are activated and the full brain responds
+live. Requested 2026-11-18.
+
+## Real time
+- Brain: full FlyWire LIF (139k neurons) on the GPU, advanced in 20-50 ms windows (measured ~2x real time, 1 trial).
+- Body: KINEMATIC in live mode (the physics-recorded flygym gait, phase advanced and blended by the brain's forward/turn
+  drive; escape = stop + wings). Labelled "recorded physics gait, blended live". Full physics stays as an optional
+  high-fidelity mode (slower, labelled).
+- Always show the real-time factor; never fake real time.
+
+## Honesty
+- Sensory paths: sugar -> sugar GRNs (validated MN9), coffee -> caffeine-sensitive bitter GRNs (to verify with sources),
+  video -> T4/T5 motion front end (exact columns; right eye reaches DNp01), temperature -> thermosensory neurons (to measure).
+- World rules are labelled as such (glass walls stop the fly; objects fall). The brain is never replaced by rules: no
+  scripted "walk to food". If the brain does not react, show it.
+
+## Tasks
+- [ ] P1 kinematic body for the live session (gait phase + blending + root motion inside the cube; tests).
+- [ ] P2 glass cube sandbox in the viewer (transparent walls, floor, fly inside, objects rendered; camera).
+- [ ] P3 world state + contact: objects, contact detection (proboscis/tarsi near an object) -> taste stimulus in the live brain.
+- [ ] P4 agent tools: world actions (add sugar/coffee cubes, clear) within the tool budget; the chat drives the live world.
+- [ ] P5 caffeine neurons: identify caffeine-sensitive gustatory neurons in FlyWire with sources.
+- [ ] P6 later: video input (link/mp4 -> motion -> T4/T5) and temperature (thermosensory neurons, measured first).
+
+## Checks
+TDD strict. `uv run pytest -q`, `pnpm -C web test`, `pnpm -C web build`. Depends on G3a (live session backend).

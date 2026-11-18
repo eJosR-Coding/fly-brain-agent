@@ -101,6 +101,43 @@ class SimResult:
         return dense
 
 
+@dataclass
+class ChunkSpikes:
+    """Spikes of ONE live chunk (a `BrainStream.advance`): only neurons that spiked, one trial."""
+
+    active_rows: np.ndarray  # (k,) int64, sorted
+    counts: np.ndarray  # (k,) int32, spikes of each active row inside the chunk
+    duration_ms: float
+
+    def group_hz(self, rows) -> float:
+        """Mean rate (Hz per neuron) of a neuron group over the chunk; rows that never spiked count as silent."""
+        idx = np.asarray(list(rows), dtype=np.int64)
+        if not len(idx) or not self.duration_ms > 0:
+            return 0.0
+        spikes = int(self.counts[np.isin(self.active_rows, idx)].sum())
+        return spikes / (len(idx) * self.duration_ms / 1000.0)
+
+
+class _TrialState:
+    """Everything one trial carries from tick to tick: membrane, synaptic g, refractory counters, the delay ring."""
+
+    def __init__(self, sim: "Simulation", stim, rng) -> None:
+        n, p = sim.n, sim.params
+        self.rng = rng
+        self.k = 0  # next tick to run (absolute: ring slot and epoch bounds are relative to it)
+        self.v = np.full(n, p.v0)
+        self.g = np.zeros(n)
+        self.rfc = np.empty(n, dtype=np.int16)
+        self.set_poisson_targets(sim, stim)
+        self.left = np.zeros(n, dtype=np.int16)  # refractory ticks remaining
+        self.pending = [np.empty(0, dtype=np.int64)] * sim._delay  # spikes waiting for their delay
+
+    def set_poisson_targets(self, sim: "Simulation", stim) -> None:
+        # Brian2 blocks ticks s+1 .. s+rfc-1 after a spike at tick s (ready again at s+rfc)
+        self.rfc[:] = sim._rfc - 1
+        self.rfc[stim] = 0  # Poisson targets have no refractory period
+
+
 class StimulusSchedule:
     """Piecewise-constant Poisson drive: segments `(start_ms, end_ms, rows, rate_hz)`.
 
@@ -388,19 +425,23 @@ class Simulation:
         return active, frames
 
     def _trial(self, stim, epochs, n_steps, rng, silenced, counts, events, bin_steps) -> None:
-        p, n = self.params, self.n
-        v = np.full(n, p.v0)
-        g = np.zeros(n)
-        # Brian2 blocks ticks s+1 .. s+rfc-1 after a spike at tick s (ready again at s+rfc)
-        rfc = np.full(n, self._rfc - 1, dtype=np.int16)  # 0 for Poisson targets
-        rfc[stim] = 0
-        left = np.zeros(n, dtype=np.int16)  # refractory ticks remaining
-        kick = p.w_syn * p.f_poi
-        epochs = list(epochs)  # consumed front to back as ticks advance
-        epoch = 0
-        pending = [np.empty(0, dtype=np.int64)] * self._delay  # spikes waiting for their delay
+        state = _TrialState(self, stim, rng)
         trial_keys: list[np.ndarray] = []
-        for k in range(n_steps):
+        self._advance(state, epochs, n_steps, silenced, counts, trial_keys if events is not None else None, bin_steps)
+        if events is not None and trial_keys:
+            events.append(np.concatenate(trial_keys))
+
+    def _advance(self, state: _TrialState, epochs, k_end: int, silenced, counts, trial_keys, bin_steps) -> None:
+        """Run ticks `state.k .. k_end - 1` (the one loop of every run AND of every live chunk).
+
+        `epochs` = [(first tick, end tick, rows, per-tick event prob)] in absolute ticks, consumed front to back.
+        Spike counts add into `counts`; with `trial_keys` the (bin * n + row) key of every spike is appended."""
+        p, n = self.params, self.n
+        v, g, left, rfc, rng, pending = state.v, state.g, state.left, state.rfc, state.rng, state.pending
+        kick = p.w_syn * p.f_poi
+        epochs = list(epochs)
+        epoch = 0
+        for k in range(state.k, k_end):
             ready = left == 0
             left -= ~ready  # one refractory tick used up
             v = np.where(ready, p.v0 + (v - p.v0) * self._decay_v + g * self._drive, v)
@@ -419,10 +460,13 @@ class Simulation:
                 g[spikes] = 0.0
                 left[spikes] = rfc[spikes]
                 counts[spikes] += 1
-                if events is not None:
+                if trial_keys is not None:
                     trial_keys.append((k // bin_steps) * n + spikes)
-        if events is not None and trial_keys:
-            events.append(np.concatenate(trial_keys))
+        state.v, state.g, state.k = v, g, max(state.k, k_end)
+
+    def open_stream(self, seed: int = 0, silenced=None) -> "BrainStream":
+        """A live session over this brain: state kept between `advance` calls (1 trial). See BrainStream."""
+        return BrainStream(self, seed, silenced)
 
     def _deliver(self, src: np.ndarray, g: np.ndarray, ready: np.ndarray) -> None:
         """g[post] += weight * w_syn for every outgoing edge of the neurons in `src`.
@@ -441,3 +485,53 @@ class Simulation:
         w = self._counts[offs] * self.params.w_syn
         live = ready[post]
         np.add.at(g, post[live], w[live])
+
+
+class BrainStream:
+    """The brain as a live process: `set_stimulus` any time, `advance(ms)` returns the chunk's spikes.
+
+    It owns ONE trial state and runs the very same tick loop as `Simulation.run` (`_advance`), so a stream with a
+    constant stimulus is bit-identical to a one-shot run with the same seed. Not thread-safe: one caller at a time.
+    Rows with a stimulus are Poisson targets (no refractory period); when the stimulus changes, only the current
+    rows are, as in `run`. Silencing zeroes outgoing weights of `silenced` rows for the whole session."""
+
+    backend = "cpu"
+
+    def __init__(self, sim: Simulation, seed: int = 0, silenced=None) -> None:
+        self.sim = sim
+        self._silenced = np.zeros(sim.n, dtype=bool)
+        self._silenced[sim._rows(silenced, "silenced")] = True
+        self._state = _TrialState(sim, np.empty(0, dtype=np.int64), np.random.default_rng(np.random.SeedSequence(seed).spawn(1)[0]))
+        self._rows = np.empty(0, dtype=np.int64)
+        self._p_event = 0.0
+        self.stimulus: tuple[np.ndarray, float] | None = None
+
+    @property
+    def t_ms(self) -> float:
+        return self._state.k * self.sim.params.dt
+
+    def set_stimulus(self, rows, rate_hz: float) -> None:
+        """Poisson-drive `rows` at `rate_hz` from now on (None, no rows or 0 Hz = no drive). Validated first."""
+        p = self.sim.params
+        arr = self.sim._rows(rows, "stimulus")
+        if not np.isfinite(rate_hz) or not 0 <= rate_hz <= 1000.0 / p.dt:
+            raise SimulationError(f"rate_hz must be within 0..{1000.0 / p.dt:g}, got {rate_hz}")
+        self._rows, self._p_event = arr, rate_hz * p.dt / 1000.0
+        self.stimulus = (arr, float(rate_hz)) if len(arr) and rate_hz > 0 else None
+        self._on_stimulus(arr)
+
+    def _on_stimulus(self, rows: np.ndarray) -> None:
+        self._state.set_poisson_targets(self.sim, rows)
+
+    def advance(self, ms: float) -> ChunkSpikes:
+        """Simulate the next `ms` (a multiple of dt) and return the chunk's spike counts."""
+        sim, st = self.sim, self._state
+        n_steps = _steps(ms, sim.params.dt, "advance ms")
+        counts = np.zeros(sim.n, dtype=np.int32)
+        epochs = [(st.k, st.k + n_steps, self._rows, np.full(len(self._rows), self._p_event))] if self.stimulus else []
+        sim._advance(st, epochs, st.k + n_steps, self._silenced, counts, None, None)
+        active = np.flatnonzero(counts).astype(np.int64)
+        return ChunkSpikes(active, counts[active], float(ms))
+
+    def close(self) -> None:
+        """Nothing to free on the CPU (the GPU stream releases its device state)."""

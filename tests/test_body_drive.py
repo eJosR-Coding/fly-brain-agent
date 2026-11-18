@@ -134,3 +134,46 @@ def test_as_dict_is_json_serialisable():
     import json
     d = run([ro("DNg100", flat(60))])
     json.dumps(d.as_dict())
+
+
+# -- streaming mapper (live session): one sample per chunk, smoothing state carried across chunks -------------------
+
+def _traces(n=40, seed=0):
+    rng = np.random.default_rng(seed)
+    out = {name: rng.uniform(0, 60, n) * (rng.random(n) > 0.3) for name in bd.READOUT_NAMES}
+    out[bd.ESCAPE_NAME][:25] = 0.0  # escape only late, to cover both branches
+    return out
+
+
+def test_drive_mapper_matches_the_batch_mapping_chunk_by_chunk():
+    traces = _traces()
+    batch = bd.drive_from_readouts([{"name": k, "hz": list(v)} for k, v in traces.items()], bin_ms=50.0)
+    mapper = bd.DriveMapper(chunk_ms=50.0)
+    for i in range(40):
+        out = mapper.step({k: v[i] for k, v in traces.items()})
+        assert np.allclose(out.drive, batch.drive[i]) and out.escape == bool(batch.escape[i])
+        assert out.forward == pytest.approx(batch.forward[i]) and out.turn == pytest.approx(batch.turn[i])
+        assert out.escape_strength == pytest.approx(batch.escape_strength[i])
+    assert batch.escape.any() and (batch.drive == 0).all(axis=1).any()
+
+
+def test_drive_mapper_smooths_across_chunks_and_missing_readouts_are_zero():
+    m = bd.DriveMapper(chunk_ms=50.0)
+    first = m.step({"dng100": 40.0})
+    a = 1 - np.exp(-50 / bd.SMOOTH_TAU_MS)
+    assert first.forward == pytest.approx((a * 40.0 - bd.FORWARD_THRESHOLD_HZ) / (bd.FORWARD_SATURATION_HZ - bd.FORWARD_THRESHOLD_HZ))
+    second = m.step({"dng100": 40.0})
+    assert second.forward > first.forward  # still charging: the state lives in the mapper
+    assert m.step({}).escape is False
+
+
+def test_drive_mapper_reset_forgets_the_smoothing_state():
+    m = bd.DriveMapper(chunk_ms=50.0)
+    m.step({"dng100": 40.0})
+    m.reset()
+    assert m.step({"dng100": 0.0}).drive.tolist() == [0.0, 0.0]
+
+
+def test_drive_mapper_rejects_a_bad_chunk():
+    with pytest.raises(ValueError):
+        bd.DriveMapper(chunk_ms=0)

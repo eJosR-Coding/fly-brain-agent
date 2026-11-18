@@ -88,16 +88,44 @@ def thorax_relative(pos_mm: np.ndarray, quat: np.ndarray, thorax: int):
     return rel_pos, rel_quat
 
 
-def continuous(quats: np.ndarray) -> np.ndarray:
-    """Flip signs so consecutive frames of each body stay in one hemisphere (q and -q are the same rotation),
-    then make the FIRST frame w >= 0. Needed so the viewer's slerp never takes the long way round."""
+def continuous(quats: np.ndarray, prev: np.ndarray | None = None) -> np.ndarray:
+    """Flip signs so consecutive frames of each body stay in one hemisphere (q and -q are the same rotation).
+
+    Without `prev` the FIRST frame is then made w >= 0 (needed so the viewer's slerp never takes the long way round).
+    With `prev` (the last frame of the previous chunk, (bodies, 4)) the chunk continues that hemisphere instead."""
     out = quats.copy()
+    if prev is not None:
+        flip = np.sum(out[0] * prev, axis=-1) < 0
+        out[0][flip] *= -1
     for t in range(1, len(out)):
         flip = np.sum(out[t] * out[t - 1], axis=-1) < 0
         out[t][flip] *= -1
-    flip0 = out[0, :, 0] < 0
-    out[:, flip0] *= -1
+    if prev is None:
+        flip0 = out[0, :, 0] < 0
+        out[:, flip0] *= -1
     return out
+
+
+def unwrap_continue(raw_deg, last_raw: float | None, last_abs: float | None):
+    """Unwrap wrapped headings (degrees) of one chunk, continuing the previous chunk's unwrapped heading.
+
+    Returns (unwrapped, last raw, last unwrapped); pass the last two back with the next chunk (None at the start)."""
+    raw = np.asarray(raw_deg, dtype=float)
+    if raw.size == 0:
+        return raw, last_raw, last_abs
+    prev_raw = raw[0] if last_raw is None else last_raw
+    base = raw[0] if last_abs is None else last_abs
+    step = np.diff(np.concatenate([[prev_raw], raw]))
+    out = base + np.cumsum((step + 180.0) % 360.0 - 180.0)
+    return out, float(raw[-1]), float(out[-1])
+
+
+def chunk_frames(ms: float) -> int:
+    """Clip frames in a chunk of `ms` (must be a whole number of 200 Hz frames)."""
+    n = ms / 1000.0 * SAMPLE_HZ if isinstance(ms, (int, float)) and math.isfinite(ms) else 0.0
+    if n < 1 or abs(n - round(n)) > 1e-6:
+        raise ValueError(f"a chunk must be a whole number of {1000 // SAMPLE_HZ} ms frames, got {ms}")
+    return int(round(n))
 
 
 def yaw_deg(thorax_quat: np.ndarray) -> np.ndarray:
@@ -222,6 +250,15 @@ def control_step(rig: SimpleNamespace, ctl, drive) -> object:
     return action
 
 
+def sample_frame(rig: SimpleNamespace):
+    """The pose now: (leg-body positions um, leg-body quats, both thorax-relative; thorax world position mm and quat;
+    per-leg ground contact). The one sampling code of the clip runner and the live stream."""
+    bp, bq = rig.sim.get_body_positions(rig.fly.name), rig.sim.get_body_rotations(rig.fly.name)
+    p, q = thorax_relative(bp, bq, rig.thorax)
+    contact = np.asarray(rig.sim.get_ground_contact_info(rig.fly.name)[0]) > 0
+    return p[rig.idx], q[rig.idx], bp[rig.thorax].copy(), np.asarray(bq[rig.thorax], float).copy(), contact
+
+
 # ---- the runner ----
 
 def run_body(drive_bins, bin_ms: float, duration_ms: float, seed: int = 0, escape=None, dt_s: float = None) -> dict:
@@ -251,12 +288,11 @@ def run_body(drive_bins, bin_ms: float, duration_ms: float, seed: int = 0, escap
     for i in range(n_steps):
         action = control_step(rig, ctl, sched[i])
         if i % stride == 0:
-            bp, bq = sim.get_body_positions(rig.fly.name), sim.get_body_rotations(rig.fly.name)
-            p, q = thorax_relative(bp, bq, rig.thorax)
-            pos.append(p[rig.idx]); quat.append(q[rig.idx])
+            p, q, t_mm, t_q, touching = sample_frame(rig)
+            pos.append(p); quat.append(q)
             adhesion.append(np.asarray(action.adhesion_onoff, bool))
-            contact.append(np.asarray(sim.get_ground_contact_info(rig.fly.name)[0]) > 0)
-            thorax_mm.append(bp[rig.thorax].copy()); thorax_q.append(np.asarray(bq[rig.thorax], float).copy())
+            contact.append(touching)
+            thorax_mm.append(t_mm); thorax_q.append(t_q)
             esc_f.append(bool(esc[i])); drive_f.append(sched[i].copy())
     pos = np.array(pos); quat = continuous(np.array(quat))
     flip = np.sum(neutral_quat * quat[0], axis=-1) < 0
@@ -303,3 +339,83 @@ def run_body(drive_bins, bin_ms: float, duration_ms: float, seed: int = 0, escap
             "note": "The descending drive comes from OUR mapping of brain readouts (flybrain.body_drive); no takeoff model.",
         },
     }
+
+
+# ---- the live stream ----
+
+class BodyStream:
+    """The physics body as a live process: keeps the flygym simulation and the controller alive between chunks.
+
+    `advance(ms, drive, escape)` steps the body by a chunk (a whole number of 5 ms frames) under a CONSTANT descending
+    drive [left, right] (zero while `escape`: the legs stop, as in `run_body`) and returns the frames of that chunk in the
+    fly-walk/1 format (`header` holds the static part: bodies, legs, neutral pose, scales). Frames are sampled on the
+    global 200 Hz clock exactly like `run_body`, quaternion signs and the unwrapped heading continue across chunks, and
+    the world position is relative to the first frame, so concatenated chunks equal one long advance. Not thread-safe;
+    the caller serialises chunks. Raises BodyUnavailable without the `body` extra."""
+
+    def __init__(self, seed: int = 0, dt_s: float = None) -> None:
+        require_flygym()
+        self.rig = make_rig(dt_s)
+        neutral_pos, neutral_quat, thorax_origin_um = reference_neutral()
+        self.ctl = start_controller(self.rig, seed)
+        self.dt = float(self.rig.sim.timestep)
+        self.stride = sample_stride(self.dt)
+        self.steps = 0
+        _, q0, _, _, _ = sample_frame(self.rig)
+        self._prev_quat = continuous(q0[None])[0]  # the pose before the first step fixes the sign convention
+        flip = np.sum(neutral_quat * self._prev_quat, axis=-1) < 0
+        neutral_quat = np.where(flip[:, None], -neutral_quat, neutral_quat)
+        self._origin_xy: np.ndarray | None = None
+        self._yaw = (None, None)  # last raw, last unwrapped
+        self._yaw0: float | None = None
+        self.header = {
+            "format": "fly-walk/1",
+            "units": {"position": "um", "quaternion": f"w,x,y,z x {QUAT_SCALE}", "time": "s"},
+            "frame": "fly frame relative to the thorax body: x anterior, y left, z dorsal; rotation = body frame -> thorax frame",
+            "quat_scale": QUAT_SCALE,
+            "thorax_origin_um": np.round(thorax_origin_um).astype(int).tolist(),
+            "bodies": BODIES,
+            "legs": self.rig.legs_order,
+            "sample_rate_hz": SAMPLE_HZ,
+            "cycle_hz": CPG_HZ,
+            "neutral": {"pos_um": np.round(neutral_pos).astype(int).tolist(),
+                        "quat": np.round(neutral_quat * QUAT_SCALE).astype(int).tolist()},
+            "physics_dt_s": self.dt,
+            "frame_layout": "frames[i][body] = [x, y, z (um), qw, qx, qy, qz (x quat_scale)]",
+        }
+
+    @property
+    def t_ms(self) -> float:
+        return self.steps * self.dt * 1000.0
+
+    def advance(self, ms: float, drive, escape: bool = False) -> dict:
+        n_frames = chunk_frames(ms)
+        d = np.asarray(drive, dtype=float).reshape(-1)
+        if d.shape != (2,) or not np.isfinite(d).all():
+            raise ValueError(f"drive must be two finite numbers [left, right], got {drive!r}")
+        applied = np.zeros(2) if escape else d
+        pos, quat, contact, thorax_mm, thorax_q = [], [], [], [], []
+        for i in range(n_frames * self.stride):
+            control_step(self.rig, self.ctl, applied)
+            if i % self.stride == 0:  # the chunk starts on a frame boundary, so this is the global 200 Hz clock
+                p, q, t_mm, t_q, touching = sample_frame(self.rig)
+                pos.append(p); quat.append(q); contact.append(touching); thorax_mm.append(t_mm); thorax_q.append(t_q)
+        self.steps += n_frames * self.stride
+        quat = continuous(np.array(quat), prev=self._prev_quat)
+        self._prev_quat = quat[-1]
+        thorax_mm = np.array(thorax_mm)
+        if self._origin_xy is None:
+            self._origin_xy = thorax_mm[0, :2].copy()
+        world = np.round((thorax_mm - np.array([self._origin_xy[0], self._origin_xy[1], 0.0])) * POS_UM_PER_MM).astype(int)
+        yaw, *self._yaw = unwrap_continue(yaw_deg(np.array(thorax_q)), *self._yaw)
+        if self._yaw0 is None:
+            self._yaw0 = float(yaw[0])
+        frames = np.concatenate([np.round(np.array(pos)).astype(int), np.round(quat * QUAT_SCALE).astype(int)], axis=-1)
+        return {
+            "n_frames": n_frames,
+            "frames": frames,
+            "contact": np.array(contact).astype(int),
+            "escape": np.full(n_frames, int(bool(escape))),
+            "drive": np.tile(np.round(applied, 4), (n_frames, 1)),
+            "thorax": {"pos_um": world, "yaw_deg": np.round(yaw - self._yaw0, 3)},
+        }
