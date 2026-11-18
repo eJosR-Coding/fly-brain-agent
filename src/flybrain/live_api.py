@@ -4,11 +4,15 @@ Protocol (JSON text frames; close codes are 4xxx application codes, the reason s
   client -> {"type":"start","preset":name|null,"rate_hz":n,["seed":int,"chunk_ms":50,"include_active":bool,"binary_frames":bool,"body_mode":"kinematic"|"physics"]}
             {"type":"stimulus","preset":name|null | "rows":[atlas rows],"rate_hz":n}   (null/no rows clears the drive)
             {"type":"ping"} (keeps an idle session alive)   {"type":"stop"}
-  server -> {"type":"started",...}  {"type":"chunk",...} (every chunk; with binary_frames a binary frame of int16 frames
+  server -> {"type":"started",...,"arena":{"kind":"glass_cube","interior_mm","bounds_mm":[xmin,xmax,ymin,ymax],"note"}}
+            (the server's glass cube, fly frame at the start: x forward, y left, mm; every chunk's "world" reports
+            blocked / walls);   {"type":"chunk",...} (every chunk; with binary_frames a binary frame of int16 frames
             follows each chunk message)  {"type":"stimulus","ok":true,...}  {"type":"error","detail":...}
             {"type":"stopped","reason":"client"|"idle"}
 Close codes: 4400 bad request, 4403 origin not allowed, 4408 idle timeout, 4409 another live session is running,
 4503 the body (flygym) or the brain weights are unavailable, 1011 the session failed.
+A new start right after a client stop/disconnect waits (at most BUSY_WAIT_S) for the previous teardown; a session that is
+really running is refused at once with 4409.
 The heavy work runs in a worker thread (`asyncio.to_thread`), so the event loop stays free between chunks. A client that
 disconnects ends the session after at most one chunk; a session with no client message for `idle_s` is stopped.
 """
@@ -35,6 +39,7 @@ log = logging.getLogger(__name__)
 
 IDLE_ENV = "FLYBRAIN_LIVE_IDLE_MIN"
 DEFAULT_IDLE_S = 300.0
+BUSY_WAIT_S = 3.0  # a new start waits at most this long for the previous session's teardown
 MAX_RATE_HZ = 10_000.0
 MAX_STIM_ROWS = 200_000
 CODE_BAD_REQUEST, CODE_ORIGIN, CODE_IDLE, CODE_BUSY, CODE_UNAVAILABLE = 4400, 4403, 4408, 4409, 4503
@@ -111,6 +116,8 @@ def register_live(app: FastAPI, origins: Callable[[], list[str]], idle_s: float,
     """Add /ws/live to `app`. `factory(atlas, row_index, sims, body_lock, **options)` builds the session (injectable)."""
     app.state.live_lock = threading.Lock()
     app.state.live_idle_s = idle_s
+    app.state.live_closing = False  # True from the moment the running session starts tearing down
+    app.state.live_busy_wait_s = BUSY_WAIT_S
     app.state.live_stream_note = None
     build = factory or build_live_session
 
@@ -121,9 +128,15 @@ def register_live(app: FastAPI, origins: Callable[[], list[str]], idle_s: float,
         if origin is not None and origin not in origins():
             await ws.close(code=CODE_ORIGIN, reason="origin not allowed")
             return
-        if not app.state.live_lock.acquire(blocking=False):
+        # one session at a time. A session that is only TEARING DOWN (client stop/disconnect: the GPU state is freed in a
+        # worker thread) is waited for, bounded; a session that is really running is refused at once.
+        got = app.state.live_lock.acquire(blocking=False)
+        if not got and app.state.live_closing:
+            got = await asyncio.to_thread(app.state.live_lock.acquire, True, app.state.live_busy_wait_s)
+        if not got:
             await ws.close(code=CODE_BUSY, reason="a live session is already running")
             return
+        app.state.live_closing = False
         session = None
         try:
             session = await _open(ws, app, build, idle_s)
@@ -137,6 +150,8 @@ def register_live(app: FastAPI, origins: Callable[[], list[str]], idle_s: float,
             await _safe(ws.send_json({"type": "error", "detail": f"{type(exc).__name__}: {exc}"}))
             await _safe(ws.close(code=1011, reason="live session failed"))
         finally:
+            app.state.live_closing = True  # before the first await: a restart arriving now waits for the lock
+
             def teardown() -> None:
                 # in a worker thread, so a cancelled task (client gone) cannot skip it: frees the GPU state, then the lock
                 try:

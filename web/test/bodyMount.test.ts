@@ -202,6 +202,22 @@ describe("mountBody setWorld", () => {
   });
 });
 
+describe("mountBody setArena", () => {
+  const arena = { kind: "glass_cube" as const, interiorMm: 10, boundsMm: [-5, 5, -5, 5] as [number, number, number, number], note: "" };
+  const fake = () => ({ invalidate() {}, dispose: vi.fn(), setSandbox: vi.fn(), setArena: vi.fn() });
+  it("applies an arena set before the scene exists (before the sandbox), then passes later ones through", async () => {
+    const scene = fake();
+    const m = mountBody(document.createElement("div"), { theme, load: async () => body, create: () => scene as never });
+    m.setArena(arena);
+    m.setSandbox(true);
+    await flush();
+    expect(scene.setArena.mock.calls).toEqual([[arena]]);
+    expect(scene.setArena.mock.invocationCallOrder[0]).toBeLessThan(scene.setSandbox.mock.invocationCallOrder[0]);
+    m.setArena(null);
+    expect(scene.setArena.mock.calls.at(-1)).toEqual([null]);
+  });
+});
+
 describe("mountBody setSandbox / setObjects", () => {
   const fakeScene = () => ({
     invalidate() {}, dispose: vi.fn(), setSandbox: vi.fn(), setObjects: vi.fn(() => ({ errors: ["x"] })),

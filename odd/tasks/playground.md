@@ -37,6 +37,11 @@ live. Requested 2026-11-18.
       bodyMount.ts `setSandbox(on)` / `setObjects(list)`; live client liveFrames / livePlayback / liveSession / liveClient (jitter
       buffer, own time base, close codes, no auto-reconnect), vite `/api` proxy `ws: true`; dev entry = "live (dev)" chip +
       `window.flyLive` until P4. Web 940 tests, build and tsc clean. Not yet seen in a real browser/GPU or against a real socket.
+      Walls fix (branch wip/pg-walls, uncommitted): the SERVER owns the arena (`live.arena_spec`, 50 mm glass cube centred on the
+      start; bounds_mm [xmin,xmax,ymin,ymax], fly frame x forward / y left) and sends it in `started.arena`; kinematic mode enforces it
+      in KinematicBody (world.blocked + world.walls), physics mode clamps the REPORTED root (labelled display clamp). The viewer draws
+      the cube from `arena` (fallback constant; x -> viewer Z, y -> viewer X) and shows "stopped by the glass (world rule)". A start
+      right after a client stop waits (<= 3 s) only for a TEARING-DOWN session; a running one still gets 4409 at once.
 - [ ] P3 world state + contact: objects, contact detection (proboscis/tarsi near an object) -> taste stimulus in the live brain.
 - [ ] P4 agent tools: world actions (add sugar/coffee cubes, clear) within the tool budget; the chat drives the live world.
 - [ ] P5 caffeine neurons: identify caffeine-sensitive gustatory neurons in FlyWire with sources.

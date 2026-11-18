@@ -22,6 +22,8 @@ export interface LiveInfo {
   backend: string | null;
   fallback: string | null;
   bodyMode: string | null;
+  /** the world rule stopped the fly at a glass wall during this chunk */
+  worldBlocked: boolean;
 }
 
 export interface LiveChunk {
@@ -87,6 +89,7 @@ export function parseLiveChunk(raw: unknown, header: LiveHeader, z0: number | nu
       info: {
         speedLabel: str(m.speed_label), speedFactor: isNum(m.speed_factor) ? m.speed_factor : null,
         backend: str(m.backend), fallback: str(m.fallback), bodyMode: str(m.body_mode),
+        worldBlocked: (m.world as { blocked?: unknown } | undefined)?.blocked === true,
       },
     },
   };
