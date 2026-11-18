@@ -25,6 +25,7 @@ export interface LiveBody {
   setCaption(text: string): void;
   setSandbox(on: boolean): void;
   setArena?(arena: Arena | null): void;
+  setObjects?(objects: unknown): void;
 }
 
 export interface LiveClientDeps {

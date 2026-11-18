@@ -52,7 +52,7 @@ def _strip_titles(schema):
 
 def build_server(
     atlas: Atlas, store: SelectionStore | None = None, conn: Connectome | None = None,
-    sims: SimulationService | None = None,
+    sims: SimulationService | None = None, live=None,
 ) -> FastMCP:
     store = store if store is not None else SelectionStore()
     sims = sims if sims is not None else SimulationService.default(atlas)
@@ -293,6 +293,24 @@ def build_server(
         return await asyncio.to_thread(
             looming.looming_escape, atlas, sims, trials, rate_hz, duration_ms, steps, side, input,
         )
+
+    def _live():
+        session = live() if live is not None else None
+        if session is None:
+            raise ValueError("no live session is running: start the glass-cube live view first")
+        return session
+
+    @server.tool()
+    async def world_add(item: str = "sugar", ahead_mm: float = 3, left_mm: float = 0) -> dict:
+        """Drop a sugar or coffee cube into the RUNNING live glass cube, ahead_mm/left_mm from the fly. Touching it (mouth within 1 mm) drives taste neurons: sugar=sweet, coffee=bitter (caffeine proxy, ours)."""
+        session = _live()
+        obj = await asyncio.to_thread(session.world_add, item, ahead_mm, left_mm)
+        return {"added": obj, "note": "ours, not validated; the fly's reaction is the brain's"}
+
+    @server.tool()
+    async def world_clear() -> dict:
+        """Remove every cube from the running live glass cube."""
+        return {"removed": await asyncio.to_thread(_live().world_clear)}
 
     # the tool definitions are sent on EVERY model call: keep them lean (see the budget test)
     for registered in server._tool_manager.list_tools():

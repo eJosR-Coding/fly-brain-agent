@@ -127,6 +127,7 @@ def register_live(app: FastAPI, origins: Callable[[], list[str]], idle_s: float,
     app.state.live_closing = False  # True from the moment the running session starts tearing down
     app.state.live_busy_wait_s = BUSY_WAIT_S
     app.state.live_stream_note = None
+    app.state.live_session = None  # the running session, for the chat's world tools
     build = factory or build_live_session
 
     @app.websocket("/ws/live")
@@ -150,6 +151,7 @@ def register_live(app: FastAPI, origins: Callable[[], list[str]], idle_s: float,
             session = await _open(ws, app, build, idle_s)
             if session is None:
                 return
+            app.state.live_session = session
             await _stream(ws, app, session, idle_s)
         except WebSocketDisconnect:
             pass
@@ -158,6 +160,7 @@ def register_live(app: FastAPI, origins: Callable[[], list[str]], idle_s: float,
             await _safe(ws.send_json({"type": "error", "detail": f"{type(exc).__name__}: {exc}"}))
             await _safe(ws.close(code=1011, reason="live session failed"))
         finally:
+            app.state.live_session = None
             app.state.live_closing = True  # before the first await: a restart arriving now waits for the lock
 
             def teardown() -> None:

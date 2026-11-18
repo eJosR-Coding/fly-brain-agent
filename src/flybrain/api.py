@@ -287,7 +287,8 @@ def create_app(
             if model is not None:
                 session = await stack.enter_async_context(
                     create_connected_server_and_client_session(
-                        build_server(atlas, store, app.state.connectome, app.state.sims)
+                        build_server(atlas, store, app.state.connectome, app.state.sims,
+                                     live=lambda: app.state.live_session)
                     )
                 )
                 tools = await load_mcp_tools(session, server_name=SERVER_NAME)

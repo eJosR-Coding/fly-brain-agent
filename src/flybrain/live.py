@@ -25,6 +25,7 @@ import numpy as np
 
 from flybrain import body_drive
 from flybrain import fly_eye
+from flybrain import live_world
 from flybrain.fly_eye import VISION_LABEL
 from flybrain.body_readouts import dn_group_rows
 from flybrain.simulation import ChunkSpikes
@@ -77,7 +78,8 @@ class LiveSession:
                  mapper: body_drive.DriveMapper | None = None, clock: Callable[[], float] = time.perf_counter,
                  thermal=None, brain_fallback: Callable[[], object] | None = None, include_active: bool = False,
                  max_active: int = MAX_ACTIVE_ROWS, binary_frames: bool = False,
-                 brain_lock=None, body_lock=None, arena: dict | None = None, vision=None) -> None:
+                 brain_lock=None, body_lock=None, arena: dict | None = None, vision=None,
+                 taste_rows: dict[str, np.ndarray] | None = None) -> None:
         self.brain, self.body, self.groups = brain, body, groups
         self.chunk_ms, self.mapper = float(chunk_ms), mapper or body_drive.DriveMapper(chunk_ms)
         self._clock, self.thermal, self._brain_fallback = clock, thermal, brain_fallback
@@ -85,6 +87,11 @@ class LiveSession:
         # callables returning a fresh context manager per chunk (SimulationService.exclusive, a lock's `lambda: lock`)
         self._brain_lock, self._body_lock = brain_lock or contextlib.nullcontext, body_lock or contextlib.nullcontext
         self.arena = arena
+        # playground world: sugar/coffee cubes; touching one drives its taste neurons (live_world, labelled and ours)
+        self.world = live_world.World(arena["bounds_mm"] if arena else None)
+        self.taste_rows = taste_rows or {}
+        self._taste_sig: tuple = ()
+        self._touched: list[str] = []
         # the fly's eye (fly_eye.VisionFrontEnd or a stand-in): sets per-neuron T4/T5 rates every chunk from the pose of the last one
         self.vision = vision
         n0 = max(1, round(self.chunk_ms / 5.0))
@@ -111,6 +118,19 @@ class LiveSession:
             self.brain.set_stimulus(arr, float(rate_hz))
         self._stimulus = (arr, float(rate_hz))
 
+    def world_add(self, item: str, ahead_mm: float = 3.0, left_mm: float = 0.0) -> dict:
+        """Drop a cube `ahead_mm` in front of / `left_mm` to the left of the fly's current pose. ValueError on bad input."""
+        with self._lock:
+            pos, yaw = self._pose
+            x, y, a = float(pos[-1][0]) / 1000.0, float(pos[-1][1]) / 1000.0, np.radians(float(yaw[-1]))
+            wx = x + ahead_mm * np.cos(a) - left_mm * np.sin(a)
+            wy = y + ahead_mm * np.sin(a) + left_mm * np.cos(a)
+            return self.world.add(item, float(wx), float(wy))
+
+    def world_clear(self) -> int:
+        with self._lock:
+            return self.world.clear()
+
     def close(self) -> None:
         with self._lock:
             self._close()
@@ -126,9 +146,29 @@ class LiveSession:
             out.update(extra or {})
         return out
 
+    def _apply_taste(self) -> None:
+        """No eye: set user stimulus + taste rates on the brain when the touched set changed."""
+        hz = self.world.taste(self._touched, self.taste_rows)
+        sig = tuple(sorted(hz.items()))
+        if sig == self._taste_sig:
+            return
+        self._taste_sig = sig
+        if not hz:
+            self._applied = None
+            rows, rate = self._stimulus
+            self.brain.set_stimulus(rows, rate)
+            return
+        self._apply_vision(None)
+
     def _apply_vision(self, out) -> None:
-        """Combine the eye's rates with the user stimulus (rates of the same neuron add) and set them on the brain."""
-        rows, rates = np.asarray(out.rows, dtype=np.int64), np.asarray(out.rates_hz, dtype=float)
+        """Combine the eye's rates, the user stimulus and the touched taste neurons (rates of the same neuron add)."""
+        if out is None:
+            rows, rates = np.zeros(0, dtype=np.int64), np.zeros(0)
+        else:
+            rows, rates = np.asarray(out.rows, dtype=np.int64), np.asarray(out.rates_hz, dtype=float)
+        for preset, hz in self.world.taste(self._touched, self.taste_rows).items():
+            tr = self.taste_rows[preset]
+            rows, rates = np.concatenate([rows, tr]), np.concatenate([rates, np.full(len(tr), hz)])
         user_rows, user_rate = self._stimulus
         if user_rows and user_rate > 0:
             rows, rates = np.concatenate([rows, np.asarray(user_rows, dtype=np.int64)]), np.concatenate([rates, np.full(len(user_rows), user_rate)])
@@ -218,11 +258,15 @@ class LiveSession:
             raise RuntimeError("the live session is closed")
         t0 = self._clock()
         seen = None
+        self._touched = self.world.touching(*self._pose)
         if self.vision is not None:
             seen = self.vision.process(*self._pose)
             self._apply_vision(seen)
             tb = self._clock()
         else:
+            if self._touched or self._taste_sig:
+                with self._brain_lock():
+                    self._apply_taste()
             tb = t0
         chunk = self._advance_brain()
         t1 = self._clock()
@@ -266,8 +310,9 @@ class LiveSession:
         }
         if seen is not None:
             msg["wall_ms"]["vision"] = round((tb - t0) * 1000.0, 3)
-        if world:
-            msg["world"] = world
+        if world or self.world.objects or self.world.used:
+            msg["world"] = {**(world or {}), "objects": [dict(o) for o in self.world.objects], "touching": list(self._touched),
+                            "taste_hz": self.world.taste(self._touched, self.taste_rows), "taste_note": live_world.NOTE}
         if binary:
             msg["frames_binary"] = {"dtype": "<i2", "shape": list(frames.shape)}
         if self.include_active:
@@ -358,8 +403,14 @@ def build_live_session(atlas, row_index, sims, body_lock=None, *, seed: int = 0,
         brain.close()
         raise
     cpu = sims.simulation()
+    taste = {}
+    for name in ("sugar", "bitter"):
+        try:
+            taste[name] = preset_rows(atlas, row_index, name)
+        except Exception:  # noqa: BLE001 - no taste neurons in this atlas: touching a cube then drives nothing
+            pass
     return LiveSession(
         brain, body, readout_groups(atlas, row_index), chunk_ms=chunk_ms, thermal=sims.thermal,
         brain_fallback=lambda: cpu.open_stream(seed=seed), include_active=include_active,
-        binary_frames=binary_frames, arena=arena, vision=front, brain_lock=sims.exclusive, body_lock=(lambda: body_lock) if body_lock is not None else None,
+        binary_frames=binary_frames, arena=arena, vision=front, taste_rows=taste, brain_lock=sims.exclusive, body_lock=(lambda: body_lock) if body_lock is not None else None,
     )
