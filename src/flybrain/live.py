@@ -32,6 +32,7 @@ log = logging.getLogger(__name__)
 CHUNK_MS = 50.0
 MAX_ACTIVE_ROWS = 512  # per-chunk active rows sent when a client asks for them (strongest first)
 SPEED_WINDOW = 10
+BODY_MODES = ("kinematic", "physics")
 NOTE = ("Live mode runs as fast as the computer allows and reports its real speed (speed_factor): it is NOT real time "
         "unless it says so. The brain is the connectome model, the DN -> walking-drive mapping is OUR choice "
         "(not published) and the body is NeuroMechFly, not the connectome.")
@@ -64,6 +65,9 @@ class LiveSession:
         self._brain_lock, self._body_lock = brain_lock or contextlib.nullcontext, body_lock or contextlib.nullcontext
         self.seq, self.t_ms = 0, 0.0
         self.fallback: str | None = None
+        # "kinematic" = recorded physics gait blended live, "physics" = the MuJoCo body stepped live (see body_kinematic)
+        self.body_mode = getattr(body, "mode", "physics")
+        self.body_caption = getattr(body, "caption", "")
         self._stimulus: tuple[list[int] | None, float] = (None, 0.0)
         self._speeds: deque[float] = deque(maxlen=SPEED_WINDOW)
         self._closed = False
@@ -98,7 +102,8 @@ class LiveSession:
 
     def start_message(self) -> dict:
         return {"type": "started", "chunk_ms": self.chunk_ms, "backend": self.brain.backend, "fallback": self.fallback,
-                "header": self.body.header, "dn_names": list(self.groups), "caption": body_drive.CAPTION,
+                "header": self.body.header, "body_mode": self.body_mode, "body_caption": self.body_caption,
+                "dn_names": list(self.groups), "caption": body_drive.CAPTION,
                 "note": NOTE, "binary_frames": self.binary_frames}
 
     # -- one chunk -----------------------------------------------------------------------
@@ -148,7 +153,10 @@ class LiveSession:
         dn = {name: chunk.group_hz(rows) for name, rows in self.groups.items()}
         sample = self.mapper.step(dn)
         with self._body_lock():
-            out = self.body.advance(self.chunk_ms, sample.drive, sample.escape)
+            if getattr(self.body, "takes_command", False):  # kinematic body: the exact pace and turn, not a clipped drive
+                out = self.body.advance(self.chunk_ms, sample.drive, sample.escape, pace=sample.pace, turn=sample.turn)
+            else:
+                out = self.body.advance(self.chunk_ms, sample.drive, sample.escape)
         t2 = self._clock()
         wall_ms = max((t2 - t0) * 1000.0, 1e-6)
         factor = self.chunk_ms / wall_ms
@@ -172,7 +180,10 @@ class LiveSession:
             "thorax": {"pos_um": np.asarray(out["thorax"]["pos_um"]).tolist(),
                        "yaw_deg": np.asarray(out["thorax"]["yaw_deg"]).tolist()},
             "contact": np.asarray(out["contact"]).tolist(),
+            "body_mode": self.body_mode, "body_caption": self.body_caption,
         }
+        if out.get("world"):
+            msg["world"] = out["world"]
         if binary:
             msg["frames_binary"] = {"dtype": "<i2", "shape": list(frames.shape)}
         if self.include_active:
@@ -211,20 +222,33 @@ def readout_groups(atlas, row_index) -> dict[str, np.ndarray]:
 
 
 def build_live_session(atlas, row_index, sims, body_lock=None, *, seed: int = 0, chunk_ms: float = CHUNK_MS,
-                       include_active: bool = False, binary_frames: bool = False) -> LiveSession:
+                       include_active: bool = False, binary_frames: bool = False, body_mode: str = "kinematic") -> LiveSession:
     """The real brain (GPU when decided, usable and cool; else CPU) and the real body, ready to step.
 
-    Raises BodyUnavailable (flygym missing) or SimulationUnavailable (no weights) BEFORE anything heavy is built."""
+    body_mode "kinematic" (default, fast: the recorded physics gait blended live, no flygym needed) or "physics"
+    (MuJoCo stepped live, needs the `body` extra, slower). Raises BodyUnavailable (flygym or the motion library missing)
+    or SimulationUnavailable (no weights) BEFORE anything heavy is built."""
     from flybrain import body_runner
     from flybrain.sim_service import SimulationUnavailable
 
-    body_runner.require_flygym()
+    if body_mode not in BODY_MODES:
+        raise ValueError(f"body_mode must be one of {BODY_MODES}")
+    if body_mode == "physics":
+        body_runner.require_flygym()
     if not sims.available:
         raise SimulationUnavailable("the brain simulator is not available (weights missing)")
     with sims.exclusive():
         brain = sims.open_stream(seed=seed)
     try:
-        body = body_runner.BodyStream(seed=seed)
+        if body_mode == "kinematic":
+            from flybrain.body_kinematic import KinematicBody, load_library
+
+            try:
+                body = KinematicBody(load_library())
+            except FileNotFoundError as exc:
+                raise body_runner.BodyUnavailable(f"the motion library is missing ({exc}); run scripts/build_motion_library.py") from exc
+        else:
+            body = body_runner.BodyStream(seed=seed)
     except Exception:
         brain.close()
         raise

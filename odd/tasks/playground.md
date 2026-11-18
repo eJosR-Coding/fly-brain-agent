@@ -20,7 +20,16 @@ live. Requested 2026-11-18.
   scripted "walk to food". If the brain does not react, show it.
 
 ## Tasks
-- [ ] P1 kinematic body for the live session (gait phase + blending + root motion inside the cube; tests).
+- [x] P1 kinematic body for the live session (gait phase + blending + root motion inside the cube; tests).
+      Progress P1 (branch wip/pg-p1, backend): `scripts/build_motion_library.py` (body extra) records flygym physics over pace {0, .33, .67, 1} x
+      turn {-1, -.5, 0, .5, 1} (drive = body_drive.walking_drive) -> `web/public/fly-motion-library.json` (462 KB, 20 clips, 25 phase samples x 48
+      bodies int16/base64, measured speed / lateral / yaw rate per clip, standing pose, escape = stand + wings flag; phase 0 = LF swing onset;
+      seams checked). `src/flybrain/body_kinematic.py` `KinematicBody` (pure numpy: bilinear clip blend at equal phase, 100 ms stand ramp,
+      root motion from the blended measured speed / yaw rate, optional labelled `bounds` world rule). LiveSession `body_mode`
+      kinematic (default) | physics in `started` + every chunk (+ `body_caption`, `world`); /ws/live start option `body_mode`.
+      Measured live (GPU brain + kinematic body, 50 ms chunks): brain ~22 ms + body ~0.7 ms = ~23 ms per chunk (x2.15 real time after the
+      GPU warm-up). Kinematic vs physics (3 s, same drive): speed within 1%, yaw rate within 2% on turning clips. Not done: spin-in-place clips
+      (the opposite-direction CPG is not periodic: recorded, rejected), viewer (P2).
 - [ ] P2 glass cube sandbox in the viewer (transparent walls, floor, fly inside, objects rendered; camera).
       Progress P2 (branch wip/pg-p2, uncommitted; includes the live viewer client G3b): web/src/bodyCube.ts (pure geometry; 50 mm
       interior, 10x10 floor cells, 24 mm follow span), bodySandbox.ts (faint depth-tested glass faces + theme-line edges + floor

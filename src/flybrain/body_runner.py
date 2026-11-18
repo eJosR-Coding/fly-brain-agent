@@ -353,6 +353,10 @@ class BodyStream:
     the world position is relative to the first frame, so concatenated chunks equal one long advance. Not thread-safe;
     the caller serialises chunks. Raises BodyUnavailable without the `body` extra."""
 
+    mode = "physics"
+    takes_command = False
+    caption = "Body: full MuJoCo physics (NeuroMechFly v2), stepped live from the brain's drive; slower than the kinematic mode."
+
     def __init__(self, seed: int = 0, dt_s: float = None) -> None:
         require_flygym()
         self.rig = make_rig(dt_s)
