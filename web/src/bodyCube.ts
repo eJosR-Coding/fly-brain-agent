@@ -1,6 +1,6 @@
 /** Pure geometry of the glass-cube sandbox the fly lives in (viewer axes: X = fly left, Y = up, Z = fly forward, mm).
- *  No DOM, no three. The cube is centred on the fly's start in X and Z and stands on the body's floor. Its bounds are
- *  only drawn today; the live backend will enforce the walls later and take the same constant. */
+ *  No DOM, no three. The cube stands on the body's floor. The SERVER owns the arena (`started.arena`, enforced as a world
+ *  rule) and the viewer draws exactly those bounds; SANDBOX_INTERIOR_MM is only the fallback when the server sends none. */
 
 type Vec3 = [number, number, number];
 export interface Bounds { min: Vec3; max: Vec3 }
@@ -13,6 +13,35 @@ export const CUBE_GRID_CELLS = 10;
 /** How much of the world the follow camera frames at its default distance, mm across the limiting screen side: the fly
  *  (~3 mm) stays readable and the nearby walls come into view; the user can zoom out to the whole cube. */
 export const FOLLOW_SPAN_MM = 24;
+
+/** The server's arena (flybrain.live.arena_spec). boundsMm = [xmin, xmax, ymin, ymax] in the fly's frame at the start:
+ *  x forward, y left, mm. */
+export interface Arena { kind: "glass_cube"; interiorMm: number; boundsMm: [number, number, number, number]; note: string }
+
+const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+
+/** Validate `started.arena`; null for anything missing or malformed (the caller then draws the fallback cube). */
+export function parseArena(raw: unknown): Arena | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const b = r.bounds_mm;
+  if (r.kind !== "glass_cube" || !finite(r.interior_mm) || r.interior_mm <= 0) return null;
+  if (!Array.isArray(b) || b.length !== 4 || !b.every(finite) || !(b[0] < b[1]) || !(b[2] < b[3])) return null;
+  return { kind: "glass_cube", interiorMm: r.interior_mm, boundsMm: [b[0], b[1], b[2], b[3]], note: typeof r.note === "string" ? r.note : "" };
+}
+
+/** THE axis mapping, shared by the cube and the thorax pose (liveFrames): fly x (forward) -> viewer Z, fly y (left) -> viewer X. */
+export function arenaToViewer(xFwdMm: number, yLeftMm: number): [number, number] {
+  return [yLeftMm, xFwdMm];
+}
+
+/** The cube of a server arena: X from the fly's y bounds, Z from its x bounds, from the floor up by the interior edge. */
+export function arenaBounds(floorY: number, a: Arena): Bounds {
+  const [xmin, xmax, ymin, ymax] = a.boundsMm;
+  const [x0, z0] = arenaToViewer(xmin, ymin);
+  const [x1, z1] = arenaToViewer(xmax, ymax);
+  return { min: [x0, floorY, z0], max: [x1, floorY + a.interiorMm, z1] };
+}
 
 export function cubeBounds(floorY: number, interiorMm: number = SANDBOX_INTERIOR_MM): Bounds {
   const h = interiorMm / 2;

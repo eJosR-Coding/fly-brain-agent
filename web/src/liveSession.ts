@@ -13,6 +13,7 @@ import { escapePose } from "./bodyWorld";
 import { parseLiveChunk, parseLiveHeader, type LiveChunk, type LiveHeader } from "./liveFrames";
 import { createPlayback } from "./livePlayback";
 import type { WorldPose } from "./bodyClip";
+import { parseArena, type Arena } from "./bodyCube";
 
 /** The slice of the browser's WebSocket the session needs. */
 export interface SocketLike {
@@ -29,6 +30,8 @@ export interface LiveSinks {
   setWorld(w: WorldPose | null): void;
   setPose(angles: Partial<Record<JointId, number>>): void;
   setCaption(text: string): void;
+  /** The arena the server enforces (null: none sent, draw the fallback cube). Called once per `started`. */
+  setArena?(arena: Arena | null): void;
 }
 
 export type LiveState = "idle" | "connecting" | "starting" | "live" | "closed";
@@ -104,11 +107,12 @@ export function closeMessage(code: number, reason: string, state: LiveState | "l
 }
 
 /** The line under the body while a session runs: only what the server reported, plus the server's own caption. */
-export function liveCaption(s: Pick<LiveStatus, "speedLabel" | "backend" | "fallback" | "bodyMode" | "dropped" | "serverCaption">): string {
+export function liveCaption(s: Pick<LiveStatus, "speedLabel" | "backend" | "fallback" | "bodyMode" | "dropped" | "serverCaption"> & { worldBlocked?: boolean }): string {
   const parts = ["live", s.speedLabel ?? "waiting for the first chunk"];
   if (s.backend) parts.push(`brain: ${s.backend}`);
   if (s.fallback) parts.push(`fallback: ${s.fallback}`);
   if (s.bodyMode) parts.push(`body: ${s.bodyMode}`);
+  if (s.worldBlocked) parts.push("stopped by the glass (world rule)");
   if (s.dropped > 0) parts.push(`dropped ${s.dropped} chunk${s.dropped === 1 ? "" : "s"}`);
   return parts.join(" · ") + (s.serverCaption ? ` — ${s.serverCaption}` : "");
 }
@@ -129,7 +133,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
   let shownT = -1;
   let sentEscape: boolean | null = null;
   let lastCaption: string | null = null;
-  let info = { speedLabel: null as string | null, backend: null as string | null, fallback: null as string | null, bodyMode: null as string | null };
+  let info = { speedLabel: null as string | null, backend: null as string | null, fallback: null as string | null, bodyMode: null as string | null, worldBlocked: false };
   let serverCaption = "";
   let note = "";
   const n = { received: 0, played: 0, ignored: 0, malformed: 0 };
@@ -168,7 +172,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
     playback.reset();
     header = null; z0 = null; lastSeq = -1; stopped = false; lastTick = null; shownSeq = -1; shownT = -1; sentEscape = null;
     lastCaption = null; message = null; serverCaption = ""; note = "";
-    info = { speedLabel: null, backend: null, fallback: null, bodyMode: null };
+    info = { speedLabel: null, backend: null, fallback: null, bodyMode: null, worldBlocked: false };
     n.received = n.played = n.ignored = n.malformed = 0;
   };
   const send = (cmd: Record<string, unknown>): boolean => {
@@ -206,6 +210,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
         info.fallback = typeof msg.fallback === "string" && msg.fallback ? msg.fallback : null;
         serverCaption = typeof msg.caption === "string" ? msg.caption : "";
         note = typeof msg.note === "string" ? msg.note : "";
+        guard("arena", () => deps.sinks.setArena?.(parseArena(msg.arena)));
         setState("live");
         refreshCaption();
         cancelPing = deps.every(() => { if (state === "live") send({ type: "ping" }); }, deps.pingMs ?? PING_MS);
@@ -220,7 +225,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
         z0 = parsed.z0;
         n.received++;
         playback.push(parsed.chunk);
-        info = { speedLabel: parsed.chunk.info.speedLabel, backend: parsed.chunk.info.backend ?? info.backend, fallback: parsed.chunk.info.fallback, bodyMode: parsed.chunk.info.bodyMode };
+        info = { speedLabel: parsed.chunk.info.speedLabel, backend: parsed.chunk.info.backend ?? info.backend, fallback: parsed.chunk.info.fallback, bodyMode: parsed.chunk.info.bodyMode, worldBlocked: parsed.chunk.info.worldBlocked };
         refreshCaption();
         return;
       }

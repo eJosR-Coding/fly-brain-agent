@@ -33,6 +33,20 @@ CHUNK_MS = 50.0
 MAX_ACTIVE_ROWS = 512  # per-chunk active rows sent when a client asks for them (strongest first)
 SPEED_WINDOW = 10
 BODY_MODES = ("kinematic", "physics")
+# The arena: ONE source of truth, the server's. A glass cube centred on the fly's start (the origin of the reported root),
+# standing on the floor plane. Axes of the bounds: the fly's frame at the start, x forward, y left, in mm; the viewer maps
+# x -> its Z and y -> its X. Kinematic mode enforces the walls in the body (a world rule); physics mode clamps the REPORTED root.
+ARENA_INTERIOR_MM = 50.0
+ARENA_NOTE = "world rule: glass walls stop the fly; not a brain decision"
+PHYSICS_ARENA_NOTE = ("World rule (not the brain): the glass wall clamps the displayed root (display clamp: the physics body "
+                      "itself is not stopped, its legs keep stepping).")
+
+
+def arena_spec(interior_mm: float = ARENA_INTERIOR_MM) -> dict:
+    h = float(interior_mm) / 2.0
+    return {"kind": "glass_cube", "interior_mm": float(interior_mm), "bounds_mm": [-h, h, -h, h], "note": ARENA_NOTE}
+
+
 NOTE = ("Live mode runs as fast as the computer allows and reports its real speed (speed_factor): it is NOT real time "
         "unless it says so. The brain is the connectome model, the DN -> walking-drive mapping is OUR choice "
         "(not published) and the body is NeuroMechFly, not the connectome.")
@@ -56,13 +70,14 @@ class LiveSession:
                  mapper: body_drive.DriveMapper | None = None, clock: Callable[[], float] = time.perf_counter,
                  thermal=None, brain_fallback: Callable[[], object] | None = None, include_active: bool = False,
                  max_active: int = MAX_ACTIVE_ROWS, binary_frames: bool = False,
-                 brain_lock=None, body_lock=None) -> None:
+                 brain_lock=None, body_lock=None, arena: dict | None = None) -> None:
         self.brain, self.body, self.groups = brain, body, groups
         self.chunk_ms, self.mapper = float(chunk_ms), mapper or body_drive.DriveMapper(chunk_ms)
         self._clock, self.thermal, self._brain_fallback = clock, thermal, brain_fallback
         self.include_active, self.max_active, self.binary_frames = include_active, max_active, binary_frames
         # callables returning a fresh context manager per chunk (SimulationService.exclusive, a lock's `lambda: lock`)
         self._brain_lock, self._body_lock = brain_lock or contextlib.nullcontext, body_lock or contextlib.nullcontext
+        self.arena = arena
         self.seq, self.t_ms = 0, 0.0
         self.fallback: str | None = None
         # "kinematic" = recorded physics gait blended live, "physics" = the MuJoCo body stepped live (see body_kinematic)
@@ -104,7 +119,7 @@ class LiveSession:
         return {"type": "started", "chunk_ms": self.chunk_ms, "backend": self.brain.backend, "fallback": self.fallback,
                 "header": self.body.header, "body_mode": self.body_mode, "body_caption": self.body_caption,
                 "dn_names": list(self.groups), "caption": body_drive.CAPTION,
-                "note": NOTE, "binary_frames": self.binary_frames}
+                "note": NOTE, "binary_frames": self.binary_frames, "arena": self.arena}
 
     # -- one chunk -----------------------------------------------------------------------
 
@@ -144,6 +159,20 @@ class LiveSession:
         with self._lock:
             return self._step_locked(force_binary)
 
+    def _clamp_root(self, pos_um) -> dict:
+        """Physics mode: clamp the reported root (in place) to the arena and say which wall stopped it."""
+        xmin, xmax, ymin, ymax = (float(v) * 1000.0 for v in self.arena["bounds_mm"])
+        pos = pos_um if isinstance(pos_um, np.ndarray) else np.asarray(pos_um)
+        walls = []
+        for col, lo, hi, names in ((0, xmin, xmax, ("x_min", "x_max")), (1, ymin, ymax, ("y_min", "y_max"))):
+            if (pos[:, col] > hi).any():
+                walls.append(names[1])
+            if (pos[:, col] < lo).any():
+                walls.append(names[0])
+            pos[:, col] = np.clip(pos[:, col], lo, hi)
+        return {"bounds_mm": list(self.arena["bounds_mm"]), "blocked": bool(walls), "walls": sorted(walls),
+                "note": PHYSICS_ARENA_NOTE}
+
     def _step_locked(self, force_binary: bool) -> tuple[dict, bytes | None]:
         if self._closed:
             raise RuntimeError("the live session is closed")
@@ -158,6 +187,10 @@ class LiveSession:
             else:
                 out = self.body.advance(self.chunk_ms, sample.drive, sample.escape)
         t2 = self._clock()
+        world = out.get("world")
+        if self.arena and getattr(self.body, "bounds", None) is None:  # the body does not enforce walls: clamp what is reported
+            out = {**out, "thorax": {**out["thorax"], "pos_um": np.array(out["thorax"]["pos_um"])}}
+            world = self._clamp_root(out["thorax"]["pos_um"])
         wall_ms = max((t2 - t0) * 1000.0, 1e-6)
         factor = self.chunk_ms / wall_ms
         self._speeds.append(factor)
@@ -182,8 +215,8 @@ class LiveSession:
             "contact": np.asarray(out["contact"]).tolist(),
             "body_mode": self.body_mode, "body_caption": self.body_caption,
         }
-        if out.get("world"):
-            msg["world"] = out["world"]
+        if world:
+            msg["world"] = world
         if binary:
             msg["frames_binary"] = {"dtype": "<i2", "shape": list(frames.shape)}
         if self.include_active:
@@ -231,6 +264,7 @@ def build_live_session(atlas, row_index, sims, body_lock=None, *, seed: int = 0,
     from flybrain import body_runner
     from flybrain.sim_service import SimulationUnavailable
 
+    arena = arena_spec()
     if body_mode not in BODY_MODES:
         raise ValueError(f"body_mode must be one of {BODY_MODES}")
     if body_mode == "physics":
@@ -244,7 +278,7 @@ def build_live_session(atlas, row_index, sims, body_lock=None, *, seed: int = 0,
             from flybrain.body_kinematic import KinematicBody, load_library
 
             try:
-                body = KinematicBody(load_library())
+                body = KinematicBody(load_library(), bounds=tuple(arena["bounds_mm"]))
             except FileNotFoundError as exc:
                 raise body_runner.BodyUnavailable(f"the motion library is missing ({exc}); run scripts/build_motion_library.py") from exc
         else:
@@ -256,5 +290,5 @@ def build_live_session(atlas, row_index, sims, body_lock=None, *, seed: int = 0,
     return LiveSession(
         brain, body, readout_groups(atlas, row_index), chunk_ms=chunk_ms, thermal=sims.thermal,
         brain_fallback=lambda: cpu.open_stream(seed=seed), include_active=include_active,
-        binary_frames=binary_frames, brain_lock=sims.exclusive, body_lock=(lambda: body_lock) if body_lock is not None else None,
+        binary_frames=binary_frames, arena=arena, brain_lock=sims.exclusive, body_lock=(lambda: body_lock) if body_lock is not None else None,
     )

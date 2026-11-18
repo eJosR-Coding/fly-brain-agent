@@ -5,7 +5,7 @@ import type { JointId } from "./bodyPose";
 import type { WorldPose } from "./bodyClip";
 import { rotationMatrix, splitByJoint } from "./bodyRig";
 import { followStep, gridSegments, gridSnap } from "./bodyWorld";
-import { FOLLOW_SPAN_MM, cubeFitDistance, spanFitDistance } from "./bodyCube";
+import { FOLLOW_SPAN_MM, cubeFitDistance, spanFitDistance, type Arena } from "./bodyCube";
 import { createSandbox, type Sandbox } from "./bodySandbox";
 import { createOrbitGate, orbitDefault } from "./orbit";
 import { createRenderScheduler } from "./renderScheduler";
@@ -35,6 +35,9 @@ export interface BodyScene {
   /** The objects layer of the sandbox (data only): `[{ id, kind: "sugar" | "coffee", pos_mm: [x, y above the floor, z],
    *  size_mm }]` replaces the layer; invalid entries are dropped and listed in `errors`. Objects show while the sandbox is on. */
   setObjects(objects: unknown): { errors: string[] };
+  /** The arena the server enforces (null: the fallback cube): the glass cube is drawn from these bounds so the drawn walls
+   *  coincide with the enforced ones. Rebuilds the cube (and re-applies the objects) when it changed. */
+  setArena(arena: Arena | null): void;
 }
 
 /** The leg bodies a clip can move (6 legs x coxa, trochanterfemur, tibia, tarsus1..5), as named in fly-body.json. */
@@ -198,9 +201,11 @@ function assembleBodyScene(
 
   // built on first use: a viewer that never opens the sandbox pays nothing for it
   let sandboxMade: Sandbox | null = null;
+  let arenaNow: Arena | null = null;
+  let objectsRaw: unknown = [];
   const sandbox = (): Sandbox => {
     if (!sandboxMade) {
-      const made = createSandbox(theme, body.bounds?.min?.[1] ?? 0);
+      const made = createSandbox(theme, body.bounds?.min?.[1] ?? 0, undefined, arenaNow);
       undo.push(() => made.dispose());
       scene.add(made.group);
       sandboxMade = made;
@@ -259,6 +264,27 @@ function assembleBodyScene(
     camera.position.copy(controls.target).addScaledVector(dir.normalize(), distance);
     controls.update();
   };
+  const frameCube = (box: Sandbox) => {
+    const whole = cubeFitDistance(box.bounds, FOV, camera.aspect);
+    camera.far = Math.max(defaultFar, whole * 3);
+    controls.maxDistance = Math.max(size * 4, whole * 1.05);
+    setDistance(spanFitDistance(FOLLOW_SPAN_MM, FOV, camera.aspect));
+  };
+  const sameArena = (a: Arena | null, b: Arena | null) => a === b || (a !== null && b !== null && a.interiorMm === b.interiorMm && a.boundsMm.every((v, i) => v === b.boundsMm[i]));
+  const setArena = (a: Arena | null) => {
+    if (sameArena(a, arenaNow)) return;
+    arenaNow = a;
+    const old = sandboxMade;
+    if (!old) return; // built lazily with the arena
+    scene.remove(old.group);
+    old.dispose();
+    sandboxMade = null;
+    const box = sandbox();
+    box.setVisible(sandboxOn);
+    box.setObjects(objectsRaw);
+    if (sandboxOn) { frameCube(box); camera.updateProjectionMatrix(); }
+    invalidate();
+  };
   const setSandbox = (on: boolean) => {
     if (on === sandboxOn) return;
     sandboxOn = on;
@@ -266,10 +292,7 @@ function assembleBodyScene(
     box.setVisible(on);
     floor.visible = world !== null && !on;
     if (on) {
-      const whole = cubeFitDistance(box.bounds, FOV, camera.aspect);
-      camera.far = Math.max(defaultFar, whole * 3);
-      controls.maxDistance = Math.max(size * 4, whole * 1.05);
-      setDistance(spanFitDistance(FOLLOW_SPAN_MM, FOV, camera.aspect));
+      frameCube(box);
     } else {
       camera.far = defaultFar;
       controls.maxDistance = size * 4;
@@ -357,7 +380,8 @@ function assembleBodyScene(
     setClipFrame,
     setWorld,
     setSandbox,
-    setObjects: (objects) => { const r = sandbox().setObjects(objects); invalidate(); return r; },
+    setObjects: (objects) => { objectsRaw = objects; const r = sandbox().setObjects(objects); invalidate(); return r; },
+    setArena,
     jointIds: () => rigged.map((j) => j.id),
     dispose() {
       // the undo list holds every resource in creation order: scheduler, observer, controls, geometries, materials, renderer

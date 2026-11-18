@@ -5,7 +5,7 @@
  *  the fly's own lines. The fly's depth-only occluder (render order -1) therefore hides the faces and edges behind the
  *  body and the faces in front of it blend a little tint over it, so the fly stays visible through the glass. No shaders. */
 import * as THREE from "three";
-import { CUBE_GRID_CELLS, SANDBOX_INTERIOR_MM, cubeBounds, cubeEdges, cubeFaces, type Bounds } from "./bodyCube";
+import { CUBE_GRID_CELLS, SANDBOX_INTERIOR_MM, arenaBounds, cubeBounds, type Arena, cubeEdges, cubeFaces, type Bounds } from "./bodyCube";
 import { OBJECT_COLORS, OBJECT_KINDS, validateObjects, type ObjectKind, type SandboxObject } from "./bodyObjects";
 import { gridSegments } from "./bodyWorld";
 import type { Theme } from "./theme";
@@ -26,8 +26,9 @@ export interface Sandbox {
 }
 
 /** `floorY` is the world height of the floor (the fly's lowest point). */
-export function createSandbox(theme: Theme, floorY: number, interiorMm: number = SANDBOX_INTERIOR_MM): Sandbox {
-  const bounds = cubeBounds(floorY, interiorMm);
+export function createSandbox(theme: Theme, floorY: number, interiorMm: number = SANDBOX_INTERIOR_MM, arena: Arena | null = null): Sandbox {
+  if (arena) interiorMm = arena.interiorMm;
+  const bounds = arena ? arenaBounds(floorY, arena) : cubeBounds(floorY, interiorMm);
   const disposables: Array<{ dispose(): void }> = [];
   const own = <T extends { dispose(): void }>(d: T): T => { disposables.push(d); return d; };
   const group = new THREE.Group();

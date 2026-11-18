@@ -198,7 +198,7 @@ def test_missing_body_or_weights_close_with_4503_and_the_reason(tiny_tsv_path, s
             with pytest.raises(WebSocketDisconnect) as e:
                 ws.receive_json()
             assert e.value.code == 4503 and needle in e.value.reason
-            assert not c.app.state.live_lock.locked()
+            assert wait_for(lambda: not c.app.state.live_lock.locked())  # teardown runs in a worker thread
 
 
 def test_default_factory_reports_missing_flygym_as_4503(tiny_tsv_path, svc, monkeypatch):
@@ -274,3 +274,73 @@ def test_health_gpu_reports_thermal_and_live(tiny_tsv_path, svc):
         svc.thermal.allow()
         h = c.get("/health/gpu").json()
         assert h["thermal"]["hot"] is True and h["thermal"]["limit_c"] == 80.0
+
+
+def test_started_message_reaches_the_client_with_the_arena(tiny_tsv_path, svc):
+    from flybrain.live import arena_spec
+
+    probe = Probe()
+    base = fake_factory(probe)
+
+    def factory(atlas, row_index, sims, body_lock, **kw):
+        s = base(atlas, row_index, sims, body_lock, **kw)
+        s.arena = arena_spec()
+        return s
+
+    with TestClient(create_app(atlas_path=tiny_tsv_path, simulation=svc, live_factory=factory)) as c, c.websocket_connect("/ws/live") as ws:
+        ws.send_json({"type": "start", "preset": None, "rate_hz": 0})
+        assert ws.receive_json()["arena"]["bounds_mm"] == [-25.0, 25.0, -25.0, 25.0]
+
+
+def test_a_new_start_right_after_a_client_stop_succeeds_while_teardown_is_slow(tiny_tsv_path, svc):
+    probe = Probe()
+    base = fake_factory(probe)
+    release = threading.Event()
+
+    def factory(atlas, row_index, sims, body_lock, **kw):
+        s = base(atlas, row_index, sims, body_lock, **kw)
+        orig = s.close
+
+        def slow_close():
+            release.wait(0.5)  # teardown takes a while (GPU state freed in a worker thread)
+            orig()
+
+        s.close = slow_close
+        return s
+
+    with TestClient(create_app(atlas_path=tiny_tsv_path, simulation=svc, live_factory=factory)) as c:
+        with c.websocket_connect("/ws/live") as ws1:
+            ws1.send_json({"type": "start", "preset": None, "rate_hz": 0})
+            recv_until(ws1, "chunk")
+            ws1.send_json({"type": "stop"})
+            recv_until(ws1, "stopped")
+        with c.websocket_connect("/ws/live") as ws2:  # immediately, while the first teardown is still running
+            ws2.send_json({"type": "start", "preset": None, "rate_hz": 0})
+            assert ws2.receive_json()["type"] == "started"
+
+
+def test_restart_wait_is_bounded_and_a_live_session_still_gets_4409_at_once(tiny_tsv_path, svc):
+    probe = Probe()
+    with TestClient(app_with(tiny_tsv_path, svc, probe)) as c:
+        c.app.state.live_busy_wait_s = 0.2
+        with c.websocket_connect("/ws/live") as ws1:
+            ws1.send_json({"type": "start", "preset": None, "rate_hz": 0})
+            recv_until(ws1, "chunk")
+            t0 = time.time()
+            with c.websocket_connect("/ws/live") as ws2:
+                with pytest.raises(WebSocketDisconnect) as e:
+                    ws2.receive_json()
+            assert e.value.code == 4409 and time.time() - t0 < 0.15  # live, not closing: no waiting
+        # teardown stuck forever: the waiter gives up after the bound and refuses with 4409
+        assert wait_for(lambda: not c.app.state.live_lock.locked())
+        c.app.state.live_lock.acquire()
+        c.app.state.live_closing = True
+        try:
+            t0 = time.time()
+            with c.websocket_connect("/ws/live") as ws3:
+                with pytest.raises(WebSocketDisconnect) as e:
+                    ws3.receive_json()
+            assert e.value.code == 4409 and 0.15 <= time.time() - t0 < 2.0
+        finally:
+            c.app.state.live_closing = False
+            c.app.state.live_lock.release()
