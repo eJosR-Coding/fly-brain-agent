@@ -16,8 +16,10 @@ Pipeline, once per live chunk (50 ms = ten 200 Hz frames of the fly's pose):
    split into ON (T4: brightening) and OFF (T5: darkening) channels, first-order low-pass delay on the neighbour column
    UPSTREAM of the preferred direction, full opponent, rectified. A static scene or a uniform luminance change gives
    exactly zero. The photoreceptor / lamina / medulla path is BYPASSED: this replaces it, it is not a model of it.
-4. Rate: drive in [0, 1] -> Poisson rate = MAX_RATE_HZ * drive. MAX_RATE_HZ = 300 Hz is the scale of the validated
-   looming configuration (looming escape at 300 Hz on T4/T5); the saturating map and its gain are OUR choice.
+4. Rate: drive in [0, 1] -> Poisson rate = MAX_RATE_HZ * drive. MAX_RATE_HZ = 100 Hz is the CALIBRATED scale (see the comment at
+   MAX_RATE_HZ: loom fires the ipsilateral giant fiber, floor flow, receding and dimming do not, for 75-200 Hz); the saturating
+   map and its gain are OUR choice. The detector's temporal optimum is 3 Hz (HRC_OPTIMAL_TF_HZ, tau 53 ms), our choice inside the
+   published bracket.
 
 The eye sees the pose of the chunk that just ended and its rates drive the NEXT chunk: one chunk (50 ms) of latency.
 """
@@ -36,10 +38,22 @@ SUBTYPES = "abcd"
 EYE_AXIS_AZIMUTH_DEG = 65.0  # eye axis from the heading, toward its own side (our choice)
 HEAD_FORWARD_MM, HEAD_UP_MM = 0.5, 0.3  # head relative to the thorax (our choice)
 FRAME_MS = 5.0  # 200 Hz frames, as the body reports
-TAU_LP_MS = 40.0  # Reichardt delay (low-pass) time constant (our choice)
+HRC_OPTIMAL_TF_HZ = 3.0  # temporal-frequency optimum of the detector, our choice inside the measured bracket (see TAU_LP_MS)
+# Reichardt delay (low-pass) time constant: a first-order delay peaks at f = 1 / (2 pi tau). Bracket (calcium imaging, Strother et al.
+# 2018 PNAS, PMC5776785): a resting T4 gives monotonically smaller responses from 1 to 27 Hz gratings, behavioural state
+# (walking) lifts them mostly between 1 and 10 Hz; no direct measurement of the optimum for a walking fly was found, so 3 Hz is OUR choice.
+TAU_LP_MS = 1000.0 / (2.0 * np.pi * HRC_OPTIMAL_TF_HZ)  # 53.05 ms
 TAU_ADAPT_MS = 300.0  # slow adaptation: contrast is relative to this running mean (our choice)
 HR0 = 0.02  # drive = 1 - exp(-mean_hr / HR0): saturating map from correlator output to [0, 1] (our choice)
-MAX_RATE_HZ = 300.0
+# THE one free scale of the eye (T4/T5 Poisson rate at drive 1). No published firing rate of T4/T5 exists: whole-cell recordings find graded
+# potentials (no verified spikes; Gruntman et al. 2018 Nat Neurosci PMC5967973, Gruntman et al. 2019 eLife PMC6917495), so this is a stand-in for
+# the synaptic output of a graded cell. CALIBRATED against the live brain (odd/tasks/playground.md, CL1 calibration; 12 brain seeds per cell,
+# detector tau 53 ms): 50 Hz is the first scale at which a dark looming disc (r/v 20 and 40 ms, right eye) fires the ipsilateral DNp01 (0.83 of the
+# trials), from 75 to 200 Hz it does in all 12 trials while receding, a uniform dimming and walking at 14 mm/s over the checkered floor fire
+# neither DNp01 in any trial; at 300 Hz the floor flow fires DNp01 (0.75). 100 Hz sits in the middle of that range (geometric centre ~120 Hz).
+# The window is a property of THIS front end and weights (e.g. the connectome has no inhibition that cancels floor flow), not a measurement.
+MAX_RATE_HZ = 100.0
+MAX_RATE_CALIBRATED = True
 MIN_RATE_HZ = 1.0  # driven cells below this are left out (a handful of near-zero rows per chunk are not worth sending)
 NEIGHBOUR_COS = 0.8  # the upstream column must lie within ~37 deg of the opposite of the preferred direction
 # the six nearest columns in (p, q): from the fitted lens map the steps (+-1, 0), (0, +-1), +-(1, 1) are each ~4 deg away
