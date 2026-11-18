@@ -222,11 +222,11 @@ def build_server(
     ) -> dict:
         """Persistent simulated fly (MODEL, Shiu et al. 2024). Changes its conditions, then runs ALL its stimuli together.
 
-        Conditions persist between calls (shared by every chat of this server). Returns conditions, active count,
+        Conditions persist between calls. Returns conditions, active count,
         responders, readouts (meaning, Hz), `change_vs_previous`. No stimulus: no run.
 
         Args:
-            stimuli: preset -> Hz 1..300 (sugar|bitter|water|jo_ce = antenna: wind, touch), added or replaced; max 6.
+            stimuli: preset -> Hz 1..300 (sugar|bitter|water|jo_ce = antenna: wind, touch; dng100|dna02_left|dna02_right = direct activation), added or replaced; max 6.
             remove: names to drop. silence: presets whose output is cut. readouts: mn9|abn1|dnp01 (a stimulus adds its own).
             reset: clear all first. duration_ms: 100..1000. trials: 1..10 (3).
         """

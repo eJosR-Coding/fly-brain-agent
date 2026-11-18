@@ -5,8 +5,12 @@ the escape rule below are our choices, not a published DN -> motor map). Inputs 
 (mean Hz of a neuron group per time bin, as sim_service.ActivityRecord.readouts); output is one drive per bin:
 
 * forward  (0..1) from DNg100: 0 below FORWARD_THRESHOLD_HZ, linear up to 1 at FORWARD_SATURATION_HZ.
-* turn     (-1..1) from the DNa02 - DNa01 rate difference over TURN_SATURATION_HZ, clamped. POSITIVE = turn LEFT
-  (counter-clockwise seen from above, +yaw). Here DNa02 is read as the left and DNa01 as the right readout.
+* turn     (-1..1) from LEFT minus RIGHT within each steering cell type. DNa01 and DNa02 are two cell types with ONE
+  neuron on EACH side of the brain (FlyWire annotations v783), so the readouts are per side: dna02_left, dna02_right,
+  dna01_left, dna01_right. turn = (DNA02_GAIN*(l02 - r02) + DNA01_GAIN*(l01 - r01)) / TURN_SATURATION_HZ, clamped.
+  POSITIVE = turn LEFT (counter-clockwise seen from above, +yaw). Direction: Rayshubskiy et al. (eLife 102230) report
+  that DNa01/DNa02 activity predicts IPSILATERAL turning (stronger left neuron -> turn left); DNa02 is the transient
+  high-gain steering neuron, DNa01 the slower low-gain one. The 1.0 / 0.4 weights are OUR choice, not published values.
 * escape   from DNp01: strength 0..1 between ESCAPE_THRESHOLD_HZ and ESCAPE_SATURATION_HZ; the bin is "escape" when the
   strength is above 0. Escape takes precedence: the legs stop and the viewer raises the wings (no takeoff model).
 * drive    the flygym HybridTurningController descending signal [left, right]. That controller uses |drive| as the
@@ -37,10 +41,15 @@ BASE_MAX = 1.0  # both sides at full forward
 TURN_GAIN = 0.5  # fraction of the base amplitude removed from the inner side / added to the outer side at turn = 1
 TURN_ONLY_FORWARD = 0.5  # a turn command with no DNg100 still walks, at this forward level
 
-FORWARD_NAME, TURN_LEFT_NAME, TURN_RIGHT_NAME, ESCAPE_NAME = "dng100", "dna02", "dna01", "dnp01"
+DNA02_GAIN = 1.0  # high-gain steering neuron (our weight)
+DNA01_GAIN = 0.4  # low-gain steering neuron (our weight)
+
+FORWARD_NAME, ESCAPE_NAME = "dng100", "dnp01"
+TURN_NAMES = (("dna02_left", "dna02_right", DNA02_GAIN), ("dna01_left", "dna01_right", DNA01_GAIN))
+READOUT_NAMES = (FORWARD_NAME, "dna01_left", "dna01_right", "dna02_left", "dna02_right", ESCAPE_NAME)
 
 CAPTION = (
-    "Body drive: our own mapping of descending-neuron rates (DNg100 forward, DNa02/DNa01 turn, DNp01 stop and raise "
+    "Body drive: our own mapping of descending-neuron rates (DNg100 forward, left-minus-right DNa02/DNa01 turn, DNp01 stop and raise "
     "wings) onto NeuroMechFly's walking controller; the mapping is not published and the body is not the connectome."
 )
 
@@ -94,7 +103,7 @@ def drive_from_readouts(readouts, bin_ms: float, smooth_tau_ms: float = SMOOTH_T
     """Per-bin body drive from a list of {"name", "hz": [...]} readouts (extra keys ignored)."""
     if not bin_ms or not math.isfinite(bin_ms) or bin_ms <= 0:
         raise ValueError("bin_ms must be positive")
-    found = {n: _trace(readouts, n) for n in (FORWARD_NAME, TURN_LEFT_NAME, TURN_RIGHT_NAME, ESCAPE_NAME)}
+    found = {n: _trace(readouts, n) for n in READOUT_NAMES}
     n = max((len(t) for t in found.values() if t is not None), default=0)
 
     def rate(name: str) -> np.ndarray:
@@ -105,7 +114,8 @@ def drive_from_readouts(readouts, bin_ms: float, smooth_tau_ms: float = SMOOTH_T
         return out
 
     forward = _ramp(rate(FORWARD_NAME), FORWARD_THRESHOLD_HZ, FORWARD_SATURATION_HZ)
-    turn = np.clip((rate(TURN_LEFT_NAME) - rate(TURN_RIGHT_NAME)) / TURN_SATURATION_HZ, -1.0, 1.0)
+    steer = sum(g * (rate(left) - rate(right)) for left, right, g in TURN_NAMES)
+    turn = np.clip(steer / TURN_SATURATION_HZ, -1.0, 1.0)
     escape_strength = _ramp(rate(ESCAPE_NAME), ESCAPE_THRESHOLD_HZ, ESCAPE_SATURATION_HZ)
     escape = escape_strength > 0
 

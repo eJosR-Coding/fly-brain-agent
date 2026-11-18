@@ -35,29 +35,47 @@ def test_forward_walks_straight_with_equal_sides_in_the_valid_range():
     assert weak.drive[0, 0] < d.drive[0, 0]
 
 
-def test_turn_sign_left_neurons_stronger_turns_left_by_lowering_the_left_drive():
-    left = run([ro("DNg100", flat(60)), ro("DNa02", flat(40)), ro("DNa01", flat(0))])
+def test_turn_sign_stronger_left_neurons_turn_left_by_lowering_the_left_drive():
+    left = run([ro("DNg100", flat(60)), ro("DNa02_left", flat(40)), ro("DNa02_right", flat(0))])
     assert (left.turn > 0).all()  # positive = turn left (counter-clockwise seen from above)
     assert (left.drive[:, 0] < left.drive[:, 1]).all()
-    right = run([ro("DNg100", flat(60)), ro("DNa02", flat(0)), ro("DNa01", flat(40))])
+    right = run([ro("DNg100", flat(60)), ro("DNa02_left", flat(0)), ro("DNa02_right", flat(40))])
     assert (right.turn < 0).all() and (right.drive[:, 0] > right.drive[:, 1]).all()
 
 
-def test_turn_is_a_saturating_difference_and_zero_when_balanced():
-    bal = run([ro("DNg100", flat(60)), ro("DNa01", flat(30)), ro("DNa02", flat(30))])
+def test_turn_is_a_saturating_left_minus_right_difference_and_zero_when_balanced():
+    bal = run([ro("DNg100", flat(60)), ro("DNa02_left", flat(30)), ro("DNa02_right", flat(30)),
+               ro("DNa01_left", flat(20)), ro("DNa01_right", flat(20))])
     assert np.allclose(bal.turn, 0)
-    big = run([ro("DNg100", flat(60)), ro("DNa01", flat(0)), ro("DNa02", flat(1000))])
+    big = run([ro("DNg100", flat(60)), ro("DNa02_left", flat(1000)), ro("DNa02_right", flat(0))])
     assert (big.turn == 1.0).all()
+    # both cell types firing on ONE side only is a turn; the same rate on both sides is not
+    assert (run([ro("DNa01_left", flat(30))]).turn > 0).all()
+    assert np.allclose(run([ro("DNa01_left", flat(30)), ro("DNa01_right", flat(30))]).turn, 0)
+
+
+def test_dna02_has_more_steering_gain_than_dna01_and_both_add_up():
+    a02 = run([ro("DNa02_left", flat(10))]).turn[0]
+    a01 = run([ro("DNa01_left", flat(10))]).turn[0]
+    assert a02 == pytest.approx(10 * bd.DNA02_GAIN / bd.TURN_SATURATION_HZ)
+    assert 0 < a01 < a02 and bd.DNA02_GAIN > bd.DNA01_GAIN
+    both = run([ro("DNa02_left", flat(10)), ro("DNa01_left", flat(10))]).turn[0]
+    assert both == pytest.approx(a02 + a01)
+
+
+def test_the_unsided_cell_type_names_are_not_a_turn_signal():
+    d = run([ro("DNa02", flat(40)), ro("DNa01", flat(0))])
+    assert (d.turn == 0).all()
 
 
 def test_turn_alone_still_walks_at_a_modest_pace():
-    d = run([ro("DNa02", flat(40))])
+    d = run([ro("DNa02_left", flat(40))])
     assert (d.drive > 0).all() and d.drive.max() <= bd.DRIVE_MAX
     assert (d.forward == 0).all()
 
 
 def test_escape_takes_precedence_stops_legs_and_flags_wings():
-    d = run([ro("DNg100", flat(60)), ro("DNa02", flat(40)), ro("DNp01", [0, 0, 80, 80, 0, 0, 0, 0, 0, 0])])
+    d = run([ro("DNg100", flat(60)), ro("DNa02_left", flat(40)), ro("DNp01", [0, 0, 80, 80, 0, 0, 0, 0, 0, 0])])
     assert d.escape.tolist() == [False, False, True, True] + [False] * 6
     assert (d.drive[d.escape] == 0).all() and (d.drive[~d.escape] > 0).all()
     assert d.escape_strength[2] == 1.0 and d.escape_strength[0] == 0.0
@@ -66,7 +84,7 @@ def test_escape_takes_precedence_stops_legs_and_flags_wings():
 def test_missing_readouts_give_zero_components():
     d = run([])
     assert d.n_bins == 0
-    d = run([ro("DNa02", flat(40))])
+    d = run([ro("DNa02_left", flat(40))])
     assert (d.forward == 0).all() and (d.escape == 0).all()
     d = run([ro("DNg100", flat(60))])
     assert (d.turn == 0).all()
@@ -80,12 +98,12 @@ def test_names_match_case_insensitively_and_none_names_are_ignored():
 
 
 def test_unequal_lengths_use_the_longest_and_pad_with_zero():
-    d = run([ro("DNg100", flat(60, 10)), ro("DNa02", flat(40, 4))])
+    d = run([ro("DNg100", flat(60, 10)), ro("DNa02_left", flat(40, 4))])
     assert d.n_bins == 10 and (d.turn[:4] > 0).all() and (d.turn[4:] == 0).all()
 
 
 def test_drive_stays_in_range_for_extreme_inputs():
-    d = run([ro("DNg100", flat(1e9)), ro("DNa02", flat(1e9)), ro("DNa01", flat(0))])
+    d = run([ro("DNg100", flat(1e9)), ro("DNa02_left", flat(1e9)), ro("DNa02_right", flat(0))])
     assert d.drive.min() >= bd.DRIVE_MIN and d.drive.max() <= bd.DRIVE_MAX
 
 
@@ -98,7 +116,7 @@ def test_smoothing_is_a_causal_low_pass_over_bins():
 
 
 def test_deterministic_and_does_not_mutate_inputs():
-    r = [ro("DNg100", flat(30)), ro("DNa02", flat(20)), ro("DNp01", flat(0))]
+    r = [ro("DNg100", flat(30)), ro("DNa02_left", flat(20)), ro("DNp01", flat(0))]
     import copy
     before = copy.deepcopy(r)
     a, b = bd.drive_from_readouts(r, bin_ms=50.0), bd.drive_from_readouts(r, bin_ms=50.0)

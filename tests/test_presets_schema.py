@@ -10,7 +10,8 @@ from test_stimulate import store  # noqa: F401  (fixture)
 ROOT = Path(__file__).resolve().parents[1]
 ATLAS_TSV = ROOT / "data/raw/flywire_neuron_annotations.tsv"
 ROLES = {"sugar": "stimulus", "bitter": "stimulus", "water": "stimulus", "jo_ce": "stimulus",
-         "mn9": "readout", "abn1": "readout", "dnp01": "readout"}
+         "mn9": "readout", "abn1": "readout", "dnp01": "readout",
+         "dng100": "stimulus", "dna02_left": "stimulus", "dna02_right": "stimulus"}
 VALIDATED = {"sugar", "bitter", "water", "mn9", "jo_ce", "abn1"}
 # sugar still lists its one v630 id that is gone in v783 (named in its `source`)
 ABSENT_IN_V783 = {"sugar": 1}  # kept from the original preset (20 of 21 exist); the others list only present ids
@@ -39,6 +40,14 @@ def test_dnp01_is_exploratory_and_says_why():
     assert p["meaning"] == "escape take-off (giant fiber)"
 
 
+def test_direct_activation_presets_are_exploratory_and_say_so():
+    ps = tools.load_presets()
+    for name in ("dng100", "dna02_left", "dna02_right"):
+        assert "direct activation" in ps[name]["source"] and "behavior link" in ps[name]["source"]
+        assert "direct activation" in ps[name]["meaning"]
+    assert len(ps["dng100"]["root_ids"]) == 2 and len(ps["dna02_left"]["root_ids"]) == 1
+
+
 def test_preset_selection_returns_role_meaning_validation(tiny_atlas, store):
     presets = {"orn": {"description": "d", "root_ids": [102], "source": "s",
                        "role": "stimulus", "meaning": "smell", "validation": "validated"}}
@@ -65,3 +74,10 @@ def test_every_preset_id_exists_in_the_real_atlas():
         assert present == len(p["root_ids"]) - ABSENT_IN_V783.get(name, 0), name
     dnp01 = {i for i, ct in rows if ct == "DNp01"}
     assert len(dnp01) == 2 and set(tools.load_presets()["dnp01"]["root_ids"]) == dnp01
+    with ATLAS_TSV.open(newline="") as f:
+        sided = {(r["cell_type"], r["side"]): int(r["root_id"]) for r in csv.DictReader(f, delimiter="\t")
+                 if r["cell_type"] in ("DNg100", "DNa02", "DNa01")}
+    ps = tools.load_presets()
+    assert set(ps["dng100"]["root_ids"]) == {sided[("DNg100", "left")], sided[("DNg100", "right")]}
+    assert ps["dna02_left"]["root_ids"] == [sided[("DNa02", "left")]]
+    assert ps["dna02_right"]["root_ids"] == [sided[("DNa02", "right")]]

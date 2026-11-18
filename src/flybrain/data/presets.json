@@ -196,6 +196,37 @@
       "role": "readout",
       "meaning": "escape take-off (giant fiber)",
       "validation": "exploratory"
+    },
+    "dng100": {
+      "description": "DNg100, the pair of descending neurons (one per side) whose activation is linked to walking; used here as a direct-activation (optogenetics-like) stimulus for the body",
+      "root_ids": [
+        720575940640978048,
+        720575940647228468
+      ],
+      "source": "FlyWire annotations v783 (cell_type DNg100, side left and right); direct activation, NOT a sensory pathway: behavior link: DNg100 drives walking (Pugliese et al. 2026, Nature; Bidaye et al. 2020, Neuron, for the DN walking-command class); the brain model does not show which sensory input recruits it",
+      "role": "stimulus",
+      "meaning": "walking command (direct activation)",
+      "validation": "exploratory"
+    },
+    "dna02_left": {
+      "description": "DNa02 on the LEFT side (one neuron), a direct-activation (optogenetics-like) steering stimulus for the body",
+      "root_ids": [
+        720575940629327659
+      ],
+      "source": "FlyWire annotations v783 (cell_type DNa02, side left); direct activation, NOT a sensory pathway: behavior link: DNa02 activity predicts ipsilateral steering (Rayshubskiy et al. 2025, eLife 102230)",
+      "role": "stimulus",
+      "meaning": "steering left (direct activation)",
+      "validation": "exploratory"
+    },
+    "dna02_right": {
+      "description": "DNa02 on the RIGHT side (one neuron), a direct-activation (optogenetics-like) steering stimulus for the body",
+      "root_ids": [
+        720575940604737708
+      ],
+      "source": "FlyWire annotations v783 (cell_type DNa02, side right); direct activation, NOT a sensory pathway: behavior link: DNa02 activity predicts ipsilateral steering (Rayshubskiy et al. 2025, eLife 102230)",
+      "role": "stimulus",
+      "meaning": "steering right (direct activation)",
+      "validation": "exploratory"
     }
   }
 }

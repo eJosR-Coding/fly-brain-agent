@@ -46,7 +46,7 @@ def test_packaged_presets_are_cited_and_complete():
     assert presets["mn9"]["root_ids"] == [720575940660219265]
     for name, p in presets.items():
         assert p["description"] and p["source"]
-        if name != "dnp01":  # dnp01 comes from the FlyWire annotations, not from Shiu et al.
+        if name not in ("dnp01", "dng100", "dna02_left", "dna02_right"):  # these come from the FlyWire annotations
             assert "91bdd1e" in p["source"] and "MIT" in p["source"]
 
 

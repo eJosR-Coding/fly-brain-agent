@@ -16,16 +16,22 @@ model + NeuroMechFly; mapping and code not published).
 ## Tasks
 - [x] B1 pure DN -> drive mapping: forward from DNg100 (with a threshold), turn from DNa01/DNa02 left-right difference,
       escape (stop + wings) from DNp01; per-bin from a recording's named readouts; tests.
+      CORRECTION (B3): DNa01/DNa02 are one neuron per SIDE, so turn = left minus right within each type (dna02_left/right,
+      dna01_left/right; DNa02 gain 1.0, DNa01 0.4 = our weights); ipsilateral direction per Rayshubskiy et al. eLife 102230.
 - [x] B2 body runner: flygym as an OPTIONAL extra (`body`), runs the controller with a time-varying drive, returns a
       fly-walk/1 clip incl. thorax path; refused clearly when not installed; tests (pure parts; runner gated).
-- [ ] B3 API + presets: direct-activation presets (dng100 walk, dna02 left/right turn) with recordings that carry the DN
+- [x] B3 API + presets: direct-activation presets (dng100 walk, dna02 left/right turn) with recordings that carry the DN
       readouts; POST route recording -> body clip; agent access within the tool budget.
 - [ ] B4 viewer: play the body clip with the brain recording, caption with the mapping disclaimer; chips.
 
 ## Progress
 B1/B2 done (uncommitted): src/flybrain/body_drive.py, src/flybrain/body_runner.py (shared exporter logic; the script regenerates the
 walking asset byte-identically), optional extra `body` (flygym==2.1.1, uv.lock updated), tests/test_body_drive.py (14) and
-tests/test_body_runner.py (7 pure + 5 physics, gated). Physics ~8 s wall per simulated second. Next: B3.
+tests/test_body_runner.py (7 pure + 5 physics, gated). Physics ~8 s wall per simulated second. 
+B3 done (uncommitted): presets dng100 / dna02_left / dna02_right (role stimulus, exploratory, 'direct activation'),
+src/flybrain/body_readouts.py (DN traces computed on demand from any recording's frames), body_service.py, route
+POST /body/from-simulation/{id} (<= 3000 ms, 503 without the extra), tests; `fly` description names the new presets within
+the tool-def budget. Real end-to-end: dng100 200 Hz -> walks ~11 mm/s; dna02_left/right turn the expected way; sugar: no walk. Next: B4.
 
 ## Checks
 TDD strict. `uv run pytest -q`, `pnpm -C web test`, `pnpm -C web build`. Base: feat/walk-06-player (PRs #62-#67, unmerged).
