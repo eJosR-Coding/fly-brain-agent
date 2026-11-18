@@ -47,6 +47,29 @@ VISION_CAPTION = (
     "Vision is OURS: the fly's motion through the glass cube becomes T4/T5 firing rates (Reichardt correlators, photoreceptor "
     "path bypassed); what the fly does is whatever the brain does with that input, nothing is scripted."
 )
+TOUCH_HZ = 100.0  # OUR constant rate for antennal mechanosensors when the body is blocked by a wall (labelled, not validated)
+TOUCH_HEAD_ON_DEG = 30.0  # a wall within this angle of the heading touches both antennae
+TOUCH_NOTE = (f"Touch is OURS (not validated): while a glass wall blocks the fly, the antennal mechanosensors (Johnston's organ JO-* "
+              f"and antennal bristles BM_Ant) on the side of the contact fire at a constant {TOUCH_HZ:g} Hz (both when head-on); the leg "
+              "mechanosensors are in the VNC, which this brain-only connectome does not contain; what the fly does is the brain's")
+_WALL_NORMAL_DEG = {"x_max": 0.0, "y_max": 90.0, "x_min": 180.0, "y_min": -90.0}  # outward normal of each wall, arena frame
+
+
+def touch_sides(walls, yaw_deg: float) -> list[str]:
+    """Antennae touched by the walls that blocked the fly: left / right relative to the heading, both when head-on.
+    A wall behind the fly (more than 90 deg off the heading) touches no antenna."""
+    sides: set[str] = set()
+    for w in walls or ():
+        rel = (_WALL_NORMAL_DEG[w] - float(yaw_deg) + 180.0) % 360.0 - 180.0
+        if abs(rel) > 90.0:
+            continue
+        if abs(rel) <= TOUCH_HEAD_ON_DEG:
+            sides.update(("left", "right"))
+        else:
+            sides.add("left" if rel > 0 else "right")
+    return sorted(sides)
+
+
 MAX_COMBINED_HZ = 10000.0  # the brain's per-neuron ceiling (0.1 ms tick)
 
 
@@ -79,7 +102,7 @@ class LiveSession:
                  thermal=None, brain_fallback: Callable[[], object] | None = None, include_active: bool = False,
                  max_active: int = MAX_ACTIVE_ROWS, binary_frames: bool = False,
                  brain_lock=None, body_lock=None, arena: dict | None = None, vision=None,
-                 taste_rows: dict[str, np.ndarray] | None = None) -> None:
+                 taste_rows: dict[str, np.ndarray] | None = None, touch_rows: dict[str, np.ndarray] | None = None) -> None:
         self.brain, self.body, self.groups = brain, body, groups
         self.chunk_ms, self.mapper = float(chunk_ms), mapper or body_drive.DriveMapper(chunk_ms)
         self._clock, self.thermal, self._brain_fallback = clock, thermal, brain_fallback
@@ -91,6 +114,9 @@ class LiveSession:
         self.world = live_world.World(arena["bounds_mm"] if arena else None)
         self.taste_rows = taste_rows or {}
         self._taste_sig: tuple = ()
+        # antennal touch: sides blocked by a wall in the PREVIOUS chunk (the contact is known after the body moved)
+        self.touch_rows = touch_rows or {}
+        self._touch: list[str] = []
         self._touched: list[str] = []
         # the fly's eye (fly_eye.VisionFrontEnd or a stand-in): sets per-neuron T4/T5 rates every chunk from the pose of the last one
         self.vision = vision
@@ -149,11 +175,11 @@ class LiveSession:
     def _apply_taste(self) -> None:
         """No eye: set user stimulus + taste rates on the brain when the touched set changed."""
         hz = self.world.taste(self._touched, self.taste_rows)
-        sig = tuple(sorted(hz.items()))
+        sig = (tuple(sorted(hz.items())), tuple(self._touch))
         if sig == self._taste_sig:
             return
         self._taste_sig = sig
-        if not hz:
+        if not hz and not self._touch:
             self._applied = None
             rows, rate = self._stimulus
             self.brain.set_stimulus(rows, rate)
@@ -169,6 +195,10 @@ class LiveSession:
         for preset, hz in self.world.taste(self._touched, self.taste_rows).items():
             tr = self.taste_rows[preset]
             rows, rates = np.concatenate([rows, tr]), np.concatenate([rates, np.full(len(tr), hz)])
+        for side in self._touch:
+            tr = self.touch_rows.get(side)
+            if tr is not None and len(tr):
+                rows, rates = np.concatenate([rows, tr]), np.concatenate([rates, np.full(len(tr), TOUCH_HZ)])
         user_rows, user_rate = self._stimulus
         if user_rows and user_rate > 0:
             rows, rates = np.concatenate([rows, np.asarray(user_rows, dtype=np.int64)]), np.concatenate([rates, np.full(len(user_rows), user_rate)])
@@ -264,7 +294,7 @@ class LiveSession:
             self._apply_vision(seen)
             tb = self._clock()
         else:
-            if self._touched or self._taste_sig:
+            if self._touched or self._taste_sig or self._touch:
                 with self._brain_lock():
                     self._apply_taste()
             tb = t0
@@ -283,6 +313,8 @@ class LiveSession:
             out = {**out, "thorax": {**out["thorax"], "pos_um": np.array(out["thorax"]["pos_um"])}}
             world = self._clamp_root(out["thorax"]["pos_um"])
         self._pose = (np.asarray(out["thorax"]["pos_um"]), np.asarray(out["thorax"]["yaw_deg"]))
+        touch_now = self._touch  # what this chunk's brain received
+        self._touch = touch_sides((world or {}).get("walls"), float(self._pose[1][-1])) if self.touch_rows else []
         wall_ms = max((t2 - t0) * 1000.0, 1e-6)
         factor = self.chunk_ms / wall_ms
         self._speeds.append(factor)
@@ -308,6 +340,9 @@ class LiveSession:
             "body_mode": self.body_mode, "body_caption": self.body_caption,
             "senses": self._senses({k: seen.stats[k] for k in ("driven_cells", "max_rate_hz", "mean_rate_hz")} if seen else None),
         }
+        if self.touch_rows:
+            msg["senses"]["touch"] = {"sides": touch_now, "driven_cells": sum(len(self.touch_rows.get(s, ())) for s in touch_now),
+                                      "rate_hz": TOUCH_HZ if touch_now else 0.0, "note": TOUCH_NOTE}
         if seen is not None:
             msg["wall_ms"]["vision"] = round((tb - t0) * 1000.0, 3)
         if world or self.world.objects or self.world.used:
@@ -409,8 +444,19 @@ def build_live_session(atlas, row_index, sims, body_lock=None, *, seed: int = 0,
             taste[name] = preset_rows(atlas, row_index, name)
         except Exception:  # noqa: BLE001 - no taste neurons in this atlas: touching a cube then drives nothing
             pass
+    touch = {}
+    try:
+        nm = atlas.neurons
+        for side in ("left", "right"):
+            ct = nm["cell_type"].fillna("")
+            sel = (nm["side"] == side) & (nm["cell_class"] == "mechanosensory") & (ct.str.startswith("JO") | ct.str.startswith("BM_Ant"))
+            ids = nm.loc[sel, "root_id"].to_numpy()
+            r = row_index.positions(ids)
+            touch[side] = r[r >= 0].astype(np.int64)
+    except Exception:  # noqa: BLE001 - no such cells in this atlas: touching a wall then drives nothing
+        touch = {}
     return LiveSession(
         brain, body, readout_groups(atlas, row_index), chunk_ms=chunk_ms, thermal=sims.thermal,
         brain_fallback=lambda: cpu.open_stream(seed=seed), include_active=include_active,
-        binary_frames=binary_frames, arena=arena, vision=front, taste_rows=taste, brain_lock=sims.exclusive, body_lock=(lambda: body_lock) if body_lock is not None else None,
+        binary_frames=binary_frames, arena=arena, vision=front, taste_rows=taste, touch_rows=touch, brain_lock=sims.exclusive, body_lock=(lambda: body_lock) if body_lock is not None else None,
     )
