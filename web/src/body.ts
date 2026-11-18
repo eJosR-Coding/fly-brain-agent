@@ -5,6 +5,8 @@ import type { JointId } from "./bodyPose";
 import type { WorldPose } from "./bodyClip";
 import { rotationMatrix, splitByJoint } from "./bodyRig";
 import { followStep, gridSegments, gridSnap } from "./bodyWorld";
+import { FOLLOW_SPAN_MM, cubeFitDistance, spanFitDistance } from "./bodyCube";
+import { createSandbox, type Sandbox } from "./bodySandbox";
 import { createOrbitGate, orbitDefault } from "./orbit";
 import { createRenderScheduler } from "./renderScheduler";
 import type { Theme } from "./theme";
@@ -26,6 +28,13 @@ export interface BodyScene {
    *  body, a faint floor grid appears under it (fixed in the world) and the camera follows the thorax smoothly with no
    *  auto-orbit. null = no world: the body at the origin, the grid hidden, the camera glides back. Redraws. */
   setWorld(world: WorldPose | null): void;
+  /** The glass-cube sandbox: a transparent cube with a floor grid and the fly inside it. On: the cube is shown, the
+   *  loose floor grid is replaced by the cube's own, and the camera closes in to follow the fly (the user can zoom out
+   *  to the whole cube). Off: back to the plain body view. Redraws. */
+  setSandbox(on: boolean): void;
+  /** The objects layer of the sandbox (data only): `[{ id, kind: "sugar" | "coffee", pos_mm: [x, y above the floor, z],
+   *  size_mm }]` replaces the layer; invalid entries are dropped and listed in `errors`. Objects show while the sandbox is on. */
+  setObjects(objects: unknown): { errors: string[] };
 }
 
 /** The leg bodies a clip can move (6 legs x coxa, trochanterfemur, tibia, tarsus1..5), as named in fly-body.json. */
@@ -187,6 +196,19 @@ function assembleBodyScene(
   floor.position.y = body.bounds?.min?.[1] ?? 0;
   scene.add(floor);
 
+  // built on first use: a viewer that never opens the sandbox pays nothing for it
+  let sandboxMade: Sandbox | null = null;
+  const sandbox = (): Sandbox => {
+    if (!sandboxMade) {
+      const made = createSandbox(theme, body.bounds?.min?.[1] ?? 0);
+      undo.push(() => made.dispose());
+      scene.add(made.group);
+      sandboxMade = made;
+    }
+    return sandboxMade;
+  };
+  let sandboxOn = false;
+
   const controls = new OrbitControls(camera, renderer.domElement);
   undo.push(() => controls.dispose());
   controls.enableDamping = true;
@@ -229,6 +251,33 @@ function assembleBodyScene(
 
   // Camera follow: the focus (and the camera with it, so the view keeps its angle and distance) glides toward the thorax.
   let world: WorldPose | null = null;
+  const defaultFar = camera.far;
+  /** Move the camera along its line of sight to `distance` from the focus. */
+  const setDistance = (distance: number) => {
+    const dir = camera.position.clone().sub(controls.target);
+    if (dir.lengthSq() === 0) dir.set(0, 0, 1);
+    camera.position.copy(controls.target).addScaledVector(dir.normalize(), distance);
+    controls.update();
+  };
+  const setSandbox = (on: boolean) => {
+    if (on === sandboxOn) return;
+    sandboxOn = on;
+    const box = sandbox();
+    box.setVisible(on);
+    floor.visible = world !== null && !on;
+    if (on) {
+      const whole = cubeFitDistance(box.bounds, FOV, camera.aspect);
+      camera.far = Math.max(defaultFar, whole * 3);
+      controls.maxDistance = Math.max(size * 4, whole * 1.05);
+      setDistance(spanFitDistance(FOLLOW_SPAN_MM, FOV, camera.aspect));
+    } else {
+      camera.far = defaultFar;
+      controls.maxDistance = size * 4;
+      setDistance(viewFitDistance(body.positions, [target.x, target.y, target.z], VIEW.azimuth, VIEW.elevation, FOV, camera.aspect, FILL));
+    }
+    camera.updateProjectionMatrix();
+    invalidate();
+  };
   const focus: [number, number, number] = [0, 0, 0];
   const wanted: [number, number, number] = [0, 0, 0];
   const follow = (): boolean => {
@@ -293,7 +342,7 @@ function assembleBodyScene(
     if (world) worldMatrix.fromArray(world.matrix);
     wanted[0] = world?.offset[0] ?? 0; wanted[1] = world?.offset[1] ?? 0; wanted[2] = world?.offset[2] ?? 0;
     for (const g of [restGroup, ...rigged.map((j) => j.group), ...legGroups.values()]) placeGroup(g);
-    floor.visible = world !== null;
+    floor.visible = world !== null && !sandboxOn;
     if (world) {
       const [gx, gz] = gridSnap(wanted, cell);
       floor.position.x = gx;
@@ -307,6 +356,8 @@ function assembleBodyScene(
     setPose,
     setClipFrame,
     setWorld,
+    setSandbox,
+    setObjects: (objects) => { const r = sandbox().setObjects(objects); invalidate(); return r; },
     jointIds: () => rigged.map((j) => j.id),
     dispose() {
       // the undo list holds every resource in creation order: scheduler, observer, controls, geometries, materials, renderer

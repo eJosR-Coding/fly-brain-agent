@@ -16,6 +16,10 @@ export interface MountedBody {
   setClipFrame(mats: ReadonlyMap<string, ArrayLike<number>> | null): void;
   /** The whole fly's motion in the world (root transform, floor, camera follow), or null for none. Safe before the scene exists (the latest is applied on creation); a no-op after remove(). */
   setWorld(world: WorldPose | null): void;
+  /** The glass-cube sandbox on or off. Safe before the scene exists (the latest is applied on creation); a no-op after remove(). */
+  setSandbox(on: boolean): void;
+  /** The sandbox's objects layer (see BodyScene.setObjects); the latest list is applied on creation. Returns the validation errors once the scene exists, else none. */
+  setObjects(objects: unknown): { errors: string[] };
   /** The line under the body. Safe before the scene exists (the latest text is shown on creation); a no-op after remove(). */
   setCaption(text: string): void;
 }
@@ -38,6 +42,9 @@ export function mountBody(host: HTMLElement, deps: BodyDeps): MountedBody {
   let pose: Partial<Record<JointId, number>> | null = null;
   let clipFrame: ReadonlyMap<string, ArrayLike<number>> | null = null;
   let world: WorldPose | null = null;
+  let sandbox = false;
+  let objects: unknown = [];
+  let objectsSet = false;
   void (async () => {
     try {
       const body = await (deps.load ?? loadBody)();
@@ -48,6 +55,8 @@ export function mountBody(host: HTMLElement, deps: BodyDeps): MountedBody {
       if (pose) scene.setPose(pose);
       if (clipFrame) scene.setClipFrame(clipFrame);
       if (world) scene.setWorld(world);
+      if (sandbox) scene.setSandbox(true);
+      if (objectsSet) scene.setObjects(objects);
     } catch (e) {
       stage.remove();
       console.warn("fly body not shown:", e);
@@ -73,8 +82,22 @@ export function mountBody(host: HTMLElement, deps: BodyDeps): MountedBody {
       world = w;
       scene?.setWorld(w);
     },
+    setSandbox(on) {
+      if (removed) return;
+      sandbox = on;
+      scene?.setSandbox(on);
+    },
+    setObjects(list) {
+      if (removed) return { errors: [] };
+      objects = list;
+      objectsSet = true;
+      return scene?.setObjects(list) ?? { errors: [] };
+    },
     remove() {
       removed = true;
+      sandbox = false;
+      objects = [];
+      objectsSet = false;
       world = null;
       pose = null;
       clipFrame = null;

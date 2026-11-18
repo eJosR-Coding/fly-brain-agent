@@ -14,6 +14,7 @@ import { createBodyDriver } from "./bodyDriver";
 import { loadWalkClip } from "./bodyClip";
 import { createWalkPlayer, type WalkPlayer } from "./bodyWalk";
 import { createClipPlayer, type ClipPlayer } from "./bodyClipPlayer";
+import { createLiveClient, DEV_PRESET, DEV_RATE_HZ, type LiveClient } from "./liveClient";
 import { createBodyFlow, FLOW_PRESETS, type BodyFlow, type FlowKey } from "./bodyFlow";
 import { mountLayout, type Layout } from "./layoutPanes";
 import type { Pane } from "./layoutState";
@@ -72,6 +73,10 @@ let clipPlayer: ClipPlayer | null = null;
 let bodyFlow: BodyFlow | null = null;
 const flowChips = new Map<FlowKey, HTMLButtonElement>();
 let moveChip: HTMLButtonElement | null = null;
+/** DEV ENTRY of the live brain+body session (/ws/live): one discreet chip and `window.flyLive`, until the playground's
+ *  agent tools (P4) replace them with chat-driven control. */
+let liveClient: LiveClient | null = null;
+let liveChip: HTMLButtonElement | null = null;
 let activeFlowKey: FlowKey | null = null;
 let charts: ChartsPanel | null = null;
 let chartsChip: HTMLButtonElement | null = null;
@@ -167,6 +172,7 @@ function syncFlowChips(): void {
 function pressFlowChip(key: FlowKey): void {
   if (!bodyFlow) return;
   if (activeFlowKey === key && bodyFlow.state !== "idle") { bodyFlow.stop(); return; }
+  liveClient?.stop();
   walkPlayer?.stop();
   activeFlowKey = key;
   openBrain(); // the recording is shown on the real scene: start loading it while the physics runs
@@ -371,7 +377,7 @@ function setupChips(): void {
   walk.textContent = "physics walk (demo)";
   walk.title = "replay a physics simulation of tripod walking (NeuroMechFly v2, flygym 2.1.1) on the body; a published controller, not driven by the brain model";
   walk.setAttribute("aria-pressed", "false");
-  walk.addEventListener("click", () => { bodyFlow?.stop(); void walkPlayer?.toggle(); });
+  walk.addEventListener("click", () => { liveClient?.stop(); bodyFlow?.stop(); void walkPlayer?.toggle(); });
   walkChip = walk;
   runItems.appendChild(walk);
   for (const key of Object.keys(FLOW_PRESETS) as FlowKey[]) {
@@ -397,6 +403,14 @@ function setupChips(): void {
   });
   moveChip = move;
   runItems.appendChild(move);
+  const liveBtn = document.createElement("button");
+  liveBtn.className = "chip run";
+  liveBtn.textContent = "live (dev)";
+  liveBtn.title = `dev entry: start or stop a live brain+body session in the glass cube (${DEV_PRESET} at ${DEV_RATE_HZ} Hz). Runs as fast as the computer allows and shows its real speed; the chat will drive it later`;
+  liveBtn.setAttribute("aria-pressed", "false");
+  liveBtn.addEventListener("click", () => liveClient?.toggle());
+  liveChip = liveBtn;
+  runItems.appendChild(liveBtn);
   for (const chip of CHIPS) {
     const b = document.createElement("button");
     b.className = chip.params ? "chip" : "chip sep";
@@ -709,6 +723,31 @@ async function boot(): Promise<void> {
     setStatus: (text) => body.setCaption(text ?? DEFAULT_BODY_CAPTION),
     onState: () => renderSimChips(),
   });
+  liveClient = createLiveClient({
+    body: {
+      setFrame: (mats) => body.setClipFrame(mats), setWorld: (w) => body.setWorld(w), setPose: (a) => body.setPose(a),
+      setCaption: (t) => body.setCaption(t), setSandbox: (on) => body.setSandbox(on),
+    },
+    defaultCaption: DEFAULT_BODY_CAPTION,
+    prepare: () => { // the live session owns the body now
+      bodyFlow?.stop();
+      walkPlayer?.stop();
+      clipPlayer?.clear();
+      bodyAnimation?.setActivity(null);
+    },
+  });
+  liveClient.onChange((st) => {
+    const on = st.state !== "idle" && st.state !== "closed";
+    liveChip?.classList.toggle("active", on);
+    liveChip?.setAttribute("aria-pressed", String(on));
+    if (st.state === "idle") bodyAnimation?.setActivity(shown?.a ?? null); // back to the recording's own readout pose and caption, or rest
+  });
+  (window as unknown as { flyLive?: unknown }).flyLive = {
+    start: (preset: string | null = DEV_PRESET, rateHz: number = DEV_RATE_HZ) => liveClient?.start(preset, rateHz),
+    stop: () => liveClient?.stop(),
+    stimulus: (preset: string | null, rateHz: number) => liveClient?.stimulus(preset, rateHz),
+    status: () => liveClient?.status,
+  };
   syncFlowChips();
   preview = mountPreview(layout.brainHost, { theme });
   openControl = mountOpenControl(layout.brainHost, gate);
