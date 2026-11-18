@@ -172,6 +172,11 @@ def test_tool_definitions_stay_within_the_token_budget(tiny_atlas):
     assert sum(sizes.values()) <= TOOL_DEFS_BUDGET_CHARS, sizes
 
 
+def test_looming_tool_documents_the_motion_input(tiny_atlas):
+    by_name = {t.name: t for t in asyncio.run(build_server(tiny_atlas).list_tools())}
+    assert "motion" in by_name["looming_escape"].description
+
+
 def test_concise_docs_keep_the_interpretation_rules(tiny_atlas):
     by_name = {t.name: t for t in asyncio.run(build_server(tiny_atlas).list_tools())}
     assert "not the living fly" in by_name["stimulate"].description
