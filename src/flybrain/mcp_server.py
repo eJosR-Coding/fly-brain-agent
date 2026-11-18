@@ -286,9 +286,9 @@ def build_server(
         trials: int = 5, rate_hz: float = 100, duration_ms: float = 500, steps: int = 10, side: str = "right",
         input: str = "detectors",
     ) -> dict:
-        """SIMULATION (model): looming disc vs receding, dimming, control (equal drive), read at DNp01.
+        """SIMULATION (model): looming disc vs receding/dimming/control (same drive), read at DNp01.
 
-        input: detectors (LPLC2+LC4) | photoreceptors (R1-6; signal dies). Slow: run once. steps 3..20, trials 1..10.
+        input: detectors (LPLC2+LC4) | photoreceptors (R1-6; dies) | motion (T4/T5). Slow: run once. steps 3-20, trials 1-10.
         """
         return await asyncio.to_thread(
             looming.looming_escape, atlas, sims, trials, rate_hz, duration_ms, steps, side, input,

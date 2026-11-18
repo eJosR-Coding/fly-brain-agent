@@ -149,3 +149,41 @@ def test_experiment_tools_get_extra_turn_time_from_the_configured_budget(tiny_ts
     monkeypatch.delenv("FLYBRAIN_EXPERIMENT_TIMEOUT")
     with TestClient(create_app(atlas_path=tiny_tsv_path, simulation=svc, experiment_timeout=7)) as client:
         assert client.app.state.experiment_timeout == 7.0
+
+
+# --- looming chip: the validated escape configuration, no LLM -------------------------------------------------
+
+def test_looming_endpoint_defaults_to_the_validated_motion_configuration(tiny_tsv_path, svc, monkeypatch):
+    seen = {}
+
+    def fake(atlas, sims, *args, **kwargs):
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return {"experiment": "looming_escape", "simulation_id": "sim_x"}
+
+    monkeypatch.setattr("flybrain.api.looming_escape", fake)
+    with TestClient(create_app(atlas_path=tiny_tsv_path, simulation=svc)) as client:
+        r = client.post("/experiments/looming", json={})
+    assert r.status_code == 200 and r.json()["simulation_id"] == "sim_x"
+    got = dict(zip(["trials", "rate_hz", "duration_ms", "steps", "side", "input"], seen["args"])) | seen["kwargs"]
+    assert got == {"trials": 5, "rate_hz": 300, "duration_ms": 500, "steps": 10, "side": "right", "input": "motion",
+                   "polarity": "both"}
+
+
+def test_looming_endpoint_rejects_bad_input_and_maps_errors(tiny_tsv_path, svc, monkeypatch):
+    def boom(*a, **k):
+        raise ValueError("input must be one of x")
+
+    monkeypatch.setattr("flybrain.api.looming_escape", boom)
+    with TestClient(create_app(atlas_path=tiny_tsv_path, simulation=svc)) as client:
+        extra = client.post("/experiments/looming", json={"bogus": 1})
+        wrong = client.post("/experiments/looming", json={"trials": "many"})
+        refused = client.post("/experiments/looming", json={"input": "retina"})
+    assert extra.status_code == 422 and wrong.status_code == 422
+    assert refused.status_code == 422 and "input must be" in refused.json()["detail"]
+
+
+def test_looming_endpoint_is_503_without_a_simulator(tiny_tsv_path):
+    with TestClient(create_app(atlas_path=tiny_tsv_path)) as client:
+        r = client.post("/experiments/looming", json={})
+    assert r.status_code == 503 and "flybrain-build-sim-weights" in r.json()["detail"]
