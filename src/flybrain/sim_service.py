@@ -17,7 +17,9 @@ import numpy as np
 from scipy import sparse
 
 from flybrain.atlas import load_atlas
-from flybrain.gpu_simulation import GPUCapacityError, GPUOverflowError, GPUProbe, GPUSimulation, probe_gpu
+from flybrain.gpu_simulation import (
+    GPUCapacityError, GPUOverflowError, GPUProbe, GPUSimulation, ThermalGuard, probe_gpu,
+)
 from flybrain.simulation import LIFParams, Simulation, SimulationError
 
 log = logging.getLogger(__name__)
@@ -113,13 +115,16 @@ class SimulationService:
                  max_results: int = MAX_RESULTS, max_cached_runs: int = MAX_CACHED_RUNS,
                  max_cache_bytes: int = MAX_CACHE_BYTES, backend: str | None = None,
                  gpu_probe: Callable[[], GPUProbe] | None = None,
-                 gpu_factory: Callable[[Simulation], Simulation] | None = None) -> None:
+                 gpu_factory: Callable[[Simulation], Simulation] | None = None,
+                 thermal: ThermalGuard | None = None) -> None:
         self._loader, self._available = loader, available
         # compute backend: `mode` is the request (auto|cpu|gpu), `_backend` what is actually used
         self.backend_mode = backend_mode() if backend is None else backend
         self._gpu_probe = gpu_probe or probe_gpu
         self._gpu_factory = gpu_factory or GPUSimulation.from_simulation
         self._gpu: Simulation | None = None
+        self.thermal = thermal  # None: no temperature check (tests, CPU installs); `default` builds a real guard
+        self.stream_note: str | None = None  # why the last live stream is not on the GPU (hot card, no room)
         self._backend = "pending"  # decided on the first run: "cpu" or "gpu"
         self._backend_reason = f"not decided yet (mode {self.backend_mode}); decided on the first run"
         self._run_cache: OrderedDict[tuple, tuple] = OrderedDict()  # key -> (SimResult, nbytes); under _run_lock
@@ -142,7 +147,7 @@ class SimulationService:
 
     @classmethod
     def default(cls, atlas, max_results: int = MAX_RESULTS) -> "SimulationService":
-        return cls(lambda: load_simulation(atlas)[0], weights_available, max_results)
+        return cls(lambda: load_simulation(atlas)[0], weights_available, max_results, thermal=ThermalGuard())
 
     @classmethod
     def from_simulation(cls, sim: Simulation, max_results: int = MAX_RESULTS, **options) -> "SimulationService":
@@ -202,6 +207,37 @@ class SimulationService:
         self._backend, self._backend_reason = "gpu", probe.reason
         log.info("simulation backend: gpu (%s)", probe.reason)
 
+    def _gpu_cool(self) -> bool:
+        """False while the card is above the thermal limit: new GPU work is refused (the CPU runs it instead)."""
+        return self.thermal is None or self.thermal.allow()
+
+    def thermal_status(self) -> dict | None:
+        return None if self.thermal is None else self.thermal.status()
+
+    def open_stream(self, seed: int = 0, silenced=None):
+        """A live `BrainStream` on the backend in use: the GPU when it is decided, usable and cool, else the CPU.
+
+        Call inside `exclusive()` for the load/backend decision only; chunks take the lock themselves. `stream_note`
+        says why a session is on the CPU although the GPU is enabled (hot card, no room); a driver error disables the GPU."""
+        cpu = self.simulation()
+        if self._backend == "pending":
+            self._decide_backend(cpu)
+        self.stream_note = None
+        if self._backend == "gpu":
+            if not self._gpu_cool():
+                t = self.thermal.temperature_c
+                self.stream_note = f"GPU too hot ({t:.0f} C, limit {self.thermal.limit_c:.0f} C): live session on the CPU"
+            else:
+                try:
+                    return self._gpu.open_stream(seed, silenced)
+                except SimulationError:
+                    raise
+                except (GPUCapacityError, GPUOverflowError) as exc:
+                    self.stream_note = f"GPU stream not possible ({exc}): live session on the CPU"
+                except Exception as exc:  # noqa: BLE001
+                    self._disable_gpu(f"{type(exc).__name__}: {exc}")
+        return cpu.open_stream(seed, silenced)
+
     def _disable_gpu(self, why: str) -> None:
         """Mark the GPU unusable for the rest of the process (logged) and free what it holds."""
         log.warning("simulation backend: GPU disabled, using the CPU (%s)", why)
@@ -224,8 +260,9 @@ class SimulationService:
         cpu = self.simulation()
         if self._backend == "pending":
             self._decide_backend(cpu)
-        runner = self._gpu if self._backend == "gpu" else cpu
-        key = make_key(cpu, self._backend)
+        use_gpu = self._backend == "gpu" and self._gpu_cool()
+        runner = self._gpu if use_gpu else cpu
+        key = make_key(cpu, "gpu" if use_gpu else "cpu")
         if key in self._run_cache:
             self._run_cache.move_to_end(key)
             self.cache_hits += 1

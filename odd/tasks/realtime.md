@@ -32,6 +32,16 @@ que no queme mi gpu ... mi vram no es mucha").
       band too but does not divide the 200 Hz frame; 5e-4 fails (speed +23 %, bouncing). export_flygym_walk.py pinned to 1e-4;
       fly-walk.json regenerates byte-identical. Gated test in tests/test_body_runner.py.
 - [ ] G3 live session over WebSocket: brain and body advance together in 50 ms chunks, closed loop, streamed to the viewer.
+      Progress G3a backend (branch wip/rt-live): DONE, viewer (G3b) pending. `Simulation.open_stream()` / `GPUSimulation.open_stream()`
+      (BrainStream: LIF state kept between `advance(ms)` calls, `set_stimulus`, 1 trial; `run()` is the same `_advance` loop, golden
+      digests identical; chunked CPU/GPU streams are bit-identical to one run with the same seed), `body_runner.BodyStream` (flygym kept
+      alive, 200 Hz fly-walk/1 frames per chunk, chunks concatenate to one long advance), `body_drive.DriveMapper` (streaming smoothing),
+      `flybrain.live.LiveSession` (chunk loop, measured speed in every message, thermal/GPU-error fallback to CPU),
+      `flybrain.live_api` (`/ws/live`, one session, idle stop 5 min, origin check, close codes 4400/4403/4408/4409/4503),
+      `ThermalGuard` (80 C, 5 C hysteresis, also applied to one-shot GPU runs; /health/gpu `thermal` + `live`).
+      Measured (real brain + body, 50 ms chunks): GPU brain 25 ms + body 220 ms = ~248 ms per chunk (x0.20 real time);
+      CPU brain 190 ms + body 218 ms = ~408 ms (x0.12). The body is the bottleneck. Payload 22.6 KB/chunk JSON, 1.1 KB + 6.7 KB binary.
+      GPU 52 -> 59 C, 234 MiB VRAM peak.
 
 ## Checks
 TDD strict. `uv run pytest -q`, `pnpm -C web test`, `pnpm -C web build`.

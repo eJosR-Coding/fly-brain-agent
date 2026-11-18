@@ -99,20 +99,10 @@ def _ramp(hz: np.ndarray, lo: float, hi: float) -> np.ndarray:
     return np.clip((hz - lo) / (hi - lo), 0.0, 1.0)
 
 
-def drive_from_readouts(readouts, bin_ms: float, smooth_tau_ms: float = SMOOTH_TAU_MS) -> BodyDrive:
-    """Per-bin body drive from a list of {"name", "hz": [...]} readouts (extra keys ignored)."""
-    if not bin_ms or not math.isfinite(bin_ms) or bin_ms <= 0:
-        raise ValueError("bin_ms must be positive")
-    found = {n: _trace(readouts, n) for n in READOUT_NAMES}
-    n = max((len(t) for t in found.values() if t is not None), default=0)
+def _map_rates(rate, n: int):
+    """Smoothed rates -> (forward, turn, escape_strength, escape, drive). `rate(name)` returns an (n,) array.
 
-    def rate(name: str) -> np.ndarray:
-        t = found[name]
-        out = np.zeros(n)
-        if t is not None:
-            out[: len(t)] = _smooth(t, bin_ms, smooth_tau_ms)
-        return out
-
+    The one place the mapping lives: the batch (`drive_from_readouts`) and the live (`DriveMapper`) paths share it."""
     forward = _ramp(rate(FORWARD_NAME), FORWARD_THRESHOLD_HZ, FORWARD_SATURATION_HZ)
     steer = sum(g * (rate(left) - rate(right)) for left, right, g in TURN_NAMES)
     turn = np.clip(steer / TURN_SATURATION_HZ, -1.0, 1.0)
@@ -127,4 +117,64 @@ def drive_from_readouts(readouts, bin_ms: float, smooth_tau_ms: float = SMOOTH_T
     drive = np.stack([left, right], axis=-1) if n else np.zeros((0, 2))
     walking = (pace > 0) & ~escape
     drive = np.where(walking[:, None], np.clip(drive, DRIVE_MIN, DRIVE_MAX), 0.0)
+    return forward, turn, escape_strength, escape, drive
+
+
+def drive_from_readouts(readouts, bin_ms: float, smooth_tau_ms: float = SMOOTH_TAU_MS) -> BodyDrive:
+    """Per-bin body drive from a list of {"name", "hz": [...]} readouts (extra keys ignored)."""
+    if not bin_ms or not math.isfinite(bin_ms) or bin_ms <= 0:
+        raise ValueError("bin_ms must be positive")
+    found = {n: _trace(readouts, n) for n in READOUT_NAMES}
+    n = max((len(t) for t in found.values() if t is not None), default=0)
+
+    def rate(name: str) -> np.ndarray:
+        t = found[name]
+        out = np.zeros(n)
+        if t is not None:
+            out[: len(t)] = _smooth(t, bin_ms, smooth_tau_ms)
+        return out
+
+    forward, turn, escape_strength, escape, drive = _map_rates(rate, n)
     return BodyDrive(float(bin_ms), forward, turn, escape_strength, escape, drive)
+
+
+@dataclass(frozen=True)
+class DriveSample:
+    """The mapping of ONE chunk (live session): scalars, drive is [left, right]."""
+
+    forward: float
+    turn: float
+    escape_strength: float
+    escape: bool
+    drive: np.ndarray
+
+    def as_dict(self) -> dict:
+        return {"forward": round(self.forward, 4), "turn": round(self.turn, 4),
+                "escape_strength": round(self.escape_strength, 4), "escape": self.escape,
+                "drive": [round(float(v), 4) for v in self.drive]}
+
+
+class DriveMapper:
+    """Streaming `drive_from_readouts`: feed the DN rates of each chunk (Hz per readout name, missing = 0) and get
+    that chunk's drive. The low-pass state is carried between calls, so chunk i gives exactly bin i of the batch
+    mapping with `bin_ms = chunk_ms` (tested). `reset()` forgets the state (a new session)."""
+
+    def __init__(self, chunk_ms: float, smooth_tau_ms: float = SMOOTH_TAU_MS) -> None:
+        if not chunk_ms or not math.isfinite(chunk_ms) or chunk_ms <= 0:
+            raise ValueError("chunk_ms must be positive")
+        self.chunk_ms, self.tau = float(chunk_ms), smooth_tau_ms
+        self._acc: dict[str, float] = {}
+
+    def reset(self) -> None:
+        self._acc.clear()
+
+    def step(self, rates_hz: dict) -> DriveSample:
+        a = 1.0 if self.tau <= 0 else 1.0 - math.exp(-self.chunk_ms / self.tau)
+        smoothed = {}
+        for name in READOUT_NAMES:
+            raw = float(np.nan_to_num(rates_hz.get(name, 0.0) or 0.0, nan=0.0, posinf=1e12, neginf=0.0))
+            acc = self._acc.get(name, 0.0)
+            acc += a * (raw - acc)
+            self._acc[name] = smoothed[name] = acc
+        forward, turn, strength, escape, drive = _map_rates(lambda name: np.array([smoothed[name]]), 1)
+        return DriveSample(float(forward[0]), float(turn[0]), float(strength[0]), bool(escape[0]), drive[0])
