@@ -22,8 +22,11 @@ que no queme mi gpu ... mi vram no es mucha").
 ## Tasks
 - [ ] G1 GPU brain backend in the project (gpu_simulation.py, FLYBRAIN_SIM_BACKEND=auto|cpu|gpu, VRAM guard, spike
       buffer overflow check, health readout, statistical equivalence tests gated on a GPU).
-- [ ] G2 physics timestep: measure dt 1e-4 (reference) vs 2e-4 / 3e-4 / 5e-4 (stability, stepping frequency, tripod,
+- [x] G2 physics timestep: measure dt 1e-4 (reference) vs 2e-4 / 3e-4 / 5e-4 (stability, stepping frequency, tripod,
       speed, joint-angle error); adopt the largest that matches; report the real-time factor.
+      Progress G2: default dt 2e-4 s (2.0x faster, real-time factor 8.4 -> 4.3 s per simulated s on 1 CPU thread). 3e-4 passes the
+      band too but does not divide the 200 Hz frame; 5e-4 fails (speed +23 %, bouncing). export_flygym_walk.py pinned to 1e-4;
+      fly-walk.json regenerates byte-identical. Gated test in tests/test_body_runner.py.
 - [ ] G3 live session over WebSocket: brain and body advance together in 50 ms chunks, closed loop, streamed to the viewer.
 
 ## Checks
