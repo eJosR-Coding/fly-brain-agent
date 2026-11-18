@@ -11,6 +11,8 @@ import { mountOpenControl } from "./previewOpen";
 import { mountBody, type MountedBody } from "./bodyMount";
 import { createBodyAnimation, DEFAULT_BODY_CAPTION, type BodyAnimation } from "./bodyAnimation";
 import { createBodyDriver } from "./bodyDriver";
+import { loadWalkClip } from "./bodyClip";
+import { createWalkPlayer, type WalkPlayer } from "./bodyWalk";
 import { mountLayout, type Layout } from "./layoutPanes";
 import type { Pane } from "./layoutState";
 import { commitScene } from "./sceneLoad";
@@ -59,6 +61,9 @@ let player: Player | null = null;
 let mountedBody: MountedBody | null = null;
 /** Recording -> body pose and caption; one per page, fed by showActivity/clearAll and by the player clock. */
 let bodyAnimation: BodyAnimation | null = null;
+/** The physics walking clip replayed on the body (a published controller, not driven by the brain); one per page. */
+let walkPlayer: WalkPlayer | null = null;
+let walkChip: HTMLButtonElement | null = null;
 let charts: ChartsPanel | null = null;
 let chartsChip: HTMLButtonElement | null = null;
 let simulating = false;
@@ -101,6 +106,7 @@ export function clearAll(): void {
   pathShown = false;
   pathOrder.cancel(); // a path still waiting for the scene is dropped
   shown = null;
+  walkPlayer?.stop(); // a cleared stage is not the walking demo either
   bodyAnimation?.setActivity(null); // before player.clear(): its null tick then finds nothing loaded (rest, default caption)
   player?.clear();
 }
@@ -142,6 +148,7 @@ function showActivity({ a, baseline }: { a: Activity; baseline: Activity | null 
   waveLegend = text;
   pathOrder.cancel(); // a recording replaces the cables' story: a path still waiting must not draw
   shown = { a, baseline };
+  walkPlayer?.stop(); // the recording owns the body and its caption now
   bodyAnimation?.setActivity(a); // the MAIN recording, never the baseline; before player.load so its first tick is already driven
   player?.load(a, baseline); // no player yet: loadScene replays `shown` once the scene exists
   charts?.show(a, baseline);
@@ -155,6 +162,7 @@ function showActivity({ a, baseline }: { a: Activity; baseline: Activity | null 
 async function giveSugar(): Promise<void> {
   if (simulating) return;
   openBrain(); // the wave is shown on the real scene: start loading it while the simulation runs
+  walkPlayer?.stop();
   simulating = true;
   renderSimChips();
   latest.invalidate(); // a search finishing later must not replace the wave
@@ -213,6 +221,7 @@ function showExperimentChart(c: ExperimentChart): void {
 async function runExperiment(path: "dose_response" | "screen", chip: HTMLButtonElement, label: string): Promise<void> {
   if (simulating || !charts) return;
   openBrain();
+  walkPlayer?.stop();
   simulating = true;
   renderSimChips();
   latest.invalidate();
@@ -272,6 +281,7 @@ function renderLegend(total: number | null, message?: string): void {
 
 function setActiveChip(label: string | null): void {
   for (const b of document.querySelectorAll<HTMLButtonElement>("#chips .chip")) {
+    if (b === walkChip) continue; // its pressed state follows the player, not the recordings
     b.classList.toggle("active", b.textContent === label);
   }
 }
@@ -317,6 +327,14 @@ function setupChips(): void {
     experimentChips.push(b);
     runItems.appendChild(b);
   }
+  const walk = document.createElement("button");
+  walk.className = "chip run";
+  walk.textContent = "physics walk (demo)";
+  walk.title = "replay a physics simulation of tripod walking (NeuroMechFly v2, flygym 2.1.1) on the body; a published controller, not driven by the brain model";
+  walk.setAttribute("aria-pressed", "false");
+  walk.addEventListener("click", () => void walkPlayer?.toggle());
+  walkChip = walk;
+  runItems.appendChild(walk);
   for (const chip of CHIPS) {
     const b = document.createElement("button");
     b.className = chip.params ? "chip" : "chip sep";
@@ -591,6 +609,19 @@ async function boot(): Promise<void> {
     setCaption: (text) => body.setCaption(text),
     defaultCaption: DEFAULT_BODY_CAPTION,
     reducedMotion: calm,
+  });
+  walkPlayer = createWalkPlayer({
+    load: () => loadWalkClip(),
+    setFrame: (mats) => body.setClipFrame(mats),
+    setCaption: (text) => body.setCaption(text),
+    defaultCaption: DEFAULT_BODY_CAPTION,
+    schedule: (cb) => requestAnimationFrame(cb),
+    cancel: (id) => cancelAnimationFrame(id),
+    reducedMotion: calm,
+    onChange: (on) => {
+      walkChip?.classList.toggle("active", on);
+      walkChip?.setAttribute("aria-pressed", String(on));
+    },
   });
   preview = mountPreview(layout.brainHost, { theme });
   openControl = mountOpenControl(layout.brainHost, gate);
