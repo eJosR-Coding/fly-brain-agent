@@ -32,6 +32,7 @@ from flybrain.atlas import RowIndex, load_atlas
 from flybrain.brain_preview import render_preview
 from flybrain.mcp_server import DEFAULT_ANNOTATIONS, build_server, load_connectome
 from flybrain.experiments import dose_response
+from flybrain.looming import looming_escape
 from flybrain.models import CHAT_MODEL_KWARGS, describe_models
 from flybrain.plain import plain_description
 from flybrain.selections import SelectionStore, UnknownSelectionError
@@ -92,6 +93,19 @@ class ScreenRequest(_ExperimentRequest):
     candidates: str = "top_non_sensory"
     n: StrictInt = 8
     rate_hz: float = 100
+
+
+class LoomingRequest(BaseModel):
+    """The validated escape configuration by default: motion input, right eye, 300 Hz, both polarities."""
+
+    model_config = ConfigDict(extra="forbid")
+    trials: StrictInt = 5
+    rate_hz: float = 300
+    duration_ms: float = 500
+    steps: StrictInt = 10
+    side: str = "right"
+    input: str = "motion"
+    polarity: str = "both"
 
 
 def _text_or_none(value) -> str | None:
@@ -515,6 +529,21 @@ def create_app(
         return await _run_experiment(
             silencing_screen, req, req.candidates, req.n, req.duration_ms, req.trials, req.rate_hz
         )
+
+    @app.post("/experiments/looming")
+    async def experiment_looming(req: LoomingRequest):
+        """The looming_escape tool without an LLM (viewer chip); its looming recording carries the named dnp01 readout."""
+        if not app.state.sims.available:
+            raise HTTPException(status_code=503, detail=_unavailable_message())
+        try:
+            return await asyncio.to_thread(
+                looming_escape, app.state.atlas, app.state.sims, req.trials, req.rate_hz, req.duration_ms, req.steps,
+                req.side, req.input, polarity=req.polarity,
+            )
+        except SimulationUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
 
     @app.get("/experiments/progress")
     def experiment_progress():

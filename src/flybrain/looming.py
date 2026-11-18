@@ -11,6 +11,7 @@ Everything is a MODEL prediction: trials differ only by Poisson input noise.
 
 import math
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -20,6 +21,7 @@ from flybrain.eye import (
     COLLISION_LEAD_MS, FULL_FIELD_DEG, LOOM_L_OVER_V_MS, disc_schedule, eye_map, looming_radii, schedule_drive,
 )
 from flybrain.motion import motion_eye, motion_schedule
+from flybrain.retina import COLUMN_FILE, exact_motion_eye
 from flybrain.simulation import StimulusSchedule
 from flybrain.stats import ALPHA, compare, holm, summarize
 from flybrain.tools import (
@@ -95,12 +97,13 @@ def _verdict(comps: list[dict], trials: int) -> str:
 
 def looming_escape(
     atlas: Atlas, sims, trials=5, rate_hz=100, duration_ms=500, steps=10, side="right", input="detectors",
-    seed: int = 0, polarity="dark",
+    seed: int = 0, polarity="dark", columns_path=COLUMN_FILE,
 ) -> dict:
     """Looming vs receding vs dimming (equal total drive) vs a control, read at DNp01.
 
     input "detectors" drives LPLC2+LC4 (control: shuffled rows); "photoreceptors" drives R1-6 (control: LPLC2+LC4 silenced);
-    "motion" drives T4a-d/T5a-d with local edge motion (control: shuffled rows; polarity "dark" or "both", see motion.py).
+    "motion" drives T4a-d/T5a-d with local edge motion (control: shuffled rows; polarity "dark" or "both", see motion.py);
+    cells are placed by the measured column lattice when `columns_path` exists (retina.py), else by the PCA map.
     """
     if input not in INPUTS:
         raise ValueError(f"input must be one of {INPUTS}, got {input!r}")
@@ -109,9 +112,13 @@ def looming_escape(
     duration = round(_clamp("duration_ms", _number("duration_ms", duration_ms), MIN_DURATION_MS, MAX_DURATION_MS, notes), 1)
     n_trials = _clamp("trials", _int("trials", trials), 1, MAX_TRIALS, notes)
     n_steps = _clamp("steps", _int("steps", steps), MIN_STEPS, MAX_STEPS, notes)
-    types = None
+    types, placement = None, None
     if input == "motion":
-        eye, types = motion_eye(atlas, side)
+        placement = exact_motion_eye(atlas, side, columns_path)
+        if placement is not None:
+            eye, types, _ = placement
+        else:
+            eye, types = motion_eye(atlas, side)
     else:
         eye = eye_map(atlas, side, DETECTORS if input == "detectors" else "R1-6")
     readout = _rows(atlas, READOUT)
@@ -161,6 +168,7 @@ def looming_escape(
             "simulation_id": sims.add(
                 res.active_rows, np.minimum(res.frames, 255).astype(np.uint8), bin_ms, duration, n_trials, stimulus,
                 active_count=int((res.rate_hz > ACTIVE_HZ).sum()), readout=trace(res),
+                readouts=[{"name": READOUT.lower(), **trace(res)}],  # the body follows readouts by name (dnp01 -> wings)
                 silenced_rows=silenced if name == "control" else None,
             ),
         }
@@ -186,8 +194,18 @@ def looming_escape(
         notes.append(f"R1-6 here: {exc:g}% excitatory, {inh:g}% inhibitory weights; {CAVEAT}")
         extra["photoreceptors"] = {"eye": side, "n": n, "excitatory_pct": exc, "inhibitory_pct": inh}
     elif input == "motion":
+        if placement is not None:
+            info = placement[2]
+            notes.append(
+                f"exact retinotopy: T4/T5 placed by Codex medulla column + Zhao et al. 2025 lens-map fit; "
+                f"{info['undriven']} T4/T5 cells on the {side} side not in the column file stay undriven"
+            )
+            where = "T4/T5 placed by column retinotopy"
+        else:
+            notes.append("column file missing or no match: T4/T5 placed by the approximate PCA map (~20 deg off the exact one)")
+            where = "T4/T5 placed by PCA retinotopy"
         notes.append(
-            f"motion front end (our model choice): T4/T5 placed by PCA retinotopy in a head frame; preferred directions a "
+            f"motion front end (our model choice): {where}; preferred directions a "
             f"front-to-back, b back-to-front, c up, d down (Maisak et al. 2013); rate = base x cos(preferred vs radial edge "
             f"motion) inside the moving edge band; polarity {polarity} (dark: expansion drives T5, receding T4); dimming = uniform "
             f"drive, no motion; receding rates rescaled to equal drive; control = looming rows shuffled; spiking LIF, not graded"

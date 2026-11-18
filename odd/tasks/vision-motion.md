@@ -21,6 +21,26 @@ the selectivity result is whatever the connectome gives. Spiking LIF vs graded T
 ## Tasks
 - [x] V1 motion front end + `input="motion"` in the looming experiment; tests; run the 4 conditions; report.
 
+- [x] V2 exact retinotopy in code: T4/T5 visual directions from data/raw/flywire_v783_column_assignment.csv.gz (Codex
+  'Visual Neuron Columns', Matsliah et al. 2024; p,q = Zhao et al. 2025 eyemap lattice; hex y = dorsal, x = front, both eyes);
+  fallback to the PCA map with a note when the file is missing; tests with a tiny fixture.
+- [x] V3 escape reaches the body: looming recordings carry the DNp01 readout under the name `dnp01` so the existing body
+  mapping (dnp01 -> wings, exploratory) plays; a chip runs the validated configuration (motion, right eye, 300 Hz).
+
+## Validation results (scratch, 2026-11-18)
+- V3 exact map (3 seeds, 300 Hz, right stimulus, DNp01 Hz loom/recede/dim/control): polarity both 9.9 / 0.7 / 0 / 3.5;
+  dark 4.9 / 0.1 / 0 / 0.9; reversed preferred directions 0.0 / 11.8; permuted positions 3.4 / 5.4; Zhao per-column
+  PDs same as exact. Left stimulus: DNp01 0 everywhere (LPLC2 still loom-ordered 1.0 / 0.4): left LPLC2 receive 182
+  T4/T5 synapses per cell vs 315 on the right; direct detector drive fires both DNp01 (readout works).
+
+## V2/V3 progress (2026-11-18)
+- V2: src/flybrain/retina.py. A plain lattice (hex y up, x front, scaled) is ~19-20 deg median off the Zhao-based exact map
+  (p90 36-39), so instead a cubic fit (20 coefficients, no per-column data) of the lens map in (p/20, q/20): 1.0 deg median,
+  2.0 p90 vs the exact map. Missing column file -> PCA map with a note. Rerun (code path, seed 0, 5 trials, 500 ms, both,
+  300 Hz, right): DNp01 9.4 / 0.8 / 0 / 3.8 (scratch exact, 3 seeds: 9.9 / 0.7 / 0 / 3.5).
+- V3: looming recordings carry readouts=[{name: "dnp01"}]; POST /experiments/looming (defaults = validated config);
+  chip "looming disc (escape)" plays the looming recording (web/src/looming.ts). Agent tool unchanged (polarity not exposed).
+
 ## Checks
 TDD strict. `uv run pytest -q`, `pnpm -C web test`, `pnpm -C web build`.
 

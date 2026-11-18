@@ -41,6 +41,14 @@ class EyeMap:
         self.xy = flat / extent  # centroid at (0, 0), farthest point at radius 1
         self._axes, self._centred = axes[:2], centred  # kept so head_frame() can orient the map
 
+    @classmethod
+    def from_xy(cls, rows, xy) -> "EyeMap":
+        """A map whose (x, y) positions are already known (and already scaled), e.g. from measured columns."""
+        out = cls.__new__(cls)
+        out.rows, out.xy = np.asarray(rows, dtype=np.int64), np.asarray(xy, dtype=np.float64)
+        out._axes = out._centred = None  # no 3D flattening behind it, so no head_frame()
+        return out
+
     def __len__(self) -> int:
         return len(self.rows)
 

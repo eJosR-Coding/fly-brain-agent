@@ -17,6 +17,7 @@ import { commitScene } from "./sceneLoad";
 import { shouldOpenOnBoot, shouldOpenOnChange } from "./sceneOpen";
 import { PathOrder } from "./pathOrder";
 import { chartsChipState, simChipsDisabled } from "./chipState";
+import { LOOMING_RUN, loomingLegend, parseLoomingRun } from "./looming";
 import { afterNewChat, EMPTY, legendOf, modeStage, StageHolder, type Stage } from "./stage";
 import { createScene, type BrainScene } from "./scene";
 import { Latest, runLatest } from "./latest";
@@ -261,6 +262,50 @@ async function runExperiment(path: "dose_response" | "screen", chip: HTMLButtonE
   }
 }
 
+const LOOMING_LABEL = "looming disc (escape)";
+
+/** The validated looming experiment (no LLM): runs the four conditions, then plays the LOOMING one on the body. */
+async function runLooming(chip: HTMLButtonElement): Promise<void> {
+  if (simulating) return;
+  openBrain();
+  simulating = true;
+  renderSimChips();
+  latest.invalidate();
+  const started = performance.now();
+  const lease = stageHolder.lease();
+  chip.textContent = `${LOOMING_LABEL} · running`;
+  const pending = () => {
+    const s: Stage = { kind: "message", text: `${LOOMING_LABEL} · ${Math.floor((performance.now() - started) / 1000)} s · 4 conditions x ${LOOMING_RUN.trials} trials on the whole brain` };
+    if (lease.paint(s)) paintLegend(s);
+  };
+  pending();
+  const tick = window.setInterval(pending, 1000);
+  try {
+    const res = await fetch("/api/experiments/looming", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(LOOMING_RUN),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(typeof body.detail === "string" ? body.detail : `HTTP ${res.status}`);
+    const run = parseLoomingRun(body);
+    if (typeof run === "string") throw new Error(`unexpected looming answer: ${run}`);
+    const applied = await loadLatestActivity(activityLatest, () => loadWithBaseline(run.simulationId), (loaded) => {
+      showActivity(loaded, loomingLegend(run));
+      setActiveChip(LOOMING_LABEL);
+    });
+    if (!applied) return;
+  } catch (e) {
+    renderLegend(null, `${LOOMING_LABEL} failed: ${(e as Error).message}`);
+  } finally {
+    window.clearInterval(tick);
+    chip.textContent = LOOMING_LABEL;
+    simulating = false;
+    renderSimChips();
+    if (lease.release()) paintLegend(stageHolder.current);
+  }
+}
+
 /** Resolve a highlight payload to row indices (inline, or fetched as binary). */
 export async function resolveIndices(p: { indices: number[] | null; fetch?: string }): Promise<ArrayLike<number>> {
   return p.indices ?? (p.fetch ? await fetchIndices(p.fetch) : []);
@@ -317,6 +362,13 @@ function setupChips(): void {
     experimentChips.push(b);
     runItems.appendChild(b);
   }
+  const loom = document.createElement("button");
+  loom.className = "chip run";
+  loom.textContent = LOOMING_LABEL;
+  loom.title = "a looming disc on the right eye's motion detectors (T4/T5), 300 Hz, 5 trials (~1 min); plays DNp01's response, and the body raises its wings (our illustration)";
+  loom.addEventListener("click", () => void runLooming(loom));
+  experimentChips.push(loom);
+  runItems.appendChild(loom);
   for (const chip of CHIPS) {
     const b = document.createElement("button");
     b.className = chip.params ? "chip" : "chip sep";
