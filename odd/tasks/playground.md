@@ -62,6 +62,16 @@ live. Requested 2026-11-18.
       every message, `wall_ms.vision`. Default OFF. Real GPU experiment (kinematic body, 50 ms chunks): at rest nothing; the walking fly's own
       optic flow drives thousands of T4/T5 cells at up to 300 Hz and the loop sustains walking/turning/DNp01 that the vision-off control lacks;
       DNp01 first fires ~20 mm from the wall (floor flow), not from the edges (uniform floor: no DNp01). Numbers in the CL1 report.
+      CL1 calibration (branch wip/pg-cal): the rate scale k = `fly_eye.MAX_RATE_HZ` is the ONLY free parameter and is now 100 Hz
+      (`MAX_RATE_CALIBRATED = True`; was an uncalibrated 300 Hz, at which floor flow fires DNp01). Detector delay tau 53 ms
+      (`HRC_OPTIMAL_TF_HZ` = 3 Hz, our choice inside a published bracket; the previous 40 ms peaked at 4 Hz). Criteria fixed before the sweep:
+      LOOM = a dark disc approaching the right eye (r/v 20 and 40 ms, 5 to 75 deg half-angle over 0.8 s, 12 brain seeds) fires the ipsilateral
+      DNp01 (>= 1 spike in the 1 s window) in >= 80% of trials; NO-GO = receding disc, uniform dimming, and straight walking at 14 mm/s over the
+      checkered floor (x -20 to +20 mm, 2.9 s, scripted pose) fire neither DNp01 in any trial (0/12 = at most ~22% at 95%). Result:
+      k = 25 fails loom (0/12); k = 50 loom 0.83; k = 75-200 loom 1.00 and all NO-GO 0/12 (the calibrated range, centre ~120 Hz); k = 300 floor 0.75.
+      The full table (k x stimulus -> DNp01 R/L spikes, LPLC2, LC4, driven cells) is in the CL1 calibration report and in the docstring/comment at
+      `fly_eye.MAX_RATE_HZ`. Literature: T4/T5 are graded (no published firing rate in Hz), LPLC2 does not respond to wide-field translation
+      (Klapoetke 2017); whether walking-speed floor flow drives the real GF was NOT FOUND.
 - [ ] CL2 touch: antennal mechanosensory input when the head touches the glass (leg mechanosensors live in the VNC, not
       in this brain-only model: stated).
 - [ ] Flight roadmap: F0 research flybody flight (weights, license, geometry); F1 takeoff from DNp01 (validated loom path);
