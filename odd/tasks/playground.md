@@ -47,5 +47,13 @@ live. Requested 2026-11-18.
 - [ ] P5 caffeine neurons: identify caffeine-sensitive gustatory neurons in FlyWire with sources.
 - [ ] P6 later: video input (link/mp4 -> motion -> T4/T5) and temperature (thermosensory neurons, measured first).
 
+- [ ] CL1 closed-loop vision: a general fly eye (per-column view directions from the exact column map; luminance of the
+      arena scene per column per frame; Hassenstein-Reichardt motion per subtype direction -> T4/T5 rates) feeding the live
+      brain every chunk; optional labelled background noise; report what the fly does by itself (DN activity, movement).
+- [ ] CL2 touch: antennal mechanosensory input when the head touches the glass (leg mechanosensors live in the VNC, not
+      in this brain-only model: stated).
+- [ ] Flight roadmap: F0 research flybody flight (weights, license, geometry); F1 takeoff from DNp01 (validated loom path);
+      F2 kinematic flight library; F3 steering/landing only with evidence or labelled as our choice.
+
 ## Checks
 TDD strict. `uv run pytest -q`, `pnpm -C web test`, `pnpm -C web build`. Depends on G3a (live session backend).
