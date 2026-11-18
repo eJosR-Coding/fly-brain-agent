@@ -24,6 +24,11 @@ import numpy as np
 
 SAMPLE_HZ = 200
 CPG_HZ = 12.0  # the controller's fixed CPG frequency
+# Physics and CPG step (the controller integrates its oscillators with the same step). Measured against the dt = 1e-4 s
+# reference (G2, odd/tasks/realtime.md; drive [1,1] 1.5 s and [0.4,1.2] 1.0 s, seed 0): at 2e-4 s the speed is -2.8 %,
+# the turn yaw rate -4.9 %, stepping 12.0 Hz, tripod kept, joint-angle median error 0.2 deg, 1.97x faster. 3e-4 s also
+# passes but does not divide the 200 Hz clip frame period; 5e-4 s bounces (speed +23 %, thorax up to 1.96 mm).
+DEFAULT_DT_S = 2e-4
 LEGS = ("lf", "lm", "lh", "rf", "rm", "rh")
 LINKS = ("coxa", "trochanterfemur", "tibia", "tarsus1", "tarsus2", "tarsus3", "tarsus4", "tarsus5")
 BODIES = [f"{leg}_{link}" for leg in LEGS for link in LINKS]
@@ -102,6 +107,14 @@ def yaw_deg(thorax_quat: np.ndarray) -> np.ndarray:
     return np.degrees(np.arctan2(fwd[..., 1], fwd[..., 0]))
 
 
+def sample_stride(dt_s: float) -> int:
+    """Physics steps per 200 Hz clip frame; the step must divide the frame period exactly."""
+    stride = 1.0 / (SAMPLE_HZ * dt_s)
+    if abs(stride - round(stride)) > 1e-6 or round(stride) < 1:
+        raise ValueError(f"physics step {dt_s} s does not divide the {SAMPLE_HZ} Hz frame period (1/{SAMPLE_HZ} s)")
+    return int(round(stride))
+
+
 def drive_schedule(drive_bins, escape_bins, bin_ms: float, n_steps: int, dt_s: float):
     """Per-physics-step drive (n_steps, 2) and escape flags (n_steps,) from per-bin values.
 
@@ -155,7 +168,7 @@ def reference_neutral():
     return rel_pos[1:], rel_quat[1:], ref_pos[0] * POS_UM_PER_MM
 
 
-def build_sim():
+def build_sim(dt_s: float = None):
     require_flygym()
     from flygym import Simulation
     from flygym.anatomy import ContactBodiesPreset
@@ -169,12 +182,12 @@ def build_sim():
         fly, [0, 0, 0.8], Rotation3D("quat", [1, 0, 0, 0]),
         bodysegs_with_ground_contact=ContactBodiesPreset.TIBIA_TARSUS_ONLY, add_ground_contact_sensors=True,
     )
-    return fly, Simulation(world)
+    return fly, Simulation(world, timestep=DEFAULT_DT_S if dt_s is None else float(dt_s))
 
 
-def make_rig() -> SimpleNamespace:
+def make_rig(dt_s: float = None) -> SimpleNamespace:
     """The simulation plus the body bookkeeping (thorax index, leg-body indices, leg order)."""
-    fly, sim = build_sim()
+    fly, sim = build_sim(dt_s)
     order = [b.name for b in fly.get_bodysegs_order()]
     return SimpleNamespace(
         fly=fly, sim=sim, thorax=order.index("c_thorax"), idx=[order.index(n) for n in BODIES],
@@ -211,11 +224,11 @@ def control_step(rig: SimpleNamespace, ctl, drive) -> object:
 
 # ---- the runner ----
 
-def run_body(drive_bins, bin_ms: float, duration_ms: float, seed: int = 0, escape=None) -> dict:
+def run_body(drive_bins, bin_ms: float, duration_ms: float, seed: int = 0, escape=None, dt_s: float = None) -> dict:
     """Simulate `duration_ms` of the body under the per-bin drive and return a fly-walk/1 clip (see module doc).
 
     drive_bins: BodyDrive (flybrain.body_drive) or an (n_bins, 2) sequence of [left, right]; escape: per-bin flags
-    (taken from a BodyDrive when not given). Raises BodyUnavailable when flygym is not installed."""
+    (taken from a BodyDrive when not given); dt_s: physics (and CPG) step, DEFAULT_DT_S when None. Raises BodyUnavailable when flygym is not installed."""
     require_flygym()
     if hasattr(drive_bins, "drive"):
         if escape is None:
@@ -224,12 +237,12 @@ def run_body(drive_bins, bin_ms: float, duration_ms: float, seed: int = 0, escap
     if not (bin_ms > 0 and math.isfinite(bin_ms)) or not (duration_ms > 0 and math.isfinite(duration_ms)):
         raise ValueError("bin_ms and duration_ms must be positive")
 
-    rig = make_rig()
+    rig = make_rig(dt_s)
     sim = rig.sim
     neutral_pos, neutral_quat, thorax_origin_um = reference_neutral()
     ctl = start_controller(rig, seed)
     dt = float(sim.timestep)
-    stride = int(round(1.0 / (SAMPLE_HZ * dt)))
+    stride = sample_stride(dt)
     n_frames = max(1, int(round(duration_ms / 1000.0 * SAMPLE_HZ)))
     n_steps = n_frames * stride
     sched, esc = drive_schedule(drive_bins, escape, bin_ms, n_steps, dt)

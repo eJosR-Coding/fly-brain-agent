@@ -37,10 +37,11 @@ DRIVE = (1.0, 1.0)  # descending drive [left, right]: straight walking
 SEED = 0
 TRANSIENT_S = 0.5  # discarded start-up (the CPG and the contacts settle)
 TARGET_S = 1.0
+PHYSICS_DT_S = 1e-4  # pinned: the committed fly-walk.json is the dt = 1e-4 s reference, whatever body_runner's default is
 
 
 def export(out_path: Path) -> dict:
-    rig = make_rig()
+    rig = make_rig(PHYSICS_DT_S)
     fly, sim, thorax, idx, legs_order = rig.fly, rig.sim, rig.thorax, rig.idx, rig.legs_order
 
     neutral_pos, neutral_quat, thorax_origin_um = reference_neutral()
