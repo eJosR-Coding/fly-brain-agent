@@ -48,10 +48,10 @@ describe("createBodyScene cleanup", () => {
     } as never;
     const theme = { highlightHex: "#ffffff", orbitSpeed: 1, orbitResumeMs: 100 } as never;
     expect(() => createBodyScene(host, body, theme)).toThrow("controls exploded");
-    // joint lines + joint occluder + static lines + static occluder
-    expect(geo).toHaveBeenCalledTimes(4);
-    // one line material + one occluder material
-    expect(mat).toHaveBeenCalledTimes(2);
+    // joint lines + joint occluder + static lines + static occluder + the floor grid
+    expect(geo).toHaveBeenCalledTimes(5);
+    // one line material + one occluder material + the floor's
+    expect(mat).toHaveBeenCalledTimes(3);
     geo.mockRestore();
     mat.mockRestore();
   });

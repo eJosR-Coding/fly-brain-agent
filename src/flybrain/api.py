@@ -9,6 +9,7 @@ import asyncio
 import json
 import math
 import os
+import threading
 import uuid
 from contextlib import aclosing
 from collections.abc import AsyncIterable
@@ -29,6 +30,7 @@ from flybrain.agent import MAX_STEPS, build_graph, keep_turns_from_env, stream_e
 from flybrain.agent_mcp import SERVER_NAME
 from flybrain.anatomy import NT_CODES, REGION_CODES, landmarks, nt_codes, region_codes
 from flybrain.atlas import RowIndex, load_atlas
+from flybrain import body_runner, body_service
 from flybrain.brain_preview import render_preview
 from flybrain.mcp_server import DEFAULT_ANNOTATIONS, build_server, load_connectome
 from flybrain.experiments import dose_response
@@ -82,6 +84,14 @@ class _ExperimentRequest(BaseModel):
     readout_selection_id: str | None = None
     duration_ms: float = 300
     trials: StrictInt = 3
+
+
+class BodyRequest(BaseModel):
+    """Body clip from a recording: an optional shorter duration (<= 3000 ms) and the physics seed."""
+
+    model_config = ConfigDict(extra="forbid")
+    duration_ms: float | None = None
+    seed: StrictInt = 0
 
 
 class DoseResponseRequest(_ExperimentRequest):
@@ -303,6 +313,7 @@ def create_app(
     app = FastAPI(title="flybrain", lifespan=lifespan)
     app.state.turn_timeout = _resolve_turn_timeout(turn_timeout)
     app.state.experiment_timeout = _resolve_experiment_timeout(experiment_timeout)
+    app.state.body_lock = threading.Lock()
     app.state.keep_turns = keep = keep_turns_from_env() if keep_turns is None else keep_turns
     app.add_middleware(
         CORSMiddleware,
@@ -515,6 +526,34 @@ def create_app(
         return await _run_experiment(
             silencing_screen, req, req.candidates, req.n, req.duration_ms, req.trials, req.rate_hz
         )
+
+    @app.post("/body/from-simulation/{simulation_id}")
+    async def body_from_simulation(simulation_id: str, req: BodyRequest | None = None):
+        """Physics body driven by a recording's descending neurons: {clip, drive, caption, note}.
+
+        The drive mapping is ours (see body_drive); needs the optional `body` extra (503 with the install hint
+        otherwise). Length is capped at the recording and at 3000 ms; ~8 s of compute per simulated second."""
+        req = req or BodyRequest()
+        rec = _record(simulation_id)
+        try:
+            body_service.effective_duration_ms(rec, req.duration_ms)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        if req.duration_ms is not None and req.duration_ms > body_service.MAX_BODY_MS:
+            raise HTTPException(status_code=422, detail=f"duration_ms is at most {body_service.MAX_BODY_MS:g}")
+
+        def work():
+            with app.state.body_lock:  # one physics run at a time
+                return body_service.body_from_record(rec, app.state.atlas, req.duration_ms, req.seed)
+
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(work), app.state.experiment_timeout)
+        except body_runner.BodyUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail="the body simulation timed out") from None
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
 
     @app.get("/experiments/progress")
     def experiment_progress():

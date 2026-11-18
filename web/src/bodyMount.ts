@@ -1,4 +1,5 @@
 /** Mounts the static fly body into a host element. Failures are swallowed (a console warning): it must never block boot. */
+import type { WorldPose } from "./bodyClip";
 import { createBodyScene, type BodyScene } from "./body";
 import { loadBody } from "./bodyData";
 import { DEFAULT_BODY_CAPTION } from "./bodyAnimation";
@@ -13,6 +14,8 @@ export interface MountedBody {
   setPose(angles: Partial<Record<JointId, number>>): void;
   /** One frame of a physics clip (per leg body matrices from bodyClip), or null for rest. Safe before the scene exists (the latest frame is applied on creation); a no-op after remove(). */
   setClipFrame(mats: ReadonlyMap<string, ArrayLike<number>> | null): void;
+  /** The whole fly's motion in the world (root transform, floor, camera follow), or null for none. Safe before the scene exists (the latest is applied on creation); a no-op after remove(). */
+  setWorld(world: WorldPose | null): void;
   /** The line under the body. Safe before the scene exists (the latest text is shown on creation); a no-op after remove(). */
   setCaption(text: string): void;
 }
@@ -34,6 +37,7 @@ export function mountBody(host: HTMLElement, deps: BodyDeps): MountedBody {
   let removed = false;
   let pose: Partial<Record<JointId, number>> | null = null;
   let clipFrame: ReadonlyMap<string, ArrayLike<number>> | null = null;
+  let world: WorldPose | null = null;
   void (async () => {
     try {
       const body = await (deps.load ?? loadBody)();
@@ -43,6 +47,7 @@ export function mountBody(host: HTMLElement, deps: BodyDeps): MountedBody {
       stage.appendChild(caption);
       if (pose) scene.setPose(pose);
       if (clipFrame) scene.setClipFrame(clipFrame);
+      if (world) scene.setWorld(world);
     } catch (e) {
       stage.remove();
       console.warn("fly body not shown:", e);
@@ -63,8 +68,14 @@ export function mountBody(host: HTMLElement, deps: BodyDeps): MountedBody {
       clipFrame = mats;
       scene?.setClipFrame(mats);
     },
+    setWorld(w) {
+      if (removed) return;
+      world = w;
+      scene?.setWorld(w);
+    },
     remove() {
       removed = true;
+      world = null;
       pose = null;
       clipFrame = null;
       scene?.dispose();

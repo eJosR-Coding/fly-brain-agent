@@ -25,7 +25,17 @@ export interface WalkClip {
   /** per-leg adhesion flags (1 = the controller's stance command), frame-major [frame][leg]; empty when absent */
   adhesion: Uint8Array;
   legs: string[];
+  /** true (the default, the committed walking demo): the clip repeats; false (a brain-driven run): it plays once and holds its last frame */
+  loop: boolean;
+  /** per-frame 1 = the drive said "escape" (legs stopped, wings raised); empty when absent */
+  escape: Uint8Array;
+  /** whole-body motion of the thorax in the world, viewer axes and mm, relative to the first frame; null when absent */
+  world: { pos: Float64Array; yawRad: Float64Array } | null;
 }
+
+/** Root transform of the whole fly at one time: `matrix` (column-major 4x4, viewer frame, mm) carries the mesh from the
+ *  start pose to its place in the world; `offset` is the thorax's translation (viewer axes, mm), for camera and floor. */
+export interface WorldPose { matrix: Matrix16; offset: Vec3 }
 
 const FORMAT = "fly-walk/1";
 const UM_TO_MM = 1 / 1000;
@@ -97,14 +107,73 @@ export function parseWalkClip(raw: unknown): WalkClip {
   if (legs.length > 0 && Array.isArray(adh) && adh.length === nFrames && adh.every((row) => isNumberArray(row, legs.length))) {
     adhesion = Uint8Array.from((adh as number[][]).flat().map((v) => (v ? 1 : 0)));
   }
+  const loop = typeof r.loop === "boolean" ? r.loop : true;
+  const esc = r.escape;
+  const escape = Array.isArray(esc) && esc.length === nFrames && esc.every(isFiniteNumber) ? Uint8Array.from((esc as number[]).map((v) => (v ? 1 : 0))) : new Uint8Array(0);
   return {
     bodies: bodies as string[],
     nFrames,
     sampleRateHz: rate,
     durationS: nFrames / rate,
     thoraxOrigin: posToViewer(origin[0], origin[1], origin[2]),
-    pos, quat, neutralPos, neutralQuat, adhesion, legs,
+    pos, quat, neutralPos, neutralQuat, adhesion, legs, loop, escape, world: parseWorld(r.thorax_world, nFrames),
   };
+}
+
+/** thorax_world {pos_um, yaw_deg} (flygym world frame: x forward, y left, z up; x and y relative to the start, z absolute)
+ *  -> viewer axes in mm, all relative to frame 0. Anything malformed means "no world motion". */
+function parseWorld(raw: unknown, nFrames: number): WalkClip["world"] {
+  if (typeof raw !== "object" || raw === null) return null;
+  const w = raw as { pos_um?: unknown; yaw_deg?: unknown };
+  if (!Array.isArray(w.pos_um) || w.pos_um.length !== nFrames || !w.pos_um.every((p) => isNumberArray(p, 3))) return null;
+  if (!Array.isArray(w.yaw_deg) || w.yaw_deg.length !== nFrames || !w.yaw_deg.every(isFiniteNumber)) return null;
+  const p0 = w.pos_um[0] as number[];
+  const pos = new Float64Array(nFrames * 3);
+  const yawRad = new Float64Array(nFrames);
+  for (let f = 0; f < nFrames; f++) {
+    const p = w.pos_um[f] as number[];
+    pos.set(posToViewer(p[0] - p0[0], p[1] - p0[1], p[2] - p0[2]), f * 3);
+    yawRad[f] = (((w.yaw_deg as number[])[f] - (w.yaw_deg as number[])[0]) * Math.PI) / 180;
+  }
+  return { pos, yawRad };
+}
+
+/** Where time t (s) falls in the clip: frames i and j and the weight a of j. Looping wraps (the frame after the last is
+ *  the first); otherwise t is clamped, so the last frame is held. Non-finite t falls back to the first frame. */
+function locate(clip: WalkClip, t: number): { i: number; j: number; a: number } {
+  const n = clip.nFrames;
+  if (!clip.loop) {
+    const u = Number.isFinite(t) ? Math.min(Math.max(t * clip.sampleRateHz, 0), n - 1) : 0;
+    const i = Math.min(Math.floor(u), n - 1);
+    return { i, j: Math.min(i + 1, n - 1), a: u - i };
+  }
+  let u = Number.isFinite(t) ? (t * clip.sampleRateHz) % n : 0;
+  if (u < 0) u += n;
+  const i = Math.min(Math.floor(u), n - 1);
+  return { i, j: (i + 1) % n, a: u - i };
+}
+
+/** The escape flag of the frame at time t (false when the clip carries none). */
+export function escapeAt(clip: WalkClip, t: number): boolean {
+  if (clip.escape.length === 0) return false;
+  return clip.escape[locate(clip, t).i] === 1;
+}
+
+/** The whole-fly root transform at time t, or null when the clip has no thorax_world. Rotation is about the vertical
+ *  (viewer Y) axis through the thorax origin; yaw is positive to the left, which is a positive turn about +Y in viewer
+ *  axes (fly forward = +Z turns toward fly left = +X). M = T(origin + p) Ry(yaw) T(-origin). */
+export function worldPose(clip: WalkClip, t: number): WorldPose | null {
+  const w = clip.world;
+  if (!w) return null;
+  const { i, j, a } = locate(clip, t);
+  const p: Vec3 = [0, 0, 0];
+  for (let k = 0; k < 3; k++) p[k] = (1 - a) * w.pos[i * 3 + k] + a * w.pos[j * 3 + k];
+  const yaw = (1 - a) * w.yawRad[i] + a * w.yawRad[j];
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  const T = clip.thoraxOrigin;
+  const tx = T[0] + p[0] - (c * T[0] + s * T[2]);
+  const tz = T[2] + p[2] - (-s * T[0] + c * T[2]);
+  return { matrix: [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, tx, p[1], tz, 1], offset: p };
 }
 
 /** Row-major 3x3 of a unit quaternion (w, x, y, z). */
@@ -137,17 +206,12 @@ function slerp(clip: WalkClip, i: number, j: number, body: number, t: number, ou
 }
 
 /** D_body(t) for every body, as column-major 4x4 matrices in the viewer frame (mm). `t` is in seconds and loops
- *  over `durationS` (negative and non-finite times wrap / fall back to the first frame); the frame after the last is
+ *  over `durationS` (negative and non-finite times wrap / fall back to the first frame); a clip with loop:false is clamped instead and holds its last frame; the frame after the last is
  *  the first. D = M(t) * M(neutral)^-1 acts in the thorax frame, whose origin sits at `thoraxOrigin` of the mesh frame,
  *  so the matrix is re-expressed about that point: x' = Rd x + (td + T - Rd T). */
 export function clipMatrices(clip: WalkClip, t: number): Map<string, Matrix16> {
-  const n = clip.nFrames;
   const nb = clip.bodies.length;
-  let u = Number.isFinite(t) ? (t * clip.sampleRateHz) % n : 0;
-  if (u < 0) u += n;
-  const i = Math.min(Math.floor(u), n - 1);
-  const j = (i + 1) % n;
-  const a = u - i;
+  const { i, j, a } = locate(clip, t);
   const out = new Map<string, Matrix16>();
   const q = new Float64Array(4), rt = new Float64Array(9), rn = new Float64Array(9);
   const T = clip.thoraxOrigin;

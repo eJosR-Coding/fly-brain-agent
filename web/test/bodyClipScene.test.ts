@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const made = vi.hoisted(() => ({ scenes: [] as unknown[] }));
+const made = vi.hoisted(() => ({ scenes: [] as unknown[], cameras: [] as unknown[], controls: [] as unknown[] }));
 
 vi.mock("three", async (orig) => {
   const real = await orig<typeof import("three")>();
@@ -11,13 +11,15 @@ vi.mock("three", async (orig) => {
     setPixelRatio() {}
     setClearColor() {}
     setSize() {}
-    render(scene: unknown) { made.scenes.push(scene); }
+    render(scene: unknown, camera: unknown) { made.scenes.push(scene); made.cameras.push(camera); }
   }
   return { ...real, WebGLRenderer: FakeRenderer };
 });
 vi.mock("three/addons/controls/OrbitControls.js", () => ({
   OrbitControls: class {
-    target = { copy() {} };
+    target = { x: 0, y: 0, z: 0, copy() {}, add(v: { x: number; y: number; z: number }) { this.x += v.x; this.y += v.y; this.z += v.z; } };
+    autoRotate = false;
+    constructor() { made.controls.push(this); }
     addEventListener() {}
     update() { return false; }
     dispose() {}
@@ -125,5 +127,96 @@ describe("createBodyScene clip frames", () => {
     const antenna = groupNamed("antenna_l")!;
     expect(antenna.matrix.elements[0]).toBeCloseTo(0, 6); // rotated 90 deg about Y
     expect(matrix("lf_coxa")).toEqual(MOVED);
+  });
+});
+
+describe("createBodyScene world (root transform, floor, camera follow)", () => {
+  const rot90 = [0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1]; // 90 deg about +Y
+  const world = (matrix: number[], offset: number[]) => ({ matrix, offset }) as never;
+  const floor = () => lastScene().children.find((c) => c.name === "floor") as THREE.LineSegments;
+  const cam = () => made.cameras[made.cameras.length - 1] as THREE.PerspectiveCamera;
+  beforeEach(() => {
+    made.scenes.length = 0;
+    made.cameras.length = 0;
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0));
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
+  });
+  afterEach(() => { for (const s of open.splice(0)) s.dispose(); vi.unstubAllGlobals(); });
+
+  it("has a hidden floor grid at the body's lowest point until a world is set", async () => {
+    createBodyScene(document.createElement("div"), makeBody({ bounds: { min: [0, -0.4, 0], max: [1, 1, 1] } }), theme);
+    await tick();
+    expect(floor()).toBeDefined();
+    expect(floor().visible).toBe(false);
+    expect(floor().position.y).toBeCloseTo(-0.4, 6);
+  });
+  it("applies the root transform to every group: rest, rig joints and leg bodies (composed with their own motion)", async () => {
+    const scene = createBodyScene(document.createElement("div"), makeBody(), theme);
+    await tick();
+    scene.setClipFrame(new Map([["lf_coxa", MOVED]]));
+    scene.setWorld(world(rot90, [0, 0, 0]));
+    const want = new THREE.Matrix4().fromArray(rot90).multiply(new THREE.Matrix4().fromArray(MOVED)).elements;
+    expect(matrix("lf_coxa")).toEqual(Array.from(want));
+    expect(matrix("lf_tibia")).toEqual(rot90); // leg at rest: just the world
+    expect(matrix("antenna_l")).toEqual(rot90);
+    expect(Array.from(groupNamed("rest")!.matrix.elements)).toEqual(rot90);
+    // a later leg frame keeps the world
+    scene.setClipFrame(new Map([["lf_tibia", MOVED]]));
+    expect(matrix("lf_tibia")).toEqual(Array.from(want));
+    expect(matrix("lf_coxa")).toEqual(rot90);
+    // and so does a pose
+    scene.setPose({ antenna_l: 30 });
+    expect(matrix("antenna_l")).not.toEqual(rot90);
+  });
+  it("null world returns every group to its own motion and hides the floor", async () => {
+    const scene = createBodyScene(document.createElement("div"), makeBody(), theme);
+    await tick();
+    scene.setClipFrame(new Map([["lf_coxa", MOVED]]));
+    scene.setWorld(world(rot90, [0, 0, 0]));
+    expect(floor().visible).toBe(true);
+    scene.setWorld(null);
+    expect(matrix("lf_coxa")).toEqual(MOVED);
+    expect(matrix("lf_tibia")).toEqual(IDENTITY);
+    expect(floor().visible).toBe(false);
+  });
+  it("keeps the floor fixed in the world: snapped to whole cells under the thorax", async () => {
+    const scene = createBodyScene(document.createElement("div"), makeBody({ radius: 5 }), theme); // cell = size / 5 = 2
+    await tick();
+    scene.setWorld(world(IDENTITY, [5, 0, -3]));
+    expect(floor().position.x).toBe(4);
+    expect(floor().position.z).toBe(-4);
+    scene.setWorld(world(IDENTITY, [5.5, 0, -3.5]));
+    expect(floor().position.x).toBe(4);
+    expect(floor().position.z).toBe(-4);
+  });
+  it("glides the camera after the thorax (camera and focus move together), then settles", async () => {
+    const scene = createBodyScene(document.createElement("div"), makeBody(), theme);
+    await tick();
+    const before = cam().position.clone();
+    scene.setWorld(world(IDENTITY, [2, 0, 4]));
+    await new Promise((r) => setTimeout(r, 400));
+    const moved = cam().position.clone().sub(before);
+    expect(moved.x).toBeCloseTo(2, 3);
+    expect(moved.z).toBeCloseTo(4, 3);
+    const settled = cam().position.clone();
+    await new Promise((r) => setTimeout(r, 60));
+    expect(cam().position.distanceTo(settled)).toBe(0); // settled: it no longer drifts
+  });
+  it("snaps the camera at once under reduced motion", async () => {
+    const scene = createBodyScene(document.createElement("div"), makeBody(), theme, { reducedMotion: true });
+    await tick();
+    const before = cam().position.clone();
+    scene.setWorld(world(IDENTITY, [2, 0, 4]));
+    await tick();
+    expect(cam().position.clone().sub(before).z).toBeCloseTo(4, 6);
+  });
+  it("does not auto-orbit while following", async () => {
+    const scene = createBodyScene(document.createElement("div"), makeBody(), theme);
+    await tick();
+    scene.setWorld(world(IDENTITY, [1, 0, 1]));
+    await tick();
+    const controls = made.controls[made.controls.length - 1] as { autoRotate: boolean };
+    expect(controls.autoRotate).toBe(false);
   });
 });

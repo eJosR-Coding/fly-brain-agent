@@ -27,6 +27,10 @@ dependencies = [
     "uvicorn>=0.54.0",
 ]
 
+[project.optional-dependencies]
+# the physics body (NeuroMechFly v2): heavy, so optional. `uv sync --extra body`
+body = ["flygym==2.1.1"]
+
 [project.scripts]
 flybrain-mcp = "flybrain.mcp_server:main"
 flybrain-chat = "flybrain.cli:entrypoint"
