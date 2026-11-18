@@ -288,7 +288,7 @@ def build_server(
     ) -> dict:
         """SIMULATION (model): looming disc vs receding, dimming, control (equal drive), read at DNp01.
 
-        input: detectors (LPLC2+LC4) | photoreceptors (R1-6; signal dies). Slow: run once. steps 3..20, trials 1..10.
+        input: detectors (LPLC2+LC4) | photoreceptors (R1-6; dies) | motion (T4/T5). Slow: run once. steps 3..20, trials 1..10.
         """
         return await asyncio.to_thread(
             looming.looming_escape, atlas, sims, trials, rate_hz, duration_ms, steps, side, input,

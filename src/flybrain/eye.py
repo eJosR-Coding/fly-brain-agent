@@ -39,9 +39,30 @@ class EyeMap:
             raise ValueError("photoreceptor positions are all identical: no eye shape to map")
         self.rows = rows
         self.xy = flat / extent  # centroid at (0, 0), farthest point at radius 1
+        self._axes, self._centred = axes[:2], centred  # kept so head_frame() can orient the map
 
     def __len__(self) -> int:
         return len(self.rows)
+
+    def head_frame(self) -> "EyeMap":
+        """The same map rotated into the head frame: +x toward posterior, +y upward (both eyes alike).
+
+        FlyWire axes (checked on the atlas): y grows ventrally, z grows posteriorly, x toward the fly's right.
+        The map's vertical is the in-plane projection of dorsal (-y); its horizontal is perpendicular to that,
+        signed so that it correlates positively with z (posterior). Our choice: the flattening is only approximate.
+        """
+        up = self._axes @ np.array([0.0, -1.0, 0.0])
+        if np.linalg.norm(up) < 0.2:
+            raise ValueError("the map plane has no dorsoventral extent: cannot orient it to the head")
+        v_dir = up / np.linalg.norm(up)
+        h_dir = np.array([-v_dir[1], v_dir[0]])
+        z = self._centred[:, 2]
+        if float(np.dot(self.xy @ h_dir, z)) < 0:
+            h_dir = -h_dir
+        out = EyeMap.__new__(EyeMap)
+        out.rows, out._axes, out._centred = self.rows, self._axes, self._centred
+        out.xy = np.column_stack([self.xy @ h_dir, self.xy @ v_dir])
+        return out
 
     def disc(self, radius: float, centre=None) -> np.ndarray:
         """Rows (sorted) whose map position is within `radius` (fraction of the eye radius) of `centre`.

@@ -19,6 +19,7 @@ from flybrain.experiments import MODEL_NOTE, _Progress, _r1
 from flybrain.eye import (
     COLLISION_LEAD_MS, FULL_FIELD_DEG, LOOM_L_OVER_V_MS, disc_schedule, eye_map, looming_radii, schedule_drive,
 )
+from flybrain.motion import motion_eye, motion_schedule
 from flybrain.simulation import StimulusSchedule
 from flybrain.stats import ALPHA, compare, holm, summarize
 from flybrain.tools import (
@@ -29,9 +30,10 @@ from flybrain.tools import (
 MIN_STEPS, MAX_STEPS = 3, 20
 CONDITIONS = ("looming", "receding", "dimming", "control")
 READOUT, DETECTORS = "DNp01", ("LPLC2", "LC4")
-INPUTS = ("photoreceptors", "detectors")
+INPUTS = ("photoreceptors", "detectors", "motion")
 INPUT_NOTES = {
     "photoreceptors": "this model's visual input does not propagate (graded neurons, no histamine class): Shiu et al. 2024 limits",
+    "motion": "the disc drives T4a-d/T5a-d as local edge motion (our model choice); the connectome computes LPLC2/LC4 and DNp01",
     "detectors": "starts halfway: the disc drives LPLC2+LC4 directly, skipping the eye and optic lobe (like Eon Systems' hybrid)",
 }
 CAVEAT = (
@@ -72,6 +74,12 @@ def _shuffled(schedule: StimulusSchedule, pool: np.ndarray, seed: int) -> Stimul
     ])
 
 
+def _scaled(schedule: StimulusSchedule, target: float) -> StimulusSchedule:
+    """Same segments with every rate multiplied so the total drive equals `target` exactly."""
+    k = target / schedule_drive(schedule)
+    return StimulusSchedule([(s, e, rows, hz * k) for s, e, rows, hz in schedule.segments])
+
+
 def _verdict(comps: list[dict], trials: int) -> str:
     if any(c["p"] is None for c in comps):
         return "model prediction: need at least 2 trials per condition to tell a real change from noise"
@@ -87,11 +95,12 @@ def _verdict(comps: list[dict], trials: int) -> str:
 
 def looming_escape(
     atlas: Atlas, sims, trials=5, rate_hz=100, duration_ms=500, steps=10, side="right", input="detectors",
-    seed: int = 0,
+    seed: int = 0, polarity="dark",
 ) -> dict:
     """Looming vs receding vs dimming (equal total drive) vs a control, read at DNp01.
 
-    input "detectors" drives LPLC2+LC4 (control: shuffled rows); "photoreceptors" drives R1-6 (control: LPLC2+LC4 silenced).
+    input "detectors" drives LPLC2+LC4 (control: shuffled rows); "photoreceptors" drives R1-6 (control: LPLC2+LC4 silenced);
+    "motion" drives T4a-d/T5a-d with local edge motion (control: shuffled rows; polarity "dark" or "both", see motion.py).
     """
     if input not in INPUTS:
         raise ValueError(f"input must be one of {INPUTS}, got {input!r}")
@@ -100,15 +109,27 @@ def looming_escape(
     duration = round(_clamp("duration_ms", _number("duration_ms", duration_ms), MIN_DURATION_MS, MAX_DURATION_MS, notes), 1)
     n_trials = _clamp("trials", _int("trials", trials), 1, MAX_TRIALS, notes)
     n_steps = _clamp("steps", _int("steps", steps), MIN_STEPS, MAX_STEPS, notes)
-    eye = eye_map(atlas, side, DETECTORS if input == "detectors" else "R1-6")
+    types = None
+    if input == "motion":
+        eye, types = motion_eye(atlas, side)
+    else:
+        eye = eye_map(atlas, side, DETECTORS if input == "detectors" else "R1-6")
     readout = _rows(atlas, READOUT)
     detectors = {name: _rows(atlas, name) for name in DETECTORS}
+    if input == "motion":
+        detectors["DNp04"] = _rows(atlas, "DNp04")
     silenced = np.sort(np.concatenate(list(detectors.values()))) if input == "photoreceptors" else None
 
-    loom = disc_schedule(eye, looming_radii(duration, n_steps), duration, rate)
+    radii = looming_radii(duration, n_steps)
+    if input == "motion":
+        loom = motion_schedule(eye, types, radii, duration, rate, 1, polarity)
+        receding = _scaled(motion_schedule(eye, types, radii, duration, rate, -1, polarity), schedule_drive(loom))
+    else:
+        loom = disc_schedule(eye, radii, duration, rate)
+        receding = _reversed(loom, duration)
     drive = schedule_drive(loom)
     dim, dim_rate = _dimming(eye.rows, drive, duration, notes)
-    schedules = {"looming": loom, "receding": _reversed(loom, duration), "dimming": dim,
+    schedules = {"looming": loom, "receding": receding, "dimming": dim,
                  "control": loom if silenced is not None else _shuffled(loom, eye.rows, seed)}
     bin_ms = max(1.0, math.ceil(duration / SIM_BINS * 10) / 10)
     stimulus = {"neurons": len(eye), "rate_hz": rate, "duration_ms": duration, "trials": n_trials, "steps": n_steps, "input": input}
@@ -164,6 +185,13 @@ def looming_escape(
         exc, inh = (round(100 * float((signs == s).sum()) / n, 1) for s in (1, -1))
         notes.append(f"R1-6 here: {exc:g}% excitatory, {inh:g}% inhibitory weights; {CAVEAT}")
         extra["photoreceptors"] = {"eye": side, "n": n, "excitatory_pct": exc, "inhibitory_pct": inh}
+    elif input == "motion":
+        notes.append(
+            f"motion front end (our model choice): T4/T5 placed by PCA retinotopy in a head frame; preferred directions a "
+            f"front-to-back, b back-to-front, c up, d down (Maisak et al. 2013); rate = base x cos(preferred vs radial edge "
+            f"motion) inside the moving edge band; polarity {polarity} (dark: expansion drives T5, receding T4); dimming = uniform "
+            f"drive, no motion; receding rates rescaled to equal drive; control = looming rows shuffled; spiking LIF, not graded"
+        )
     else:
         notes.append(
             "control = looming with the same detectors in a SHUFFLED order (same rows per window, random non-contiguous "
