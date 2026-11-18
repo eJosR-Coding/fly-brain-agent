@@ -319,6 +319,64 @@ def test_a_new_start_right_after_a_client_stop_succeeds_while_teardown_is_slow(t
             assert ws2.receive_json()["type"] == "started"
 
 
+def test_a_restart_right_after_stop_and_close_without_waiting_succeeds_while_a_chunk_is_in_flight(tiny_tsv_path, svc):
+    # the browser sends stop and closes at once; the server may be in the middle of a chunk and must not refuse the restart
+    probe = Probe()
+    base = fake_factory(probe)
+
+    def factory(atlas, row_index, sims, body_lock, **kw):
+        s = base(atlas, row_index, sims, body_lock, **kw)
+        orig = s.step
+
+        def slow_step():
+            time.sleep(0.1)  # a chunk in flight while the client leaves
+            return orig()
+
+        s.step = slow_step
+        return s
+
+    with TestClient(create_app(atlas_path=tiny_tsv_path, simulation=svc, live_factory=factory)) as c:
+        with c.websocket_connect("/ws/live") as ws1:
+            ws1.send_json({"type": "start", "preset": None, "rate_hz": 0})
+            recv_until(ws1, "chunk")
+            ws1.send_json({"type": "stop"})  # and leave without waiting for "stopped"
+        with c.websocket_connect("/ws/live") as ws2:
+            ws2.send_json({"type": "start", "preset": None, "rate_hz": 0})
+            assert ws2.receive_json()["type"] == "started"
+
+
+def test_a_received_stop_marks_the_session_closing_before_the_chunk_in_flight_ends(tiny_tsv_path, svc):
+    # the real race: a restart can arrive while the old session is still inside a chunk; the stop must already have
+    # marked it closing so the restart waits for the lock instead of getting 4409
+    probe = Probe()
+    base = fake_factory(probe)
+    in_step, finish = threading.Event(), threading.Event()
+    seen = []
+
+    def factory(atlas, row_index, sims, body_lock, **kw):
+        s = base(atlas, row_index, sims, body_lock, **kw)
+        orig = s.step
+
+        def held_step():
+            if probe.sessions and len(seen) == 0 and in_step.is_set() is False and s.t_ms > 0:
+                in_step.set()
+                finish.wait(2.0)  # hold this chunk until the test has looked at the flag
+            return orig()
+
+        s.step = held_step
+        return s
+
+    with TestClient(create_app(atlas_path=tiny_tsv_path, simulation=svc, live_factory=factory)) as c:
+        with c.websocket_connect("/ws/live") as ws1:
+            ws1.send_json({"type": "start", "preset": None, "rate_hz": 0})
+            recv_until(ws1, "chunk")
+            assert in_step.wait(2.0)
+            ws1.send_json({"type": "stop"})
+            assert wait_for(lambda: c.app.state.live_closing, 1.0)  # marked while the chunk is still in flight
+            seen.append(True)
+            finish.set()
+
+
 def test_restart_wait_is_bounded_and_a_live_session_still_gets_4409_at_once(tiny_tsv_path, svc):
     probe = Probe()
     with TestClient(app_with(tiny_tsv_path, svc, probe)) as c:

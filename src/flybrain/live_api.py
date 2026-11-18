@@ -223,11 +223,16 @@ async def _stream(ws: WebSocket, app: FastAPI, session, idle_s: float) -> None:
                 text = await ws.receive_text()
                 last_seen = time.monotonic()
                 try:
-                    await commands.put(json.loads(text))
+                    cmd = json.loads(text)
                 except json.JSONDecodeError:
-                    await commands.put(None)
+                    cmd = None
+                if isinstance(cmd, dict) and cmd.get("type") == "stop":
+                    # mark the session closing NOW, not after the chunk in flight: a client that sends stop and
+                    # reconnects at once (the browser does) must wait for the lock instead of getting 4409
+                    app.state.live_closing = True
+                await commands.put(cmd)
         except (WebSocketDisconnect, RuntimeError):
-            pass
+            app.state.live_closing = True  # the client is gone: same reason as a stop
         finally:
             gone.set()
 
