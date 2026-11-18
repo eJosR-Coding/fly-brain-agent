@@ -138,3 +138,41 @@ describe("mountBody setCaption", () => {
     expect(cap.textContent).not.toBe("late");
   });
 });
+
+describe("mountBody setClipFrame", () => {
+  const fakeScene = () => ({ invalidate() {}, dispose: vi.fn(), setPose: vi.fn(), setClipFrame: vi.fn(), jointIds: () => [] });
+  const frame = new Map([["lf_coxa", [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]]]);
+
+  it("stores a frame set before the scene exists and applies the latest once on creation", async () => {
+    const scene = fakeScene();
+    const m = mountBody(document.createElement("div"), { theme, load: async () => body, create: () => scene });
+    m.setClipFrame(new Map());
+    m.setClipFrame(frame);
+    expect(scene.setClipFrame).not.toHaveBeenCalled();
+    await flush();
+    expect(scene.setClipFrame).toHaveBeenCalledTimes(1);
+    expect(scene.setClipFrame).toHaveBeenCalledWith(frame);
+  });
+  it("applies nothing on creation when no frame was set, and forwards later frames and null (rest)", async () => {
+    const scene = fakeScene();
+    const m = mountBody(document.createElement("div"), { theme, load: async () => body, create: () => scene });
+    await flush();
+    expect(scene.setClipFrame).not.toHaveBeenCalled();
+    m.setClipFrame(frame);
+    m.setClipFrame(null);
+    expect(scene.setClipFrame.mock.calls).toEqual([[frame], [null]]);
+  });
+  it("is a no-op after remove() and never throws when the scene failed to create", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const scene = fakeScene();
+    const m = mountBody(document.createElement("div"), { theme, load: async () => body, create: () => scene });
+    await flush();
+    m.remove();
+    m.setClipFrame(frame);
+    expect(scene.setClipFrame).not.toHaveBeenCalled();
+    const broken = mountBody(document.createElement("div"), { theme, load: async () => body, create: () => { throw new Error("x"); } });
+    broken.setClipFrame(frame);
+    await flush();
+    expect(() => broken.setClipFrame(frame)).not.toThrow();
+  });
+});

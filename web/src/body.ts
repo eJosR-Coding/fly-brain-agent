@@ -16,7 +16,14 @@ export interface BodyScene {
   setPose(angles: Partial<Record<JointId, number>>): void;
   /** The joints this body can move (empty for a body without a rig). */
   jointIds(): JointId[];
+  /** One frame of a physics clip: for each leg body (e.g. "lf_tibia") the 4x4 column-major matrix (viewer frame, mm)
+   *  that carries its mesh from the neutral pose to its pose in that frame. Replaces the WHOLE frame: leg bodies not
+   *  listed return to rest; unknown names and malformed matrices are ignored; null = rest. Redraws. */
+  setClipFrame(mats: ReadonlyMap<string, ArrayLike<number>> | null): void;
 }
+
+/** The leg bodies a clip can move (6 legs x coxa, trochanterfemur, tibia, tarsus1..5), as named in fly-body.json. */
+const LEG_BODY = /^[lr][fmh]_(coxa|trochanterfemur|tibia|tarsus[1-5])$/;
 
 const FOV = 40;
 /** Default view: 3/4 front-left (the fly's left is +X, its face +Z), slightly above. */
@@ -87,8 +94,9 @@ function assembleBodyScene(
   const meshPositions = body.mesh ? new THREE.BufferAttribute(body.mesh.positions, 3) : null;
 
   /** One group holding the lines and the depth-only occluder of one piece of the body. */
-  const addGroup = (lines: Float32Array, indices: Uint16Array | Uint32Array | null): THREE.Group => {
+  const addGroup = (lines: Float32Array, indices: Uint16Array | Uint32Array | null, name = ""): THREE.Group => {
     const group = new THREE.Group();
+    group.name = name;
     if (lines.length > 0) {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(lines, 3));
@@ -112,21 +120,34 @@ function assembleBodyScene(
     return group;
   };
 
-  // Without a per-part mesh split the joints cannot move the occluder with their lines: stay one static group.
-  const joints = (body.joints ?? []).filter(() => !body.mesh || (body.meshParts ?? []).length > 0);
+  // Without a per-part mesh split the pieces cannot move the occluder with their lines: stay one static group.
+  const splittable = !body.mesh || (body.meshParts ?? []).length > 0;
+  const joints = splittable ? (body.joints ?? []) : [];
+  // every leg body a rig joint does not already move gets a group of its own, still at rest (identity) until a clip frame arrives
+  const claimed = new Set(joints.flatMap((j) => j.parts));
+  const legNames = splittable ? (body.parts ?? []).map((p) => p.name).filter((n) => LEG_BODY.test(n) && !claimed.has(n)) : [];
   const rigged: Array<{ id: JointId; axis: Vec3; pivot: Vec3; group: THREE.Group }> = [];
-  if (joints.length === 0) {
+  const legGroups = new Map<string, THREE.Group>();
+  if (joints.length === 0 && legNames.length === 0) {
     addGroup(body.positions, body.mesh?.indices ?? null);
   } else {
     const split = splitByJoint({
-      parts: body.parts, meshParts: body.meshParts ?? [], joints, positions: body.positions, indices: body.mesh?.indices ?? null,
+      parts: body.parts, meshParts: body.meshParts ?? [],
+      joints: [...joints.map((j) => ({ id: j.id as string, parts: j.parts })), ...legNames.map((n) => ({ id: n, parts: [n] }))],
+      positions: body.positions, indices: body.mesh?.indices ?? null,
     });
     addGroup(split.rest.lines, split.rest.indices);
     for (const j of joints) {
       const piece = split.joints[j.id];
-      const group = addGroup(piece.lines, piece.indices);
+      const group = addGroup(piece.lines, piece.indices, j.id);
       group.matrixAutoUpdate = false; // the matrix below is the whole transform: vertices stay at their asset positions
       rigged.push({ id: j.id, axis: j.axis, pivot: j.pivot, group });
+    }
+    for (const n of legNames) {
+      const piece = split.joints[n];
+      const group = addGroup(piece.lines, piece.indices, n);
+      group.matrixAutoUpdate = false;
+      legGroups.set(n, group);
     }
   }
 
@@ -201,9 +222,20 @@ function assembleBodyScene(
     invalidate();
   };
 
+  const setClipFrame = (mats: ReadonlyMap<string, ArrayLike<number>> | null) => {
+    for (const [name, group] of legGroups) {
+      const m = mats?.get(name);
+      if (m && m.length === 16 && Array.from(m).every(Number.isFinite)) group.matrix.fromArray(Array.from(m));
+      else group.matrix.identity();
+      group.matrixWorldNeedsUpdate = true;
+    }
+    invalidate();
+  };
+
   return {
     invalidate: () => invalidate(),
     setPose,
+    setClipFrame,
     jointIds: () => rigged.map((j) => j.id),
     dispose() {
       // the undo list holds every resource in creation order: scheduler, observer, controls, geometries, materials, renderer
