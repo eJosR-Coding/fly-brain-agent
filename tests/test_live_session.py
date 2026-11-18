@@ -219,3 +219,29 @@ def test_header_message_describes_the_clip_format_and_limits():
     assert h["type"] == "started" and h["chunk_ms"] == 50.0 and h["backend"] == "cpu"
     assert h["header"] == body.header and set(h["dn_names"]) == set(GROUPS)
     assert "our" in h["caption"].lower()
+
+
+def test_body_mode_and_caption_are_reported_in_started_and_every_chunk():
+    s, *_ = make()  # the fake body has no mode: reported as the physics default
+    started = s.start_message()
+    assert started["body_mode"] == "physics" and "body_caption" in started
+    msg = s.step()
+    assert msg["body_mode"] == "physics" and "body_caption" in msg and "world" not in msg
+
+
+def test_a_body_that_takes_the_command_gets_the_exact_pace_and_turn():
+    class CommandBody(FakeBody):
+        mode, takes_command, caption = "kinematic", True, "recorded physics gait, blended live"
+        commands: list = []
+
+        def advance(self, ms, drive, escape, *, pace=None, turn=None):
+            self.commands.append((pace, turn))
+            return super().advance(ms, drive, escape)
+
+    clock = Clock()
+    s, brain, body, _ = make(clock, brain=FakeBrain(clock, script=walking_script()), body=CommandBody(clock))
+    body.commands = []
+    for _ in range(3):
+        msg = s.step()
+    assert all(p is not None and t == 0.0 for p, t in body.commands) and body.commands[-1][0] > 0
+    assert msg["body_mode"] == "kinematic" and msg["body_caption"].startswith("recorded physics gait")
