@@ -1,5 +1,6 @@
 /** Mounts the static fly body into a host element. Failures are swallowed (a console warning): it must never block boot. */
 import type { WorldPose } from "./bodyClip";
+import type { Arena } from "./bodyCube";
 import { createBodyScene, type BodyScene } from "./body";
 import { loadBody } from "./bodyData";
 import { DEFAULT_BODY_CAPTION } from "./bodyAnimation";
@@ -18,6 +19,8 @@ export interface MountedBody {
   setWorld(world: WorldPose | null): void;
   /** The glass-cube sandbox on or off. Safe before the scene exists (the latest is applied on creation); a no-op after remove(). */
   setSandbox(on: boolean): void;
+  /** The server's arena for the cube (null: fallback); the latest is applied on creation. */
+  setArena(arena: Arena | null): void;
   /** The sandbox's objects layer (see BodyScene.setObjects); the latest list is applied on creation. Returns the validation errors once the scene exists, else none. */
   setObjects(objects: unknown): { errors: string[] };
   /** The line under the body. Safe before the scene exists (the latest text is shown on creation); a no-op after remove(). */
@@ -43,6 +46,7 @@ export function mountBody(host: HTMLElement, deps: BodyDeps): MountedBody {
   let clipFrame: ReadonlyMap<string, ArrayLike<number>> | null = null;
   let world: WorldPose | null = null;
   let sandbox = false;
+  let arena: Arena | null = null;
   let objects: unknown = [];
   let objectsSet = false;
   void (async () => {
@@ -55,6 +59,7 @@ export function mountBody(host: HTMLElement, deps: BodyDeps): MountedBody {
       if (pose) scene.setPose(pose);
       if (clipFrame) scene.setClipFrame(clipFrame);
       if (world) scene.setWorld(world);
+      if (arena) scene.setArena(arena);
       if (sandbox) scene.setSandbox(true);
       if (objectsSet) scene.setObjects(objects);
     } catch (e) {
@@ -87,6 +92,11 @@ export function mountBody(host: HTMLElement, deps: BodyDeps): MountedBody {
       sandbox = on;
       scene?.setSandbox(on);
     },
+    setArena(a) {
+      if (removed) return;
+      arena = a;
+      scene?.setArena(a);
+    },
     setObjects(list) {
       if (removed) return { errors: [] };
       objects = list;
@@ -96,6 +106,7 @@ export function mountBody(host: HTMLElement, deps: BodyDeps): MountedBody {
     remove() {
       removed = true;
       sandbox = false;
+      arena = null;
       objects = [];
       objectsSet = false;
       world = null;

@@ -245,3 +245,98 @@ def test_a_body_that_takes_the_command_gets_the_exact_pace_and_turn():
         msg = s.step()
     assert all(p is not None and t == 0.0 for p, t in body.commands) and body.commands[-1][0] > 0
     assert msg["body_mode"] == "kinematic" and msg["body_caption"].startswith("recorded physics gait")
+
+
+# -- arena: the server owns the glass cube ---------------------------------------------------
+
+def test_arena_spec_is_centred_on_the_start_and_documents_the_world_rule():
+    from flybrain.live import ARENA_INTERIOR_MM, arena_spec
+
+    a = arena_spec()
+    h = ARENA_INTERIOR_MM / 2
+    assert a["kind"] == "glass_cube" and a["interior_mm"] == ARENA_INTERIOR_MM == 50.0
+    assert a["bounds_mm"] == [-h, h, -h, h]  # xmin, xmax, ymin, ymax; x forward, y left (fly frame at the start)
+    assert "world rule" in a["note"].lower() and "not a brain decision" in a["note"].lower()
+    assert arena_spec(20.0)["bounds_mm"] == [-10.0, 10.0, -10.0, 10.0]
+
+
+def test_started_carries_the_arena_and_is_json_serialisable():
+    from flybrain.live import arena_spec
+
+    s, *_ = make(arena=arena_spec())
+    started = s.start_message()
+    json.dumps(started)
+    assert started["arena"]["kind"] == "glass_cube" and started["arena"]["bounds_mm"] == [-25.0, 25.0, -25.0, 25.0]
+    assert make()[0].start_message()["arena"] is None
+
+
+def test_build_live_session_passes_the_arena_bounds_to_the_kinematic_body(monkeypatch):
+    from flybrain import live
+    from flybrain.body_kinematic import KinematicBody
+
+    class Sims:
+        available = True
+        thermal = None
+
+        def exclusive(self):
+            import contextlib
+            return contextlib.nullcontext()
+
+        def open_stream(self, seed=0):
+            return FakeBrain(Clock())
+
+        def simulation(self):
+            return self
+
+    class Atlas:
+        pass
+
+    monkeypatch.setattr(live, "readout_groups", lambda atlas, row_index: GROUPS)
+    s = live.build_live_session(Atlas(), None, Sims(), None)
+    assert isinstance(s.body, KinematicBody) and s.body.bounds == (-25.0, 25.0, -25.0, 25.0)
+    assert s.start_message()["arena"]["bounds_mm"] == [-25.0, 25.0, -25.0, 25.0]
+
+
+def test_a_fake_brain_driving_forward_is_stopped_by_the_wall_and_the_chunk_says_which():
+    from flybrain.body_kinematic import KinematicBody, load_library
+    from flybrain.live import arena_spec
+
+    clock = Clock()
+    a = arena_spec(10.0)  # small cube: the wall is reached within a few seconds
+    body = KinematicBody(load_library(), bounds=tuple(a["bounds_mm"]))
+    s, *_ = make(clock, brain=FakeBrain(clock, script=walking_script(200)), body=body, arena=a)
+    first, last, xs = None, None, []
+    for _ in range(120):
+        m = s.step()
+        first = first or m
+        last = m
+        xs.extend(p[0] for p in m["thorax"]["pos_um"])
+    assert first["world"]["blocked"] is False and last["world"]["blocked"] is True
+    assert "x_max" in last["world"]["walls"]
+    assert max(xs) <= 5000 and last["world"]["bounds_mm"] == [-5.0, 5.0, -5.0, 5.0]
+    assert "world rule" in last["world"]["note"].lower()
+
+
+def test_physics_mode_clamps_the_reported_root_and_reports_the_wall():
+    from flybrain.live import arena_spec
+
+    class Walker(FakeBody):  # a body that does not enforce walls (like the MuJoCo one): walks +x 2 mm per chunk
+        def __init__(self, clock):
+            super().__init__(clock)
+            self.x = 0
+
+        def advance(self, ms, drive, escape):
+            out = super().advance(ms, drive, escape)
+            n = out["n_frames"]
+            xs = self.x + np.arange(1, n + 1) * 200
+            self.x = int(xs[-1])
+            out["thorax"] = {"pos_um": np.stack([xs, np.zeros(n, int), np.zeros(n, int)], 1), "yaw_deg": np.zeros(n)}
+            return out
+
+    clock = Clock()
+    s, *_ = make(clock, body=Walker(clock), arena=arena_spec(10.0))
+    msgs = [s.step() for _ in range(4)]
+    xs = [p[0] for m in msgs for p in m["thorax"]["pos_um"]]
+    assert max(xs) == 5000 and msgs[-1]["world"]["blocked"] is True and msgs[-1]["world"]["walls"] == ["x_max"]
+    assert msgs[0]["world"]["blocked"] is False
+    assert "display" in msgs[-1]["world"]["note"].lower()  # honest: the clamp is of the reported root, not physics

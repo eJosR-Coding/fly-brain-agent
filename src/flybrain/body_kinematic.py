@@ -259,6 +259,7 @@ class KinematicBody:
         thorax = np.empty((n, 3), int)
         yaw = np.empty(n)
         blocked = False
+        walls: set[str] = set()
         for j in range(n):
             a = (j + 1) / n
             p, t = prev[0] + (c_pace - prev[0]) * a, prev[1] + (c_turn - prev[1]) * a
@@ -296,6 +297,10 @@ class KinematicBody:
             if self.bounds is not None:
                 cx, cy = min(max(nx, self.bounds[0]), self.bounds[1]), min(max(ny, self.bounds[2]), self.bounds[3])
                 blocked = blocked or cx != nx or cy != ny
+                if nx > cx: walls.add("x_max")
+                if nx < cx: walls.add("x_min")
+                if ny > cy: walls.add("y_max")
+                if ny < cy: walls.add("y_min")
                 nx, ny = cx, cy
             self.x_mm, self.y_mm = nx, ny
             self.yaw_rad += math.radians(rate * w) * FRAME_S
@@ -314,7 +319,7 @@ class KinematicBody:
             "body_mode": self.mode,
         }
         if self.bounds is not None:
-            out["world"] = {"bounds_mm": list(self.bounds), "blocked": blocked, "note": WORLD_NOTE}
+            out["world"] = {"bounds_mm": list(self.bounds), "blocked": blocked, "walls": sorted(walls), "note": WORLD_NOTE}
         else:
-            out["world"] = {"bounds_mm": None, "blocked": False, "note": None}
+            out["world"] = {"bounds_mm": None, "blocked": False, "walls": [], "note": None}
         return out

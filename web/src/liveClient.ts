@@ -5,6 +5,7 @@
  *  DEV ENTRY: the "live" chip in main.ts and `window.flyLive.start(preset, rate)` call this until the agent tools of the
  *  playground (task P4) exist; P4 replaces them with chat-driven control (no buttons). */
 import type { WorldPose } from "./bodyClip";
+import type { Arena } from "./bodyCube";
 import type { JointId } from "./bodyPose";
 import { createLiveSession, type LiveSession, type LiveStatus, type SocketLike } from "./liveSession";
 
@@ -23,6 +24,7 @@ export interface LiveBody {
   setPose(angles: Partial<Record<JointId, number>>): void;
   setCaption(text: string): void;
   setSandbox(on: boolean): void;
+  setArena?(arena: Arena | null): void;
 }
 
 export interface LiveClientDeps {
