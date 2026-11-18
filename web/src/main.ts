@@ -13,6 +13,8 @@ import { createBodyAnimation, DEFAULT_BODY_CAPTION, type BodyAnimation } from ".
 import { createBodyDriver } from "./bodyDriver";
 import { loadWalkClip } from "./bodyClip";
 import { createWalkPlayer, type WalkPlayer } from "./bodyWalk";
+import { createClipPlayer, type ClipPlayer } from "./bodyClipPlayer";
+import { createBodyFlow, FLOW_PRESETS, type BodyFlow, type FlowKey } from "./bodyFlow";
 import { mountLayout, type Layout } from "./layoutPanes";
 import type { Pane } from "./layoutState";
 import { commitScene } from "./sceneLoad";
@@ -64,6 +66,13 @@ let bodyAnimation: BodyAnimation | null = null;
 /** The physics walking clip replayed on the body (a published controller, not driven by the brain); one per page. */
 let walkPlayer: WalkPlayer | null = null;
 let walkChip: HTMLButtonElement | null = null;
+/** A body clip computed from the brain recording (our mapping of descending neurons), driven by the player's clock. */
+let clipPlayer: ClipPlayer | null = null;
+/** simulate (or take a recording) -> physics body -> play both; one per page. */
+let bodyFlow: BodyFlow | null = null;
+const flowChips = new Map<FlowKey, HTMLButtonElement>();
+let moveChip: HTMLButtonElement | null = null;
+let activeFlowKey: FlowKey | null = null;
 let charts: ChartsPanel | null = null;
 let chartsChip: HTMLButtonElement | null = null;
 let simulating = false;
@@ -107,6 +116,7 @@ export function clearAll(): void {
   pathOrder.cancel(); // a path still waiting for the scene is dropped
   shown = null;
   walkPlayer?.stop(); // a cleared stage is not the walking demo either
+  bodyFlow?.stop();
   bodyAnimation?.setActivity(null); // before player.clear(): its null tick then finds nothing loaded (rest, default caption)
   player?.clear();
 }
@@ -133,8 +143,34 @@ function syncChartsChip(): void {
 
 /** The simulator chips are derived from the run in flight, the chat stream and the server's capability. */
 function renderSimChips(): void {
-  const off = simChipsDisabled({ simulating, streaming, simulationOff: health?.simulation === false });
+  const flowBusy = bodyFlow?.state === "simulating" || bodyFlow?.state === "computing";
+  const off = simChipsDisabled({ simulating: simulating || flowBusy, streaming, simulationOff: health?.simulation === false });
   for (const b of simChips()) b.disabled = off;
+  syncFlowChips();
+}
+
+/** The brain -> body chips: the one that runs is a stop button; the others wait for it. "move body" needs a recording. */
+function syncFlowChips(): void {
+  const state = bodyFlow?.state ?? "idle";
+  const busy = state === "simulating" || state === "computing";
+  const off = simChipsDisabled({ simulating, streaming, simulationOff: health?.simulation === false });
+  for (const [key, b] of flowChips) {
+    const mine = activeFlowKey === key && state !== "idle";
+    b.classList.toggle("active", mine);
+    b.setAttribute("aria-pressed", String(mine));
+    b.disabled = mine ? false : off || busy;
+  }
+  if (moveChip) moveChip.disabled = off || busy || !shown?.a.id;
+}
+
+/** Press on a brain -> body chip: stop when it is the one running, else run it. */
+function pressFlowChip(key: FlowKey): void {
+  if (!bodyFlow) return;
+  if (activeFlowKey === key && bodyFlow.state !== "idle") { bodyFlow.stop(); return; }
+  walkPlayer?.stop();
+  activeFlowKey = key;
+  openBrain(); // the recording is shown on the real scene: start loading it while the physics runs
+  void bodyFlow.runPreset(key);
 }
 
 /** A recording plus, for a silenced run, its baseline (so the difference map is available). */
@@ -149,6 +185,8 @@ function showActivity({ a, baseline }: { a: Activity; baseline: Activity | null 
   pathOrder.cancel(); // a recording replaces the cables' story: a path still waiting must not draw
   shown = { a, baseline };
   walkPlayer?.stop(); // the recording owns the body and its caption now
+  bodyFlow?.supersede(); // a body still being computed for an older recording is dropped...
+  clipPlayer?.clear(); // ...and so is the clip on the body (the flow sets its own again after showing its recording)
   bodyAnimation?.setActivity(a); // the MAIN recording, never the baseline; before player.load so its first tick is already driven
   player?.load(a, baseline); // no player yet: loadScene replays `shown` once the scene exists
   charts?.show(a, baseline);
@@ -156,6 +194,7 @@ function showActivity({ a, baseline }: { a: Activity; baseline: Activity | null 
   syncChartsChip();
   setActiveChip(null);
   setStage({ kind: "wave", text });
+  syncFlowChips();
 }
 
 /** "give sugar": POST /api/simulate (no LLM), then fetch the frames and play them. */
@@ -281,7 +320,7 @@ function renderLegend(total: number | null, message?: string): void {
 
 function setActiveChip(label: string | null): void {
   for (const b of document.querySelectorAll<HTMLButtonElement>("#chips .chip")) {
-    if (b === walkChip) continue; // its pressed state follows the player, not the recordings
+    if (b === walkChip || [...flowChips.values()].includes(b)) continue; // their pressed state follows the player / the flow, not the recordings
     b.classList.toggle("active", b.textContent === label);
   }
 }
@@ -332,9 +371,32 @@ function setupChips(): void {
   walk.textContent = "physics walk (demo)";
   walk.title = "replay a physics simulation of tripod walking (NeuroMechFly v2, flygym 2.1.1) on the body; a published controller, not driven by the brain model";
   walk.setAttribute("aria-pressed", "false");
-  walk.addEventListener("click", () => void walkPlayer?.toggle());
+  walk.addEventListener("click", () => { bodyFlow?.stop(); void walkPlayer?.toggle(); });
   walkChip = walk;
   runItems.appendChild(walk);
+  for (const key of Object.keys(FLOW_PRESETS) as FlowKey[]) {
+    const b = document.createElement("button");
+    b.className = "chip run";
+    b.textContent = FLOW_PRESETS[key].label;
+    b.title = FLOW_PRESETS[key].title;
+    b.setAttribute("aria-pressed", "false");
+    b.addEventListener("click", () => pressFlowChip(key));
+    flowChips.set(key, b);
+    runItems.appendChild(b);
+  }
+  const move = document.createElement("button");
+  move.className = "chip run";
+  move.textContent = "move body";
+  move.title = "compute the physics body that this recording's descending neurons would drive (our mapping; about 8 s of compute per simulated second, up to 3 s of the run) and replay it with the recording";
+  move.disabled = true;
+  move.addEventListener("click", () => {
+    if (!bodyFlow || !shown?.a.id) return;
+    walkPlayer?.stop();
+    activeFlowKey = null;
+    void bodyFlow.moveBody(shown.a.id, shown.a.durationMs);
+  });
+  moveChip = move;
+  runItems.appendChild(move);
   for (const chip of CHIPS) {
     const b = document.createElement("button");
     b.className = chip.params ? "chip" : "chip sep";
@@ -488,7 +550,7 @@ async function loadScene(): Promise<BrainScene> {
         const p = newPlayer;
         undo(() => p.clear());
         // The body follows the playback clock (it runs even while the brain pane is hidden). Subscribed once per player, before the replay below.
-        undo(p.subscribeTime((ms) => bodyAnimation?.onTime(ms)));
+        undo(p.subscribeTime((ms) => { bodyAnimation?.onTime(ms); clipPlayer?.onTime(ms); }));
         if (shown) p.load(shown.a, shown.baseline); // a recording that arrived before the scene existed
       },
       publish: (scene) => {
@@ -623,6 +685,31 @@ async function boot(): Promise<void> {
       walkChip?.setAttribute("aria-pressed", String(on));
     },
   });
+  clipPlayer = createClipPlayer({
+    setFrame: (mats) => body.setClipFrame(mats),
+    setWorld: (w) => body.setWorld(w),
+    setPose: (angles) => body.setPose(angles),
+    reducedMotion: calm,
+  });
+  bodyFlow = createBodyFlow({
+    request: (url, init) => fetch(url, init),
+    showRecording: async (id) => {
+      const legend = (l: { a: Activity }) => activityLegend(l.a.activeCount, l.a.nRows, null);
+      return loadLatestActivity(activityLatest, () => loadWithBaseline(id), (loaded) => showActivity(loaded, legend(loaded)));
+    },
+    play: (clip, caption) => {
+      bodyAnimation?.setActivity(null); // the clip owns the pose and the caption (the recording's own readout pose would fight it)
+      body.setCaption(caption);
+      clipPlayer?.setClip(clip);
+    },
+    clearBody: () => {
+      clipPlayer?.clear();
+      bodyAnimation?.setActivity(shown?.a ?? null); // back to the recording's own readout pose and caption, or rest
+    },
+    setStatus: (text) => body.setCaption(text ?? DEFAULT_BODY_CAPTION),
+    onState: () => renderSimChips(),
+  });
+  syncFlowChips();
   preview = mountPreview(layout.brainHost, { theme });
   openControl = mountOpenControl(layout.brainHost, gate);
   // the layout only reports changes, never its initial state: a remembered "brain large" opens the scene here

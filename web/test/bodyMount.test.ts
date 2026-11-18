@@ -140,7 +140,7 @@ describe("mountBody setCaption", () => {
 });
 
 describe("mountBody setClipFrame", () => {
-  const fakeScene = () => ({ invalidate() {}, dispose: vi.fn(), setPose: vi.fn(), setClipFrame: vi.fn(), jointIds: () => [] });
+  const fakeScene = () => ({ invalidate() {}, dispose: vi.fn(), setPose: vi.fn(), setClipFrame: vi.fn(), setWorld: vi.fn(), jointIds: () => [] });
   const frame = new Map([["lf_coxa", [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]]]);
 
   it("stores a frame set before the scene exists and applies the latest once on creation", async () => {
@@ -174,5 +174,30 @@ describe("mountBody setClipFrame", () => {
     broken.setClipFrame(frame);
     await flush();
     expect(() => broken.setClipFrame(frame)).not.toThrow();
+  });
+});
+
+describe("mountBody setWorld", () => {
+  const fakeScene = () => ({ invalidate() {}, dispose: vi.fn(), setPose: vi.fn(), setClipFrame: vi.fn(), setWorld: vi.fn(), jointIds: () => [] });
+  const w = { matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 2, 1], offset: [1, 0, 2] as [number, number, number] };
+
+  it("stores the latest world set before the scene exists and applies it once on creation", async () => {
+    const scene = fakeScene();
+    const m = mountBody(document.createElement("div"), { theme, load: async () => body, create: () => scene });
+    m.setWorld(null);
+    m.setWorld(w);
+    await flush();
+    expect(scene.setWorld.mock.calls).toEqual([[w]]);
+    m.setWorld(null);
+    expect(scene.setWorld).toHaveBeenLastCalledWith(null);
+  });
+  it("applies nothing on creation when no world was set, and is a no-op after remove()", async () => {
+    const scene = fakeScene();
+    const m = mountBody(document.createElement("div"), { theme, load: async () => body, create: () => scene });
+    await flush();
+    expect(scene.setWorld).not.toHaveBeenCalled();
+    m.remove();
+    m.setWorld(w);
+    expect(scene.setWorld).not.toHaveBeenCalled();
   });
 });

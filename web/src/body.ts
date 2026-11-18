@@ -2,7 +2,9 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { viewFitDistance, type ParsedBody, type Vec3 } from "./bodyData";
 import type { JointId } from "./bodyPose";
+import type { WorldPose } from "./bodyClip";
 import { rotationMatrix, splitByJoint } from "./bodyRig";
+import { followStep, gridSegments, gridSnap } from "./bodyWorld";
 import { createOrbitGate, orbitDefault } from "./orbit";
 import { createRenderScheduler } from "./renderScheduler";
 import type { Theme } from "./theme";
@@ -20,6 +22,10 @@ export interface BodyScene {
    *  that carries its mesh from the neutral pose to its pose in that frame. Replaces the WHOLE frame: leg bodies not
    *  listed return to rest; unknown names and malformed matrices are ignored; null = rest. Redraws. */
   setClipFrame(mats: ReadonlyMap<string, ArrayLike<number>> | null): void;
+  /** Whole-fly motion in the world (from a body clip's thorax_world): the root transform is applied to every part of the
+   *  body, a faint floor grid appears under it (fixed in the world) and the camera follows the thorax smoothly with no
+   *  auto-orbit. null = no world: the body at the origin, the grid hidden, the camera glides back. Redraws. */
+  setWorld(world: WorldPose | null): void;
 }
 
 /** The leg bodies a clip can move (6 legs x coxa, trochanterfemur, tibia, tarsus1..5), as named in fly-body.json. */
@@ -33,6 +39,13 @@ const VIEW = { azimuth: 35, elevation: 15 };
 const LINE_OPACITY = 0.9;
 /** The fly fills about this share of the pane's limiting dimension at the default view. */
 const FILL = 0.7;
+/** Floor grid: a cell is this share of the body's size; the grid reaches this many cells each way from the thorax. */
+const GRID_CELL = 1 / 5;
+const GRID_HALF = 24;
+const GRID_OPACITY = 0.22;
+/** Camera follow: the share of the remaining distance covered per frame, and the distance (mm) treated as arrived. */
+const FOLLOW_ALPHA = 0.18;
+const FOLLOW_EPS = 1e-4;
 
 /** The static fly body as light line segments on the page's own background. Throws a clear Error without WebGL. */
 export function createBodyScene(
@@ -128,15 +141,16 @@ function assembleBodyScene(
   const legNames = splittable ? (body.parts ?? []).map((p) => p.name).filter((n) => LEG_BODY.test(n) && !claimed.has(n)) : [];
   const rigged: Array<{ id: JointId; axis: Vec3; pivot: Vec3; group: THREE.Group }> = [];
   const legGroups = new Map<string, THREE.Group>();
+  let restGroup: THREE.Group;
   if (joints.length === 0 && legNames.length === 0) {
-    addGroup(body.positions, body.mesh?.indices ?? null);
+    restGroup = addGroup(body.positions, body.mesh?.indices ?? null, "rest");
   } else {
     const split = splitByJoint({
       parts: body.parts, meshParts: body.meshParts ?? [],
       joints: [...joints.map((j) => ({ id: j.id as string, parts: j.parts })), ...legNames.map((n) => ({ id: n, parts: [n] }))],
       positions: body.positions, indices: body.mesh?.indices ?? null,
     });
-    addGroup(split.rest.lines, split.rest.indices);
+    restGroup = addGroup(split.rest.lines, split.rest.indices, "rest");
     for (const j of joints) {
       const piece = split.joints[j.id];
       const group = addGroup(piece.lines, piece.indices, j.id);
@@ -151,10 +165,27 @@ function assembleBodyScene(
     }
   }
 
+  restGroup.matrixAutoUpdate = false; // like every group: its matrix is the world transform alone
+
   const size = body.radius * 2; // farthest vertex from the centroid, doubled
   const camera = new THREE.PerspectiveCamera(FOV, 1, size / 200, size * 20);
   const target = new THREE.Vector3(...body.centroid);
   let invalidate = () => {};
+
+  // Floor: a faint grid at the body's lowest point, in the page's line colour, fixed in the world (it is re-centred in
+  // whole cells under the thorax, so it reads as still while the fly moves over it). Hidden until a clip has a world.
+  const cell = size * GRID_CELL;
+  const floorGeometry = new THREE.BufferGeometry();
+  floorGeometry.setAttribute("position", new THREE.BufferAttribute(gridSegments(GRID_HALF, cell), 3));
+  const floorMaterial = new THREE.LineBasicMaterial({ color: theme.highlightHex, transparent: true, opacity: GRID_OPACITY, depthWrite: false });
+  undo.push(() => { floorGeometry.dispose(); floorMaterial.dispose(); });
+  const floor = new THREE.LineSegments(floorGeometry, floorMaterial);
+  floor.name = "floor";
+  floor.renderOrder = -2;
+  floor.frustumCulled = false;
+  floor.visible = false;
+  floor.position.y = body.bounds?.min?.[1] ?? 0;
+  scene.add(floor);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   undo.push(() => controls.dispose());
@@ -196,28 +227,52 @@ function assembleBodyScene(
   ro.observe(container);
   resize();
 
+  // Camera follow: the focus (and the camera with it, so the view keeps its angle and distance) glides toward the thorax.
+  let world: WorldPose | null = null;
+  const focus: [number, number, number] = [0, 0, 0];
+  const wanted: [number, number, number] = [0, 0, 0];
+  const follow = (): boolean => {
+    const r = followStep(focus, wanted, opts.reducedMotion ? 1 : FOLLOW_ALPHA, FOLLOW_EPS);
+    const d = new THREE.Vector3(r.pos[0] - focus[0], r.pos[1] - focus[1], r.pos[2] - focus[2]);
+    focus[0] = r.pos[0]; focus[1] = r.pos[1]; focus[2] = r.pos[2];
+    if (d.lengthSq() > 0) { camera.position.add(d); controls.target.add(d); }
+    return !r.settled;
+  };
+
   const scheduler = createRenderScheduler({
     schedule: (cb) => requestAnimationFrame(cb),
     cancel: (id) => cancelAnimationFrame(id),
     render: () => {
-      const orbiting = gate.active(performance.now());
+      const orbiting = gate.active(performance.now()) && world === null; // no auto-orbit while following the fly
       controls.autoRotate = orbiting;
+      const gliding = follow();
       const moved = controls.update();
       renderer.render(scene, camera);
       // gate.enabled keeps the loop alive through the pause after a drag so the orbit can resume on its own
-      return moved || orbiting || gate.enabled;
+      return moved || orbiting || gate.enabled || gliding;
     },
   });
   undo.push(() => scheduler.dispose());
   invalidate = () => scheduler.invalidate();
   invalidate();
 
+  // Every group's matrix = world * its own motion (a rig joint's rotation, a leg body's clip matrix). With no world the
+  // own motion is used as it is.
+  const worldMatrix = new THREE.Matrix4();
+  const own = new Map<THREE.Group, THREE.Matrix4>();
+  const placeGroup = (group: THREE.Group) => {
+    const m = own.get(group);
+    if (world === null) group.matrix.copy(m ?? new THREE.Matrix4());
+    else group.matrix.copy(worldMatrix).multiply(m ?? new THREE.Matrix4());
+    group.matrixWorldNeedsUpdate = true;
+  };
+
   const setPose = (angles: Partial<Record<JointId, number>>) => {
     for (const j of rigged) {
       const deg = angles[j.id];
       const rad = typeof deg === "number" && Number.isFinite(deg) ? (deg * Math.PI) / 180 : 0;
-      j.group.matrix.fromArray(rotationMatrix(j.axis, rad, j.pivot));
-      j.group.matrixWorldNeedsUpdate = true;
+      own.set(j.group, new THREE.Matrix4().fromArray(rotationMatrix(j.axis, rad, j.pivot)));
+      placeGroup(j.group);
     }
     invalidate();
   };
@@ -225,9 +280,24 @@ function assembleBodyScene(
   const setClipFrame = (mats: ReadonlyMap<string, ArrayLike<number>> | null) => {
     for (const [name, group] of legGroups) {
       const m = mats?.get(name);
-      if (m && m.length === 16 && Array.from(m).every(Number.isFinite)) group.matrix.fromArray(Array.from(m));
-      else group.matrix.identity();
-      group.matrixWorldNeedsUpdate = true;
+      if (m && m.length === 16 && Array.from(m).every(Number.isFinite)) own.set(group, new THREE.Matrix4().fromArray(Array.from(m)));
+      else own.delete(group);
+      placeGroup(group);
+    }
+    invalidate();
+  };
+
+  const setWorld = (w: WorldPose | null) => {
+    const ok = w !== null && w.matrix.length === 16 && w.matrix.every(Number.isFinite) && w.offset.every(Number.isFinite);
+    world = ok ? w : null;
+    if (world) worldMatrix.fromArray(world.matrix);
+    wanted[0] = world?.offset[0] ?? 0; wanted[1] = world?.offset[1] ?? 0; wanted[2] = world?.offset[2] ?? 0;
+    for (const g of [restGroup, ...rigged.map((j) => j.group), ...legGroups.values()]) placeGroup(g);
+    floor.visible = world !== null;
+    if (world) {
+      const [gx, gz] = gridSnap(wanted, cell);
+      floor.position.x = gx;
+      floor.position.z = gz;
     }
     invalidate();
   };
@@ -236,6 +306,7 @@ function assembleBodyScene(
     invalidate: () => invalidate(),
     setPose,
     setClipFrame,
+    setWorld,
     jointIds: () => rigged.map((j) => j.id),
     dispose() {
       // the undo list holds every resource in creation order: scheduler, observer, controls, geometries, materials, renderer
