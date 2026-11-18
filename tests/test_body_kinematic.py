@@ -206,3 +206,12 @@ def test_kinematic_speed_and_yaw_match_the_physics_run_it_was_recorded_from():
                                   np.concatenate([o["thorax"]["yaw_deg"] for o in outs]))
     assert kin_speed == pytest.approx(phys_speed, rel=0.15)
     assert kin_rate == pytest.approx(phys_rate, rel=0.20)
+
+
+def test_gait_phase_slows_when_a_wall_blocks_the_fly():
+    free, held = KinematicBody(bounds=(-50, 50, -50, 50)), KinematicBody(bounds=(-1, 1, -50, 50))
+    for _ in range(40):
+        free.advance(100, [1, 1], pace=0.67, turn=0.0)
+        held.advance(100, [1, 1], pace=0.67, turn=0.0)
+    assert free.cycles == pytest.approx(48.0)  # unblocked: the native 12 Hz
+    assert held.cycles < 0.35 * free.cycles  # held at the wall: legs no longer pedal at full rate
