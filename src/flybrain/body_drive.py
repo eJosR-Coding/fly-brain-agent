@@ -99,6 +99,23 @@ def _ramp(hz: np.ndarray, lo: float, hi: float) -> np.ndarray:
     return np.clip((hz - lo) / (hi - lo), 0.0, 1.0)
 
 
+def pace_of(forward, turn):
+    """Walking pace 0..1 from the forward level and the turn command (a turn alone still walks at TURN_ONLY_FORWARD)."""
+    return np.maximum(forward, np.abs(turn) * TURN_ONLY_FORWARD)
+
+
+def walking_drive(pace, turn):
+    """[left, right] walking drive (last axis) for a pace and a turn; vectorised, no escape handling.
+
+    Pace 0 is "stopped" in the batch mapping (the caller zeroes it); this returns the drive of a walker at that pace,
+    which is DRIVE_MIN at pace -> 0+. Lower LEFT drive turns left."""
+    pace, turn = np.asarray(pace, float), np.asarray(turn, float)
+    base = DRIVE_MIN + (BASE_MAX - DRIVE_MIN) * pace
+    left = base * (1.0 - TURN_GAIN * turn)
+    right = base * (1.0 + TURN_GAIN * turn)
+    return np.clip(np.stack([left, right], axis=-1), DRIVE_MIN, DRIVE_MAX)
+
+
 def _map_rates(rate, n: int):
     """Smoothed rates -> (forward, turn, escape_strength, escape, drive). `rate(name)` returns an (n,) array.
 
@@ -109,14 +126,10 @@ def _map_rates(rate, n: int):
     escape_strength = _ramp(rate(ESCAPE_NAME), ESCAPE_THRESHOLD_HZ, ESCAPE_SATURATION_HZ)
     escape = escape_strength > 0
 
-    pace = np.maximum(forward, np.abs(turn) * TURN_ONLY_FORWARD)
-    base = np.where(pace > 0, DRIVE_MIN + (BASE_MAX - DRIVE_MIN) * pace, 0.0)
-    # lower LEFT drive turns left: left = base * (1 - gain*turn), right = base * (1 + gain*turn)
-    left = base * (1.0 - TURN_GAIN * turn)
-    right = base * (1.0 + TURN_GAIN * turn)
-    drive = np.stack([left, right], axis=-1) if n else np.zeros((0, 2))
+    pace = pace_of(forward, turn)
+    drive = walking_drive(pace, turn)
     walking = (pace > 0) & ~escape
-    drive = np.where(walking[:, None], np.clip(drive, DRIVE_MIN, DRIVE_MAX), 0.0)
+    drive = np.where(walking[:, None], drive, 0.0)
     return forward, turn, escape_strength, escape, drive
 
 
@@ -147,6 +160,7 @@ class DriveSample:
     escape_strength: float
     escape: bool
     drive: np.ndarray
+    pace: float = 0.0  # max(forward, |turn| * TURN_ONLY_FORWARD): the walking pace the drive was built from
 
     def as_dict(self) -> dict:
         return {"forward": round(self.forward, 4), "turn": round(self.turn, 4),
@@ -177,4 +191,5 @@ class DriveMapper:
             acc += a * (raw - acc)
             self._acc[name] = smoothed[name] = acc
         forward, turn, strength, escape, drive = _map_rates(lambda name: np.array([smoothed[name]]), 1)
-        return DriveSample(float(forward[0]), float(turn[0]), float(strength[0]), bool(escape[0]), drive[0])
+        return DriveSample(float(forward[0]), float(turn[0]), float(strength[0]), bool(escape[0]), drive[0],
+                           float(pace_of(forward[0], turn[0])))

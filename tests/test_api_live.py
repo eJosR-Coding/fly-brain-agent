@@ -204,11 +204,26 @@ def test_missing_body_or_weights_close_with_4503_and_the_reason(tiny_tsv_path, s
 def test_default_factory_reports_missing_flygym_as_4503(tiny_tsv_path, svc, monkeypatch):
     monkeypatch.setitem(sys.modules, "flygym", None)
     with TestClient(create_app(atlas_path=tiny_tsv_path, simulation=svc)) as c, c.websocket_connect("/ws/live") as ws:
-        ws.send_json({"type": "start", "preset": None, "rate_hz": 0})
+        ws.send_json({"type": "start", "preset": None, "rate_hz": 0, "body_mode": "physics"})
         assert "uv sync --extra body" in ws.receive_json()["detail"]
         with pytest.raises(WebSocketDisconnect) as e:
             ws.receive_json()
         assert e.value.code == 4503
+
+
+def test_body_mode_defaults_to_kinematic_reaches_the_factory_and_is_validated(tiny_tsv_path, svc):
+    probe = Probe()
+    with TestClient(app_with(tiny_tsv_path, svc, probe)) as c:
+        for sent, expect in ((None, "kinematic"), ("physics", "physics")):
+            with c.websocket_connect("/ws/live") as ws:
+                ws.send_json({"type": "start", "preset": None, "rate_hz": 0, **({} if sent is None else {"body_mode": sent})})
+                assert ws.receive_json()["type"] == "started"
+                assert wait_for(lambda: probe.requests and probe.requests[-1].get("body_mode") == expect)
+                ws.send_json({"type": "stop"})
+                recv_until(ws, "stopped")
+        with c.websocket_connect("/ws/live") as ws:
+            ws.send_json({"type": "start", "preset": None, "rate_hz": 0, "body_mode": "warp"})
+            assert "body_mode" in ws.receive_json()["detail"]
 
 
 def test_binary_frames_arrive_as_a_second_message(tiny_tsv_path, svc):

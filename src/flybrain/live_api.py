@@ -1,7 +1,7 @@
 """The /ws/live WebSocket: one live brain+body session at a time (see flybrain.live for the session itself).
 
 Protocol (JSON text frames; close codes are 4xxx application codes, the reason says why):
-  client -> {"type":"start","preset":name|null,"rate_hz":n,["seed":int,"chunk_ms":50,"include_active":bool,"binary_frames":bool]}
+  client -> {"type":"start","preset":name|null,"rate_hz":n,["seed":int,"chunk_ms":50,"include_active":bool,"binary_frames":bool,"body_mode":"kinematic"|"physics"]}
             {"type":"stimulus","preset":name|null | "rows":[atlas rows],"rate_hz":n}   (null/no rows clears the drive)
             {"type":"ping"} (keeps an idle session alive)   {"type":"stop"}
   server -> {"type":"started",...}  {"type":"chunk",...} (every chunk; with binary_frames a binary frame of int16 frames
@@ -100,8 +100,11 @@ def _start_options(msg: dict) -> dict:
     for key in ("include_active", "binary_frames"):
         if not isinstance(msg.get(key, False), bool):
             raise BadRequest(f"{key} must be true or false")
+    body_mode = msg.get("body_mode", "kinematic")
+    if body_mode not in ("kinematic", "physics"):
+        raise BadRequest('body_mode must be "kinematic" or "physics"')
     return {"seed": seed, "chunk_ms": float(chunk_ms), "include_active": msg.get("include_active", False),
-            "binary_frames": msg.get("binary_frames", False)}
+            "binary_frames": msg.get("binary_frames", False), "body_mode": body_mode}
 
 
 def register_live(app: FastAPI, origins: Callable[[], list[str]], idle_s: float, factory=None) -> None:
