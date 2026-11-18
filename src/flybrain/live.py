@@ -47,7 +47,7 @@ VISION_CAPTION = (
     "Vision is OURS: the fly's motion through the glass cube becomes T4/T5 firing rates (Reichardt correlators, photoreceptor "
     "path bypassed); what the fly does is whatever the brain does with that input, nothing is scripted."
 )
-TOUCH_HZ = 100.0  # OUR constant rate for antennal mechanosensors when the body is blocked by a wall (labelled, not validated)
+TOUCH_HZ = 25.0  # OUR constant rate for antennal mechanosensors when the body is blocked by a wall (labelled, not validated). 100 Hz fired DNp01 ~12 Hz and froze the fly in the escape pose at the wall (3/3 seeds); 25 Hz does not (scratch comparison, 3 seeds)
 TOUCH_HEAD_ON_DEG = 30.0  # a wall within this angle of the heading touches both antennae
 TOUCH_NOTE = (f"Touch is OURS (not validated): while a glass wall blocks the fly, the antennal mechanosensors (Johnston's organ JO-* "
               f"and antennal bristles BM_Ant) on the side of the contact fire at a constant {TOUCH_HZ:g} Hz (both when head-on); the leg "
