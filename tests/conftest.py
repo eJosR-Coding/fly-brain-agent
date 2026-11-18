@@ -9,6 +9,8 @@ def _no_real_connectome(monkeypatch, tmp_path):
     # ... nor the real simulation weights (a missing dir/cache means "simulator unavailable")
     monkeypatch.setenv("FLYBRAIN_SIM_DATA", str(tmp_path / "no-sim-data"))
     monkeypatch.setenv("FLYBRAIN_SIM_WEIGHTS", str(tmp_path / "no-sim-weights.npz"))
+    # ... and the simulator is the deterministic CPU one even when the `gpu` extra is installed
+    monkeypatch.setenv("FLYBRAIN_SIM_BACKEND", "cpu")
 
 
 HEADER = "root_id\tpos_x\tpos_y\tpos_z\tsuper_class\tcell_class\tcell_type\ttop_nt\tside\tflow"

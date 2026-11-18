@@ -20,8 +20,11 @@ que no queme mi gpu ... mi vram no es mucha").
 - Results stay statistically equivalent to the CPU (tests); not bit-exact (documented).
 
 ## Tasks
-- [ ] G1 GPU brain backend in the project (gpu_simulation.py, FLYBRAIN_SIM_BACKEND=auto|cpu|gpu, VRAM guard, spike
+- [x] G1 GPU brain backend in the project (gpu_simulation.py, FLYBRAIN_SIM_BACKEND=auto|cpu|gpu, VRAM guard, spike
       buffer overflow check, health readout, statistical equivalence tests gated on a GPU).
+      Progress G1 (uncommitted): src/flybrain/gpu_simulation.py (GPUSimulation(Simulation), two CuPy kernels, VRAM guard,
+      overflow raises), sim_service backend selection + CPU fallback, /health/gpu, `gpu` extra. Real brain, sugar 100 Hz,
+      1 s: 1 trial CPU 4.5 s vs GPU 0.46 s; 3 trials 13.1 s vs 1.2 s (~10x); MN9 CPU 59-60 Hz vs GPU 63-64 Hz.
 - [ ] G2 physics timestep: measure dt 1e-4 (reference) vs 2e-4 / 3e-4 / 5e-4 (stability, stepping frequency, tripod,
       speed, joint-angle error); adopt the largest that matches; report the real-time factor.
 - [ ] G3 live session over WebSocket: brain and body advance together in 50 ms chunks, closed loop, streamed to the viewer.
