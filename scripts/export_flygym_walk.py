@@ -1,7 +1,8 @@
 """Export a looping physics walking clip of NeuroMechFly v2 (flygym 2.1.1) for the viewer.
 
-This is NOT part of the project's Python environment: flygym and MuJoCo are heavy and stay out of the project's
-dependencies. Run it with an external environment that has flygym 2.1.1 (+ the flygym_demo tutorial helpers) installed:
+flygym and MuJoCo are an optional extra of the project (`uv sync --extra body`); the shared logic (quaternion maths, the
+neutral reference, the simulation rig) lives in src/flybrain/body_runner.py, which this script imports. Run it with any
+environment that has flygym 2.1.1 installed (flygym_demo ships in the same wheel):
 
     <flygym-env>/bin/python -I scripts/export_flygym_walk.py --out web/public/fly-walk.json
 
@@ -26,124 +27,21 @@ from pathlib import Path
 
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from flybrain.body_runner import (  # noqa: E402
+    BODIES, CPG_HZ, QUAT_SCALE, SAMPLE_HZ, continuous, control_step, make_rig,
+    reference_neutral, start_controller, thorax_relative,
+)
+
 DRIVE = (1.0, 1.0)  # descending drive [left, right]: straight walking
 SEED = 0
-SAMPLE_HZ = 200
-CPG_HZ = 12.0  # the controller's fixed CPG frequency
 TRANSIENT_S = 0.5  # discarded start-up (the CPG and the contacts settle)
 TARGET_S = 1.0
-LEGS = ("lf", "lm", "lh", "rf", "rm", "rh")
-LINKS = ("coxa", "trochanterfemur", "tibia", "tarsus1", "tarsus2", "tarsus3", "tarsus4", "tarsus5")
-BODIES = [f"{leg}_{link}" for leg in LEGS for link in LINKS]
-POS_UM_PER_MM = 1000.0
-QUAT_SCALE = 10000
-
-
-def quat_mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Hamilton product of (w, x, y, z) quaternions, broadcasting over the leading axes."""
-    aw, ax, ay, az = np.moveaxis(a, -1, 0)
-    bw, bx, by, bz = np.moveaxis(b, -1, 0)
-    return np.stack(
-        [
-            aw * bw - ax * bx - ay * by - az * bz,
-            aw * bx + ax * bw + ay * bz - az * by,
-            aw * by - ax * bz + ay * bw + az * bx,
-            aw * bz + ax * by - ay * bx + az * bw,
-        ],
-        axis=-1,
-    )
-
-
-def quat_conj(q: np.ndarray) -> np.ndarray:
-    return q * np.array([1.0, -1.0, -1.0, -1.0])
-
-
-def quat_rotate(q: np.ndarray, v: np.ndarray) -> np.ndarray:
-    """Rotate vectors v (..., 3) by unit quaternions q (..., 4)."""
-    qv = np.concatenate([np.zeros(v.shape[:-1] + (1,)), v], axis=-1)
-    return quat_mul(quat_mul(q, qv), quat_conj(q))[..., 1:]
-
-
-def thorax_relative(pos_mm: np.ndarray, quat: np.ndarray, thorax: int):
-    """World (pos in mm, quat wxyz) of all bodies -> thorax frame, positions in micrometres."""
-    qt = quat[thorax] / np.linalg.norm(quat[thorax])
-    inv = quat_conj(qt)
-    rel_pos = quat_rotate(np.broadcast_to(inv, pos_mm.shape[:-1] + (4,)), pos_mm - pos_mm[thorax]) * POS_UM_PER_MM
-    rel_quat = quat_mul(np.broadcast_to(inv, quat.shape), quat / np.linalg.norm(quat, axis=-1, keepdims=True))
-    return rel_pos, rel_quat
-
-
-def continuous(quats: np.ndarray) -> np.ndarray:
-    """Flip signs so consecutive frames of each body stay in one hemisphere (q and -q are the same rotation),
-    then make the FIRST frame w >= 0. Needed so the viewer's slerp never takes the long way round."""
-    out = quats.copy()
-    for t in range(1, len(out)):
-        flip = np.sum(out[t] * out[t - 1], axis=-1) < 0
-        out[t][flip] *= -1
-    flip0 = out[0, :, 0] < 0
-    out[:, flip0] *= -1
-    return out
-
-
-def reference_neutral():
-    """Thorax-relative transforms of the leg bodies in the EXACT neutral pose our mesh is assembled in.
-
-    flygym's own `neutral` keyframe of the walking model is an IK fit of this pose to a different joint axis order
-    (whole-degree angles, a 2-DoF trochanter), so its bodies sit tens of micrometres away from the spec pose. The
-    mesh is attached to the body frames in the spec pose (pose/_manual_specs/neutral.yaml, axis order roll-pitch-yaw),
-    so the reference here is a model built in that axis order, which is the one flygym itself uses as the reference
-    of its pose conversion. Body frames are rigid in both models, so M(t) * M_ref^-1 moves the mesh correctly."""
-    import mujoco as mj
-    from flygym import assets_dir
-    from flygym.anatomy import JointPreset, Skeleton
-    from flygym.compose import KinematicPose, NeuroMechFly
-
-    pose = KinematicPose(path=assets_dir / "model/neuromechfly/pose/_manual_specs/neutral.yaml")
-    fly = NeuroMechFly()
-    fly.add_joints(Skeleton(axis_order=pose.axis_order, joint_preset=JointPreset.ALL_BIOLOGICAL), neutral_pose=pose)
-    model, data = fly.compile()
-    mj.mj_resetDataKeyframe(model, data, 0)
-    mj.mj_kinematics(model, data)
-    ids = {mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i): i for i in range(model.nbody)}
-    order = ["c_thorax", *BODIES]
-    ref_pos = data.xpos[[ids[n] for n in order]]
-    ref_quat = data.xquat[[ids[n] for n in order]]
-    # the viewer re-applies each thorax-relative motion about the thorax origin of the mesh frame; that needs the
-    # thorax frame to be the mesh frame translated (not rotated)
-    if abs(abs(ref_quat[0][0]) - 1.0) > 1e-9:
-        raise RuntimeError(f"the reference thorax is rotated in the mesh frame (quat {ref_quat[0]}); not supported")
-    rel_pos, rel_quat = thorax_relative(ref_pos, ref_quat, 0)
-    return rel_pos[1:], rel_quat[1:], ref_pos[0] * POS_UM_PER_MM
-
-
-def build_sim():
-    from flygym import Simulation
-    from flygym.anatomy import ContactBodiesPreset
-    from flygym.compose import FlatGroundWorld
-    from flygym.utils.math import Rotation3D
-    from flygym_demo.complex_terrain import make_locomotion_fly
-
-    fly = make_locomotion_fly(name="w", add_adhesion=True, colorize=False)
-    world = FlatGroundWorld()
-    world.add_fly(
-        fly, [0, 0, 0.8], Rotation3D("quat", [1, 0, 0, 0]),
-        bodysegs_with_ground_contact=ContactBodiesPreset.TIBIA_TARSUS_ONLY, add_ground_contact_sensors=True,
-    )
-    return fly, Simulation(world)
 
 
 def export(out_path: Path) -> dict:
-    from flygym.anatomy import BodySegment
-    from flygym_demo.complex_terrain import (
-        HybridControllerObservation, HybridTurningController, LocomotionAction, PreprogrammedSteps,
-        apply_locomotion_action,
-    )
-
-    fly, sim = build_sim()
-    order = [b.name for b in fly.get_bodysegs_order()]
-    thorax = order.index("c_thorax")
-    idx = [order.index(n) for n in BODIES]
-    legs_order = [str(l) for l in fly.get_legs_order()]
+    rig = make_rig()
+    fly, sim, thorax, idx, legs_order = rig.fly, rig.sim, rig.thorax, rig.idx, rig.legs_order
 
     neutral_pos, neutral_quat, thorax_origin_um = reference_neutral()
     # the walking model's own neutral keyframe, only to report how far flygym's fitted pose is from the spec pose
@@ -152,13 +50,7 @@ def export(out_path: Path) -> dict:
     kpos, _ = thorax_relative(sim.get_body_positions(fly.name), sim.get_body_rotations(fly.name), thorax)
     keyframe_offset_um = float(np.linalg.norm(kpos[idx] - neutral_pos, axis=-1).max())
 
-    steps = PreprogrammedSteps()
-    dofs = fly.get_actuated_jointdofs_order("position")
-    ctl = HybridTurningController(timestep=sim.timestep, preprogrammed_steps=steps, output_dof_order=dofs)
-    sim.reset()
-    ctl.reset(seed=SEED)
-    apply_locomotion_action(sim, fly.name, LocomotionAction(steps.default_pose_by_dof_order(dofs), np.ones(6, bool)))
-    sim.warmup()
+    ctl = start_controller(rig, SEED)
 
     stride = int(round(1.0 / (SAMPLE_HZ * sim.timestep)))
     cycles = max(1, round(CPG_HZ * TARGET_S))  # whole cycles closest to the target length
@@ -168,10 +60,7 @@ def export(out_path: Path) -> dict:
     pos, quat, adhesion, contact = [], [], [], []
     thorax_mm = []
     for i in range(n_total):
-        obs = HybridControllerObservation.from_sim(sim, fly.name)
-        action = ctl.step(np.array(DRIVE, float), obs)
-        apply_locomotion_action(sim, fly.name, action)
-        sim.step()
+        action = control_step(rig, ctl, DRIVE)
         j = i - n_transient
         if j >= 0 and j % stride == 0:
             p, q = thorax_relative(sim.get_body_positions(fly.name), sim.get_body_rotations(fly.name), thorax)
