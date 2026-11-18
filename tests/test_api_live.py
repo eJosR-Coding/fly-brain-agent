@@ -402,3 +402,24 @@ def test_restart_wait_is_bounded_and_a_live_session_still_gets_4409_at_once(tiny
         finally:
             c.app.state.live_closing = False
             c.app.state.live_lock.release()
+
+
+def test_vision_options_reach_the_factory_and_are_validated(tiny_tsv_path, svc):
+    probe = Probe()
+    with TestClient(app_with(tiny_tsv_path, svc, probe)) as c:
+        with c.websocket_connect("/ws/live") as ws:
+            ws.send_json({"type": "start", "preset": None, "rate_hz": 0, "vision": "arena", "background_hz": 2})
+            assert ws.receive_json()["type"] == "started"
+            assert wait_for(lambda: probe.requests and probe.requests[-1].get("vision") == "arena" and probe.requests[-1].get("background_hz") == 2.0)
+            ws.send_json({"type": "stop"})
+            recv_until(ws, "stopped")
+        with c.websocket_connect("/ws/live") as ws:
+            ws.send_json({"type": "start", "preset": None, "rate_hz": 0})
+            assert ws.receive_json()["type"] == "started"
+            assert wait_for(lambda: probe.requests[-1].get("vision") is None and probe.requests[-1].get("background_hz") == 0.0)
+            ws.send_json({"type": "stop"})
+            recv_until(ws, "stopped")
+        for bad, needle in (({"vision": "eyes"}, "vision"), ({"background_hz": -1}, "background_hz"), ({"background_hz": "x"}, "background_hz"), ({"background_hz": 1e9}, "background_hz")):
+            with c.websocket_connect("/ws/live") as ws:
+                ws.send_json({"type": "start", "preset": None, "rate_hz": 0, **bad})
+                assert needle in ws.receive_json()["detail"]

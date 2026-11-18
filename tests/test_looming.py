@@ -148,6 +148,15 @@ def test_recordings_are_stored_for_the_viewer(atlas, sims):
     assert out["simulation_id"] == ids["looming"]
 
 
+def test_every_recording_carries_dnp01_as_a_named_readout_and_the_legacy_field_agrees(atlas, sims):
+    out = run(atlas, sims)
+    for cond in out["conditions"].values():
+        rec = sims.get(cond["simulation_id"])
+        assert [r["name"] for r in rec.readouts] == ["dnp01"]
+        named = rec.readouts[0]
+        assert named["label"] == "DNp01" and named["hz"] == rec.readout["hz"] and named["neurons"] == rec.readout["neurons"]
+
+
 def test_output_stays_small(atlas, sims):
     assert len(json.dumps(run(atlas, sims, trials=5, steps=10))) < 2500
 

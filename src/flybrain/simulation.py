@@ -503,7 +503,7 @@ class BrainStream:
         self._silenced[sim._rows(silenced, "silenced")] = True
         self._state = _TrialState(sim, np.empty(0, dtype=np.int64), np.random.default_rng(np.random.SeedSequence(seed).spawn(1)[0]))
         self._rows = np.empty(0, dtype=np.int64)
-        self._p_event = 0.0
+        self._p_rows = np.empty(0)  # event probability per tick of each stimulated row (aligned with _rows)
         self.stimulus: tuple[np.ndarray, float] | None = None
 
     @property
@@ -516,8 +516,29 @@ class BrainStream:
         arr = self.sim._rows(rows, "stimulus")
         if not np.isfinite(rate_hz) or not 0 <= rate_hz <= 1000.0 / p.dt:
             raise SimulationError(f"rate_hz must be within 0..{1000.0 / p.dt:g}, got {rate_hz}")
-        self._rows, self._p_event = arr, rate_hz * p.dt / 1000.0
+        self._rows, self._p_rows = arr, np.full(len(arr), rate_hz * p.dt / 1000.0)
         self.stimulus = (arr, float(rate_hz)) if len(arr) and rate_hz > 0 else None
+        self._on_stimulus(arr)
+
+    def set_rates(self, rows, rates_hz) -> None:
+        """Poisson-drive `rows` at their OWN rates (one per row, rows unique) from now on; zero-rate rows are dropped.
+
+        `stimulus` then reports the driven rows with their mean rate. Validated first: the stream is untouched on error."""
+        p = self.sim.params
+        rows_in = np.asarray(list(rows) if rows is not None else [], dtype=np.int64)
+        rates = np.asarray(list(rates_hz) if rates_hz is not None else [], dtype=np.float64)
+        if rows_in.shape != rates.shape or rows_in.ndim != 1:
+            raise SimulationError("rates need exactly one value per row")
+        if len(np.unique(rows_in)) != len(rows_in):
+            raise SimulationError("rows must be unique when each has its own rate")
+        if not np.isfinite(rates).all() or (rates < 0).any() or (rates > 1000.0 / p.dt).any():
+            raise SimulationError(f"every rate must be within 0..{1000.0 / p.dt:g} Hz")
+        self.sim._rows(rows_in, "stimulus")  # range check
+        keep = rates > 0
+        order = np.argsort(rows_in[keep], kind="stable")
+        arr, hz = rows_in[keep][order], rates[keep][order]
+        self._rows, self._p_rows = arr, hz * p.dt / 1000.0
+        self.stimulus = (arr, float(hz.mean())) if len(arr) else None
         self._on_stimulus(arr)
 
     def _on_stimulus(self, rows: np.ndarray) -> None:
@@ -528,7 +549,7 @@ class BrainStream:
         sim, st = self.sim, self._state
         n_steps = _steps(ms, sim.params.dt, "advance ms")
         counts = np.zeros(sim.n, dtype=np.int32)
-        epochs = [(st.k, st.k + n_steps, self._rows, np.full(len(self._rows), self._p_event))] if self.stimulus else []
+        epochs = [(st.k, st.k + n_steps, self._rows, self._p_rows)] if self.stimulus else []
         sim._advance(st, epochs, st.k + n_steps, self._silenced, counts, None, None)
         active = np.flatnonzero(counts).astype(np.int64)
         return ChunkSpikes(active, counts[active], float(ms))
