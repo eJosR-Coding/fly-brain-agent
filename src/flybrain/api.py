@@ -39,6 +39,7 @@ from flybrain.plain import plain_description
 from flybrain.selections import SelectionStore, UnknownSelectionError
 from flybrain.silencing import silencing_screen
 from flybrain.gpu_simulation import MIN_FREE_VRAM_MB, POOL_LIMIT_MB, read_telemetry
+from flybrain.live_api import register_live, resolve_idle_s
 from flybrain.sim_service import SimulationService, SimulationUnavailable, UnknownSimulationError
 from flybrain.tools import ACTIVE_HZ, load_presets, preset_selection, search_neurons, stimulate
 
@@ -232,6 +233,8 @@ def create_app(
     served: dict | None = None,
     keep_turns: int | None = None,
     experiment_timeout: float | None = None,
+    live_factory=None,
+    live_idle_s: float | None = None,
 ) -> FastAPI:
     """Build the app. ``model`` is a LangChain chat model; without one /chat reports an error.
 
@@ -323,6 +326,8 @@ def create_app(
         allow_headers=["*"],
     )
 
+    register_live(app, _cors_origins, resolve_idle_s(live_idle_s, os.environ), live_factory)
+
     @app.get("/health")
     def health():
         chat_on = app.state.graph is not None and app.state.tools_ok
@@ -347,6 +352,8 @@ def create_app(
             "gpu": read_telemetry(),
             "min_free_vram_mb": MIN_FREE_VRAM_MB,
             "pool_limit_mb": POOL_LIMIT_MB,
+            "thermal": sims.thermal_status(),  # {limit_c, temperature_c, hot, refusals}; None without a guard
+            "live": {"active": app.state.live_lock.locked(), "stream_note": app.state.live_stream_note},
         }
 
     @app.get("/models")
