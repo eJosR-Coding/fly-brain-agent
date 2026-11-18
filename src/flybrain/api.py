@@ -38,6 +38,7 @@ from flybrain.models import CHAT_MODEL_KWARGS, describe_models
 from flybrain.plain import plain_description
 from flybrain.selections import SelectionStore, UnknownSelectionError
 from flybrain.silencing import silencing_screen
+from flybrain.gpu_simulation import MIN_FREE_VRAM_MB, POOL_LIMIT_MB, read_telemetry
 from flybrain.sim_service import SimulationService, SimulationUnavailable, UnknownSimulationError
 from flybrain.tools import ACTIVE_HZ, load_presets, preset_selection, search_neurons, stimulate
 
@@ -333,6 +334,19 @@ def create_app(
             "connectome": app.state.connectome is not None,
             "connectome_edges": app.state.connectome.n_edges if app.state.connectome is not None else None,
             "simulation": app.state.sims.available,
+        }
+
+    @app.get("/health/gpu")
+    def health_gpu():
+        """Which compute backend runs the brain and why, plus best-effort GPU telemetry (nvidia-smi)."""
+        sims = app.state.sims
+        return {
+            "mode": sims.backend_mode,
+            "backend": sims.backend,
+            "reason": sims.backend_reason,
+            "gpu": read_telemetry(),
+            "min_free_vram_mb": MIN_FREE_VRAM_MB,
+            "pool_limit_mb": POOL_LIMIT_MB,
         }
 
     @app.get("/models")

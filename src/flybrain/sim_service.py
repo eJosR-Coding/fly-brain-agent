@@ -1,6 +1,7 @@
 """Where the simulation weights live, how to build the cached CSR, and (below) the runtime service."""
 
 import argparse
+import logging
 import os
 import secrets
 import sys
@@ -16,7 +17,12 @@ import numpy as np
 from scipy import sparse
 
 from flybrain.atlas import load_atlas
-from flybrain.simulation import LIFParams, Simulation
+from flybrain.gpu_simulation import GPUCapacityError, GPUOverflowError, GPUProbe, GPUSimulation, probe_gpu
+from flybrain.simulation import LIFParams, Simulation, SimulationError
+
+log = logging.getLogger(__name__)
+BACKEND_ENV = "FLYBRAIN_SIM_BACKEND"
+BACKEND_MODES = ("auto", "cpu", "gpu")
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SIM_DATA = ROOT / "data" / "raw" / "shiu"
@@ -44,6 +50,17 @@ MAX_CACHE_BYTES = 300 * 1024 * 1024
 def _result_bytes(res) -> int:
     return sum(a.nbytes for a in (res.counts, res.rate_hz, res.trial_counts, res.active_rows, res.frames)
                if a is not None)
+
+
+def backend_mode() -> str:
+    """FLYBRAIN_SIM_BACKEND = auto (default) | cpu | gpu; an unknown value is ignored with a warning."""
+    raw = os.environ.get(BACKEND_ENV, "").strip().lower()
+    if not raw:
+        return "auto"
+    if raw not in BACKEND_MODES:
+        log.warning("%s=%r is not one of %s; using auto", BACKEND_ENV, raw, "|".join(BACKEND_MODES))
+        return "auto"
+    return raw
 
 
 class UnknownSimulationError(KeyError):
@@ -94,8 +111,17 @@ class SimulationService:
 
     def __init__(self, loader: Callable[[], Simulation], available: Callable[[], bool] = lambda: True,
                  max_results: int = MAX_RESULTS, max_cached_runs: int = MAX_CACHED_RUNS,
-                 max_cache_bytes: int = MAX_CACHE_BYTES) -> None:
+                 max_cache_bytes: int = MAX_CACHE_BYTES, backend: str | None = None,
+                 gpu_probe: Callable[[], GPUProbe] | None = None,
+                 gpu_factory: Callable[[Simulation], Simulation] | None = None) -> None:
         self._loader, self._available = loader, available
+        # compute backend: `mode` is the request (auto|cpu|gpu), `_backend` what is actually used
+        self.backend_mode = backend_mode() if backend is None else backend
+        self._gpu_probe = gpu_probe or probe_gpu
+        self._gpu_factory = gpu_factory or GPUSimulation.from_simulation
+        self._gpu: Simulation | None = None
+        self._backend = "pending"  # decided on the first run: "cpu" or "gpu"
+        self._backend_reason = f"not decided yet (mode {self.backend_mode}); decided on the first run"
         self._run_cache: OrderedDict[tuple, tuple] = OrderedDict()  # key -> (SimResult, nbytes); under _run_lock
         self._run_cache_bytes = 0
         self.max_cached_runs, self.max_cache_bytes = max_cached_runs, max_cache_bytes
@@ -119,8 +145,8 @@ class SimulationService:
         return cls(lambda: load_simulation(atlas)[0], weights_available, max_results)
 
     @classmethod
-    def from_simulation(cls, sim: Simulation, max_results: int = MAX_RESULTS, **cache_limits) -> "SimulationService":
-        svc = cls(lambda: sim, lambda: True, max_results, **cache_limits)
+    def from_simulation(cls, sim: Simulation, max_results: int = MAX_RESULTS, **options) -> "SimulationService":
+        svc = cls(lambda: sim, lambda: True, max_results, **options)
         svc._sim = sim
         return svc
 
@@ -145,27 +171,102 @@ class SimulationService:
         with self._run_lock:
             yield
 
+    # -- compute backend ---------------------------------------------------------------------
+
+    @property
+    def backend(self) -> str:
+        """"gpu" or "cpu" once the first run decided it, "pending" before."""
+        return self._backend
+
+    @property
+    def backend_reason(self) -> str:
+        """One line saying why this backend is in use."""
+        return self._backend_reason
+
+    def _decide_backend(self, sim: Simulation) -> None:
+        mode = self.backend_mode
+        if mode == "cpu":
+            self._backend, self._backend_reason = "cpu", f"{BACKEND_ENV}=cpu"
+            return
+        probe = self._gpu_probe()
+        if not probe.usable:
+            prefix = "gpu requested but unavailable: " if mode == "gpu" else ""
+            self._backend, self._backend_reason = "cpu", f"{prefix}{probe.reason}"
+            log.info("simulation backend: cpu (%s%s)", prefix, probe.reason)
+            return
+        try:
+            self._gpu = self._gpu_factory(sim)
+        except Exception as exc:  # noqa: BLE001 - any GPU failure means "use the CPU"
+            self._disable_gpu(f"loading the GPU simulator failed: {exc}")
+            return
+        self._backend, self._backend_reason = "gpu", probe.reason
+        log.info("simulation backend: gpu (%s)", probe.reason)
+
+    def _disable_gpu(self, why: str) -> None:
+        """Mark the GPU unusable for the rest of the process (logged) and free what it holds."""
+        log.warning("simulation backend: GPU disabled, using the CPU (%s)", why)
+        gpu, self._gpu = self._gpu, None
+        release = getattr(gpu, "release", None)
+        if callable(release):
+            try:
+                release()
+            except Exception:  # noqa: BLE001
+                pass
+        self._backend, self._backend_reason = "cpu", f"GPU disabled after an error: {why}"
+
+    def _cached(self, make_key: Callable[[Simulation, str], tuple], call: Callable[[Simulation], object]):
+        """Result-cache lookup, then `call(simulation)` on the backend in use; returns (SimResult, cache_hit).
+
+        The key carries the backend (its RNG stream differs). A GPU failure reruns the SAME request on
+        the CPU: capacity and overflow only for that run, any other error disables the GPU for good.
+        Input errors (SimulationError) are the caller's and propagate untouched.
+        """
+        cpu = self.simulation()
+        if self._backend == "pending":
+            self._decide_backend(cpu)
+        runner = self._gpu if self._backend == "gpu" else cpu
+        key = make_key(cpu, self._backend)
+        if key in self._run_cache:
+            self._run_cache.move_to_end(key)
+            self.cache_hits += 1
+            return self._run_cache[key][0], True
+        try:
+            res = call(runner)
+        except SimulationError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if runner is cpu:
+                raise
+            if isinstance(exc, (GPUCapacityError, GPUOverflowError)):
+                log.warning("GPU run not possible (%s); running this one on the CPU", exc)
+            else:
+                self._disable_gpu(f"{type(exc).__name__}: {exc}")
+            key = make_key(cpu, "cpu")
+            if key in self._run_cache:
+                self._run_cache.move_to_end(key)
+                self.cache_hits += 1
+                return self._run_cache[key][0], True
+            res = call(cpu)
+        self._cache_put(key, res)
+        return res, False
+
     def run(self, stim_rows, rate_hz: float, duration_ms: float = 1000.0, trials: int = 1, seed: int = 0,
             silence_rows=None, bin_ms: float | None = None):
         """`Simulation.run` through the result cache; returns (SimResult, cache_hit).
 
         Call it inside `exclusive()` (the cache is guarded by that same lock). The key is the
-        RESOLVED rows plus every parameter and the weights fingerprint, never selection ticket ids.
-        Treat the returned arrays as read-only: they are shared with later hits.
+        RESOLVED rows plus every parameter, the weights fingerprint and the backend, never
+        selection ticket ids. Treat the returned arrays as read-only: they are shared with later hits.
         """
-        sim = self.simulation()
-        key = (
-            sim.fingerprint, np.unique(np.asarray(list(stim_rows), dtype=np.int64)).tobytes(),
-            np.unique(np.asarray(list(silence_rows) if silence_rows is not None else [], dtype=np.int64)).tobytes(),
-            float(rate_hz), float(duration_ms), int(trials), int(seed), None if bin_ms is None else float(bin_ms),
-        )
-        if key in self._run_cache:
-            self._run_cache.move_to_end(key)
-            self.cache_hits += 1
-            return self._run_cache[key][0], True
-        res = sim.run(stim_rows, rate_hz, duration_ms, trials, seed=seed, silence_rows=silence_rows, bin_ms=bin_ms)
-        self._cache_put(key, res)
-        return res, False
+        def key(sim, backend):
+            return (
+                backend, sim.fingerprint, np.unique(np.asarray(list(stim_rows), dtype=np.int64)).tobytes(),
+                np.unique(np.asarray(list(silence_rows) if silence_rows is not None else [], dtype=np.int64)).tobytes(),
+                float(rate_hz), float(duration_ms), int(trials), int(seed), None if bin_ms is None else float(bin_ms),
+            )
+
+        return self._cached(key, lambda s: s.run(stim_rows, rate_hz, duration_ms, trials, seed=seed,
+                                                 silence_rows=silence_rows, bin_ms=bin_ms))
 
     def run_schedule(self, schedule, duration_ms: float = 1000.0, trials: int = 1, seed: int = 0,
                      silence_rows=None, bin_ms: float | None = None):
@@ -175,19 +276,15 @@ class SimulationService:
         segment misses. It is tagged apart from `run` keys: a constant run and its equivalent
         one-segment schedule are separate entries. Same locking and read-only rules as `run`.
         """
-        sim = self.simulation()
-        key = (
-            "schedule", sim.fingerprint, schedule.key,
-            np.unique(np.asarray(list(silence_rows) if silence_rows is not None else [], dtype=np.int64)).tobytes(),
-            float(duration_ms), int(trials), int(seed), None if bin_ms is None else float(bin_ms),
-        )
-        if key in self._run_cache:
-            self._run_cache.move_to_end(key)
-            self.cache_hits += 1
-            return self._run_cache[key][0], True
-        res = sim.run_schedule(schedule, duration_ms, trials, seed=seed, silence_rows=silence_rows, bin_ms=bin_ms)
-        self._cache_put(key, res)
-        return res, False
+        def key(sim, backend):
+            return (
+                "schedule", backend, sim.fingerprint, schedule.key,
+                np.unique(np.asarray(list(silence_rows) if silence_rows is not None else [], dtype=np.int64)).tobytes(),
+                float(duration_ms), int(trials), int(seed), None if bin_ms is None else float(bin_ms),
+            )
+
+        return self._cached(key, lambda s: s.run_schedule(schedule, duration_ms, trials, seed=seed,
+                                                          silence_rows=silence_rows, bin_ms=bin_ms))
 
     def _cache_put(self, key: tuple, res) -> None:
         size = _result_bytes(res)

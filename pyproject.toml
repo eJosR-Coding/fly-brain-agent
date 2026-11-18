@@ -30,6 +30,9 @@ dependencies = [
 [project.optional-dependencies]
 # the physics body (NeuroMechFly v2): heavy, so optional. `uv sync --extra body`
 body = ["flygym==2.1.1"]
+# the CUDA brain backend (CuPy + the CUDA 13 toolkit wheels, ~2 GB download): optional, off by default.
+# `uv sync --extra gpu`; FLYBRAIN_SIM_BACKEND=auto|cpu|gpu picks the backend at runtime
+gpu = ["cupy-cuda13x[ctk]"]
 
 [project.scripts]
 flybrain-mcp = "flybrain.mcp_server:main"
