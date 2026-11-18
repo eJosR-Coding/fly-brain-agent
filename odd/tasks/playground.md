@@ -50,6 +50,18 @@ live. Requested 2026-11-18.
 - [ ] CL1 closed-loop vision: a general fly eye (per-column view directions from the exact column map; luminance of the
       arena scene per column per frame; Hassenstein-Reichardt motion per subtype direction -> T4/T5 rates) feeding the live
       brain every chunk; optional labelled background noise; report what the fly does by itself (DN activity, movement).
+      Progress CL1 (branch wip/pg-cl1, uncommitted; DEPENDS on feat/vision-motion: its eye.py head_frame/from_xy, retina.py, motion.py,
+      looming.py and their tests are carried as a working-tree copy and must come from that branch's merge): `src/flybrain/fly_eye.py`
+      (pure numpy): per-column unit view directions (exact column map, eye axis 65 deg lateral = our choice), `ArenaScene` ray casting
+      (floor soft checker 4 mm period, light background through the glass, 12 cube edges as dark 1.5 mm lines, optional dark boxes, analytic
+      receptor blur), `Hrc` (Weber contrast, ON=T4 / OFF=T5 half-wave split, 40 ms low-pass delay on the two upstream flank columns,
+      opponent, rectified; static or uniform change = exactly 0), drive -> rate = 300 Hz * (1 - exp(-hr/0.02)) (scale = the validated
+      looming 300 Hz; gain our choice), `VisionFrontEnd` (pose of the last chunk -> rows + rates; 1 chunk latency; ~4.5 ms per chunk, both
+      eyes, ~800 columns each). `BrainStream.set_rates(rows, rates_hz)` (CPU + GPU; run() goldens untouched). LiveSession `vision`
+      (+ build_live_session / ws start options `vision: "arena"|null`, `background_hz`): per-chunk combined rates, `senses` block + caption in
+      every message, `wall_ms.vision`. Default OFF. Real GPU experiment (kinematic body, 50 ms chunks): at rest nothing; the walking fly's own
+      optic flow drives thousands of T4/T5 cells at up to 300 Hz and the loop sustains walking/turning/DNp01 that the vision-off control lacks;
+      DNp01 first fires ~20 mm from the wall (floor flow), not from the edges (uniform floor: no DNp01). Numbers in the CL1 report.
 - [ ] CL2 touch: antennal mechanosensory input when the head touches the glass (leg mechanosensors live in the VNC, not
       in this brain-only model: stated).
 - [ ] Flight roadmap: F0 research flybody flight (weights, license, geometry); F1 takeoff from DNp01 (validated loom path);

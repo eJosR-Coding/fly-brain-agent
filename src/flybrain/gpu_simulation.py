@@ -475,7 +475,7 @@ class GPUBrainStream(BrainStream):
         self._cp = cp
         self._p_dev = self._state.p_zero
         self._prev = cp.zeros(sim.n, dtype=cp.int32)
-        self._rows, self._p_event, self.stimulus = np.empty(0, dtype=np.int64), 0.0, None
+        self._rows, self._p_rows, self.stimulus = np.empty(0, dtype=np.int64), np.empty(0), None
 
     @property
     def t_ms(self) -> float:
@@ -484,7 +484,7 @@ class GPUBrainStream(BrainStream):
     def _on_stimulus(self, rows: np.ndarray) -> None:
         st = self._state
         st.set_poisson_targets(rows)
-        self._p_dev = st.rate_vector(rows, np.full(len(rows), self._p_event)) if self.stimulus else st.p_zero
+        self._p_dev = st.rate_vector(rows, self._p_rows) if self.stimulus else st.p_zero
 
     def advance(self, ms: float) -> ChunkSpikes:
         sim, st, cp = self.sim, self._state, self._cp

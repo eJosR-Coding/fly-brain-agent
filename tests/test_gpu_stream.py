@@ -73,3 +73,19 @@ def test_gpu_stream_agrees_with_the_cpu_stream_statistically():
             st.close()
         rates.append(tot / 6)
     assert rates[0] > 0 and abs(rates[0] - rates[1]) < 0.25 * rates[0] + 5
+
+
+def test_gpu_stream_per_neuron_rates_match_set_stimulus_when_constant_and_differ_per_row():
+    _, gpu = pair()
+    a, b = gpu.open_stream(seed=5), gpu.open_stream(seed=5)
+    a.set_stimulus([62, 30], 300.0)
+    b.set_rates([62, 30], [300.0, 300.0])
+    ta = sum(dense(a.advance(50.0), gpu.n) for _ in range(10))
+    tb = sum(dense(b.advance(50.0), gpu.n) for _ in range(10))
+    assert np.array_equal(ta, tb) and ta.sum() > 0
+    c = gpu.open_stream(seed=5)
+    c.set_rates([62, 61, 30], [400.0, 0.0, 100.0])
+    tc = sum(dense(c.advance(50.0), gpu.n) for _ in range(20))
+    assert tc[62] > tc[30] > 0 and c.stimulus is not None and list(c.stimulus[0]) == [30, 62]
+    for s in (a, b, c):
+        s.close()

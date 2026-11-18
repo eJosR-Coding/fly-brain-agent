@@ -1,7 +1,7 @@
 """The /ws/live WebSocket: one live brain+body session at a time (see flybrain.live for the session itself).
 
 Protocol (JSON text frames; close codes are 4xxx application codes, the reason says why):
-  client -> {"type":"start","preset":name|null,"rate_hz":n,["seed":int,"chunk_ms":50,"include_active":bool,"binary_frames":bool,"body_mode":"kinematic"|"physics"]}
+  client -> {"type":"start","preset":name|null,"rate_hz":n,["seed":int,"chunk_ms":50,"include_active":bool,"binary_frames":bool,"body_mode":"kinematic"|"physics","vision":"arena"|null,"background_hz":n]}
             {"type":"stimulus","preset":name|null | "rows":[atlas rows],"rate_hz":n}   (null/no rows clears the drive)
             {"type":"ping"} (keeps an idle session alive)   {"type":"stop"}
   server -> {"type":"started",...,"arena":{"kind":"glass_cube","interior_mm","bounds_mm":[xmin,xmax,ymin,ymax],"note"}}
@@ -31,7 +31,8 @@ from fastapi import FastAPI, WebSocket
 from starlette.websockets import WebSocketDisconnect
 
 from flybrain import body_runner
-from flybrain.live import CHUNK_MS, build_live_session, preset_rows
+from flybrain.fly_eye import VisionUnavailable
+from flybrain.live import CHUNK_MS, MAX_BACKGROUND_HZ, build_live_session, preset_rows
 from flybrain.sim_service import SimulationUnavailable
 from flybrain.simulation import SimulationError
 
@@ -108,8 +109,15 @@ def _start_options(msg: dict) -> dict:
     body_mode = msg.get("body_mode", "kinematic")
     if body_mode not in ("kinematic", "physics"):
         raise BadRequest('body_mode must be "kinematic" or "physics"')
+    vision = msg.get("vision")
+    if vision not in (None, "arena"):
+        raise BadRequest('vision must be "arena" or null')
+    background = msg.get("background_hz", 0)
+    if isinstance(background, bool) or not isinstance(background, (int, float)) or not 0 <= background <= MAX_BACKGROUND_HZ:
+        raise BadRequest(f"background_hz must be a number within 0..{MAX_BACKGROUND_HZ:g}")
     return {"seed": seed, "chunk_ms": float(chunk_ms), "include_active": msg.get("include_active", False),
-            "binary_frames": msg.get("binary_frames", False), "body_mode": body_mode}
+            "binary_frames": msg.get("binary_frames", False), "body_mode": body_mode, "vision": vision,
+            "background_hz": float(background)}
 
 
 def register_live(app: FastAPI, origins: Callable[[], list[str]], idle_s: float, factory=None) -> None:
@@ -196,7 +204,7 @@ async def _open(ws: WebSocket, app: FastAPI, build, idle_s: float):
     try:
         session = await asyncio.to_thread(build, app.state.atlas, app.state.row_index, app.state.sims,
                                           app.state.body_lock, **options)
-    except (body_runner.BodyUnavailable, SimulationUnavailable) as exc:
+    except (body_runner.BodyUnavailable, SimulationUnavailable, VisionUnavailable) as exc:
         await _fail(ws, CODE_UNAVAILABLE, str(exc))
         return None
     try:

@@ -24,6 +24,8 @@ from collections.abc import Callable
 import numpy as np
 
 from flybrain import body_drive
+from flybrain import fly_eye
+from flybrain.fly_eye import VISION_LABEL
 from flybrain.body_readouts import dn_group_rows
 from flybrain.simulation import ChunkSpikes
 
@@ -40,6 +42,11 @@ ARENA_INTERIOR_MM = 50.0
 ARENA_NOTE = "world rule: glass walls stop the fly; not a brain decision"
 PHYSICS_ARENA_NOTE = ("World rule (not the brain): the glass wall clamps the displayed root (display clamp: the physics body "
                       "itself is not stopped, its legs keep stepping).")
+VISION_CAPTION = (
+    "Vision is OURS: the fly's motion through the glass cube becomes T4/T5 firing rates (Reichardt correlators, photoreceptor "
+    "path bypassed); what the fly does is whatever the brain does with that input, nothing is scripted."
+)
+MAX_COMBINED_HZ = 10000.0  # the brain's per-neuron ceiling (0.1 ms tick)
 
 
 def arena_spec(interior_mm: float = ARENA_INTERIOR_MM) -> dict:
@@ -70,7 +77,7 @@ class LiveSession:
                  mapper: body_drive.DriveMapper | None = None, clock: Callable[[], float] = time.perf_counter,
                  thermal=None, brain_fallback: Callable[[], object] | None = None, include_active: bool = False,
                  max_active: int = MAX_ACTIVE_ROWS, binary_frames: bool = False,
-                 brain_lock=None, body_lock=None, arena: dict | None = None) -> None:
+                 brain_lock=None, body_lock=None, arena: dict | None = None, vision=None) -> None:
         self.brain, self.body, self.groups = brain, body, groups
         self.chunk_ms, self.mapper = float(chunk_ms), mapper or body_drive.DriveMapper(chunk_ms)
         self._clock, self.thermal, self._brain_fallback = clock, thermal, brain_fallback
@@ -78,6 +85,11 @@ class LiveSession:
         # callables returning a fresh context manager per chunk (SimulationService.exclusive, a lock's `lambda: lock`)
         self._brain_lock, self._body_lock = brain_lock or contextlib.nullcontext, body_lock or contextlib.nullcontext
         self.arena = arena
+        # the fly's eye (fly_eye.VisionFrontEnd or a stand-in): sets per-neuron T4/T5 rates every chunk from the pose of the last one
+        self.vision = vision
+        n0 = max(1, round(self.chunk_ms / 5.0))
+        self._pose = (np.tile([0.0, 0.0, 1022.0], (n0, 1)), np.zeros(n0))  # the start pose, until the body reports one
+        self._applied: tuple[np.ndarray, np.ndarray] | None = None
         self.seq, self.t_ms = 0, 0.0
         self.fallback: str | None = None
         # "kinematic" = recorded physics gait blended live, "physics" = the MuJoCo body stepped live (see body_kinematic)
@@ -103,6 +115,30 @@ class LiveSession:
         with self._lock:
             self._close()
 
+    def _senses(self, extra: dict | None = None) -> dict:
+        v = self.vision
+        out = {"vision": VISION_LABEL if v is not None and getattr(v, "sees", True) else None,
+               "background_hz": float(getattr(v, "background_hz", 0.0)) if v is not None else 0.0}
+        note = getattr(v, "background_note", None)
+        if note:
+            out["background"] = note
+        if v is not None:
+            out.update(extra or {})
+        return out
+
+    def _apply_vision(self, out) -> None:
+        """Combine the eye's rates with the user stimulus (rates of the same neuron add) and set them on the brain."""
+        rows, rates = np.asarray(out.rows, dtype=np.int64), np.asarray(out.rates_hz, dtype=float)
+        user_rows, user_rate = self._stimulus
+        if user_rows and user_rate > 0:
+            rows, rates = np.concatenate([rows, np.asarray(user_rows, dtype=np.int64)]), np.concatenate([rates, np.full(len(user_rows), user_rate)])
+        uniq, inv = np.unique(rows, return_inverse=True)
+        total = np.zeros(len(uniq))
+        np.add.at(total, inv, rates)
+        total = np.minimum(total, MAX_COMBINED_HZ)
+        self._applied = (uniq, total)
+        self.brain.set_rates(uniq, total)
+
     def _close(self) -> None:
         if self._closed:
             return
@@ -118,7 +154,9 @@ class LiveSession:
     def start_message(self) -> dict:
         return {"type": "started", "chunk_ms": self.chunk_ms, "backend": self.brain.backend, "fallback": self.fallback,
                 "header": self.body.header, "body_mode": self.body_mode, "body_caption": self.body_caption,
-                "dn_names": list(self.groups), "caption": body_drive.CAPTION,
+                "dn_names": list(self.groups),
+                "caption": body_drive.CAPTION + (" " + VISION_CAPTION if self._senses()["vision"] else ""),
+                "senses": {**self._senses(), **({"caption": VISION_CAPTION} if self._senses()["vision"] else {})},
                 "note": NOTE, "binary_frames": self.binary_frames, "arena": self.arena}
 
     # -- one chunk -----------------------------------------------------------------------
@@ -126,7 +164,9 @@ class LiveSession:
     def _to_cpu(self, why: str) -> None:
         old, self.brain = self.brain, self._brain_fallback()
         rows, rate = self._stimulus
-        if rows:
+        if self.vision is not None and self._applied is not None:
+            self.brain.set_rates(*self._applied)
+        elif rows:
             self.brain.set_stimulus(rows, rate)
         self.fallback = why
         log.warning("live session: brain moved to the CPU (%s)", why)
@@ -177,6 +217,13 @@ class LiveSession:
         if self._closed:
             raise RuntimeError("the live session is closed")
         t0 = self._clock()
+        seen = None
+        if self.vision is not None:
+            seen = self.vision.process(*self._pose)
+            self._apply_vision(seen)
+            tb = self._clock()
+        else:
+            tb = t0
         chunk = self._advance_brain()
         t1 = self._clock()
         dn = {name: chunk.group_hz(rows) for name, rows in self.groups.items()}
@@ -191,6 +238,7 @@ class LiveSession:
         if self.arena and getattr(self.body, "bounds", None) is None:  # the body does not enforce walls: clamp what is reported
             out = {**out, "thorax": {**out["thorax"], "pos_um": np.array(out["thorax"]["pos_um"])}}
             world = self._clamp_root(out["thorax"]["pos_um"])
+        self._pose = (np.asarray(out["thorax"]["pos_um"]), np.asarray(out["thorax"]["yaw_deg"]))
         wall_ms = max((t2 - t0) * 1000.0, 1e-6)
         factor = self.chunk_ms / wall_ms
         self._speeds.append(factor)
@@ -202,7 +250,7 @@ class LiveSession:
             "type": "chunk", "seq": self.seq, "t_ms": round(self.t_ms, 3), "chunk_ms": self.chunk_ms,
             "speed_factor": round(factor, 4), "speed_factor_avg": round(float(np.mean(self._speeds)), 4),
             "speed_label": speed_label(factor),
-            "wall_ms": {"brain": round((t1 - t0) * 1000.0, 3), "body": round((t2 - t1) * 1000.0, 3),
+            "wall_ms": {"brain": round((t1 - tb) * 1000.0, 3), "body": round((t2 - t1) * 1000.0, 3),
                         "total": round(wall_ms, 3)},
             "dn": {k: round(float(v), 2) for k, v in dn.items()},
             "drive": [round(float(v), 4) for v in out["drive"][-1]] if len(out["drive"]) else [0.0, 0.0],
@@ -214,7 +262,10 @@ class LiveSession:
                        "yaw_deg": np.asarray(out["thorax"]["yaw_deg"]).tolist()},
             "contact": np.asarray(out["contact"]).tolist(),
             "body_mode": self.body_mode, "body_caption": self.body_caption,
+            "senses": self._senses({k: seen.stats[k] for k in ("driven_cells", "max_rate_hz", "mean_rate_hz")} if seen else None),
         }
+        if seen is not None:
+            msg["wall_ms"]["vision"] = round((tb - t0) * 1000.0, 3)
         if world:
             msg["world"] = world
         if binary:
@@ -254,17 +305,37 @@ def readout_groups(atlas, row_index) -> dict[str, np.ndarray]:
     return groups
 
 
+VISION_MODES = (None, "arena")
+MAX_BACKGROUND_HZ = 1000.0
+
+
 def build_live_session(atlas, row_index, sims, body_lock=None, *, seed: int = 0, chunk_ms: float = CHUNK_MS,
-                       include_active: bool = False, binary_frames: bool = False, body_mode: str = "kinematic") -> LiveSession:
+                       include_active: bool = False, binary_frames: bool = False, body_mode: str = "kinematic",
+                       vision: str | None = None, background_hz: float = 0.0) -> LiveSession:
     """The real brain (GPU when decided, usable and cool; else CPU) and the real body, ready to step.
 
     body_mode "kinematic" (default, fast: the recorded physics gait blended live, no flygym needed) or "physics"
     (MuJoCo stepped live, needs the `body` extra, slower). Raises BodyUnavailable (flygym or the motion library missing)
-    or SimulationUnavailable (no weights) BEFORE anything heavy is built."""
+    or SimulationUnavailable (no weights) BEFORE anything heavy is built.
+
+    vision "arena": the fly's eye (fly_eye.py) drives T4/T5 from its motion through the cube (needs the Codex column file,
+    else fly_eye.VisionUnavailable). background_hz > 0 adds labelled Poisson noise on all mapped T4/T5 cells (works without
+    vision: then the fly is blind but its motion detectors idle at that rate)."""
     from flybrain import body_runner
     from flybrain.sim_service import SimulationUnavailable
 
     arena = arena_spec()
+    if vision not in VISION_MODES:
+        raise ValueError(f"vision must be one of {VISION_MODES}")
+    if not isinstance(background_hz, (int, float)) or isinstance(background_hz, bool) or not 0 <= background_hz <= MAX_BACKGROUND_HZ:
+        raise ValueError(f"background_hz must be a number within 0..{MAX_BACKGROUND_HZ:g}")
+    front = None
+    if vision or background_hz > 0:
+        eyes = fly_eye.load_eyes(atlas)
+        if eyes is None:
+            raise fly_eye.VisionUnavailable("vision needs the FlyWire column file data/raw/flywire_v783_column_assignment.csv.gz "
+                                            "(Codex 'Visual Neuron Columns') and T4/T5 cells that it lists; it is missing or matches none")
+        front = fly_eye.VisionFrontEnd(eyes, fly_eye.ArenaScene(interior_mm=arena["interior_mm"]), float(background_hz), see=vision == "arena")
     if body_mode not in BODY_MODES:
         raise ValueError(f"body_mode must be one of {BODY_MODES}")
     if body_mode == "physics":
@@ -290,5 +361,5 @@ def build_live_session(atlas, row_index, sims, body_lock=None, *, seed: int = 0,
     return LiveSession(
         brain, body, readout_groups(atlas, row_index), chunk_ms=chunk_ms, thermal=sims.thermal,
         brain_fallback=lambda: cpu.open_stream(seed=seed), include_active=include_active,
-        binary_frames=binary_frames, arena=arena, brain_lock=sims.exclusive, body_lock=(lambda: body_lock) if body_lock is not None else None,
+        binary_frames=binary_frames, arena=arena, vision=front, brain_lock=sims.exclusive, body_lock=(lambda: body_lock) if body_lock is not None else None,
     )
