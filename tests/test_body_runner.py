@@ -124,3 +124,45 @@ def test_runner_takes_a_body_drive_object():
     d = bd.drive_from_readouts([{"name": "DNg100", "hz": [60, 60]}], bin_ms=50.0)
     clip = br.run_body(d, 50.0, 100.0)
     assert clip["n_frames"] == 20 and clip["thorax_world"]["pos_um"][-1][0] > 0
+
+
+# ---- physics timestep (G2): the default step reproduces the dt = 1e-4 s reference walking ----
+
+TRIPOD_A, TRIPOD_B = ("LF", "RM", "LH"), ("RF", "LM", "RH")
+
+
+def tripod_antiphase(clip):
+    """Mean correlation of the stance (adhesion) signals within a tripod, and across the two tripods."""
+    a = np.array(clip["adhesion"], dtype=float)[20:]  # skip the first 0.1 s
+    legs = [str(leg).upper() for leg in clip["legs"]]
+    c = lambda x, y: np.corrcoef(a[:, legs.index(x)], a[:, legs.index(y)])[0, 1]  # noqa: E731
+    within = np.mean([c(g[i], g[j]) for g in (TRIPOD_A, TRIPOD_B) for i, j in ((0, 1), (0, 2), (1, 2))])
+    across = np.mean([c(x, y) for x in TRIPOD_A for y in TRIPOD_B])
+    return within, across
+
+
+@pytestmark_phys
+def test_default_physics_step_matches_the_reference_step():
+    assert br.DEFAULT_DT_S > 1e-4  # it is the measured faster step, not the reference itself
+    ref_dt = 1e-4
+    out = {}
+    for name, drive in (("straight", (1.0, 1.0)), ("turn", (0.4, 1.2))):
+        out[name] = [br.run_body([list(drive)] * 2, 250.0, 500.0, seed=0, escape=[False] * 2, dt_s=dt)
+                     for dt in (ref_dt, br.DEFAULT_DT_S)]
+    ref, new = out["straight"]
+    speed = lambda c: np.hypot(*np.array(c["thorax_world"]["pos_um"])[-1][:2]) / 1000.0 / c["duration_s"]  # noqa: E731
+    assert speed(new) == pytest.approx(speed(ref), rel=0.10)
+    ref, new = out["turn"]
+    yaw = lambda c: c["thorax_world"]["yaw_deg"][-1] / c["duration_s"]  # noqa: E731
+    assert yaw(ref) > 50 and yaw(new) == pytest.approx(yaw(ref), rel=0.15)
+    for clip in (out["straight"][1], out["turn"][1]):
+        within, across = tripod_antiphase(clip)
+        assert within > 0.8 and across < -0.8, (within, across)
+        assert clip["provenance"]["physics_dt_s"] == pytest.approx(br.DEFAULT_DT_S)
+        assert np.isfinite(np.array(clip["frames"], dtype=float)).all()
+
+
+def test_sample_stride_needs_a_step_that_divides_the_frame_period():
+    assert [br.sample_stride(dt) for dt in (1e-4, 2e-4, 5e-4)] == [50, 25, 10]
+    with pytest.raises(ValueError, match="divide"):
+        br.sample_stride(3e-4)

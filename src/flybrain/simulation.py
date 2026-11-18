@@ -164,6 +164,8 @@ def _steps(ms: float, dt: float, what: str) -> int:
 
 
 class Simulation:
+    backend = "cpu"  # GPUSimulation overrides it
+
     def __init__(self, csr: sparse.csr_matrix, params: LIFParams) -> None:
         self.n = csr.shape[0]
         self.params = params
