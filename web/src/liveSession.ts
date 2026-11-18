@@ -57,7 +57,7 @@ export interface LiveStatus {
   bufferedMs: number;
 }
 
-export interface LiveStartOptions { preset: string | null; rateHz: number; seed?: number; chunkMs?: number }
+export interface LiveStartOptions { preset: string | null; rateHz: number; seed?: number; chunkMs?: number; vision?: "arena" }
 
 export interface LiveDeps {
   url: string;
@@ -280,6 +280,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
         const cmd: Record<string, unknown> = { type: "start", preset: opts.preset, rate_hz: opts.rateHz };
         if (opts.seed !== undefined) cmd.seed = opts.seed;
         if (opts.chunkMs !== undefined) cmd.chunk_ms = opts.chunkMs;
+        if (opts.vision) cmd.vision = opts.vision;
         setState("starting");
         send(cmd);
       };
