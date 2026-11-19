@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from flybrain.gpu_simulation import GPUCapacityError, ThermalGuard
+from flybrain import live
 from flybrain.live import LiveSession, frames_from_bytes, frames_to_bytes
 from flybrain.simulation import ChunkSpikes, SimulationError
 
@@ -354,3 +355,12 @@ def test_a_touched_cube_drives_its_taste_neurons_and_is_reported_in_the_chunk():
     assert msg["world"]["touching"] == ["sugar1"] and msg["world"]["taste_hz"] == {"sugar": live_world.TASTE_HZ}
     assert s.world_clear() == 1
     assert s.step()["world"]["touching"] == []
+
+
+def test_touch_sides_follow_the_wall_relative_to_the_heading():
+    assert live.touch_sides(["x_max"], 0.0) == ["left", "right"]  # head-on
+    assert live.touch_sides(["y_max"], 0.0) == ["left"]  # wall on the fly's left
+    assert live.touch_sides(["y_min"], 0.0) == ["right"]
+    assert live.touch_sides(["x_min"], 0.0) == []  # wall behind: no antenna
+    assert live.touch_sides(["x_max"], 90.0) == ["right"]  # heading +y, wall at +x is on its right
+    assert live.touch_sides([], 0.0) == []
