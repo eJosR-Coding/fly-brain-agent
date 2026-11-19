@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-STATES = ("rest", "walk", "turn_left", "turn_right", "groom", "takeoff")
+STATES = ("rest", "walk", "turn_left", "turn_right", "groom", "takeoff", "seek", "feed", "avoid")
 MODES = ("ethogram", "off")
 
 # mean bout duration (s) and the (min, max) clamp of an exponential draw: OUR numbers
@@ -41,6 +41,16 @@ TAKEOFF_PULSE_MS = 150.0  # the giant-fibre drive lasts this long (the live GF r
 CALIBRATION_NOTE = "injection rates were chosen so the commanded neurons answer in the model; see `response` for what they did"
 GROOM_ON_HZ = 8.0  # mean Hz of the grooming DNs that makes the body groom (ours); off below GROOM_OFF_HZ (hysteresis)
 GROOM_OFF_HZ = 3.0
+# Food / bitter rules (OURS, labelled, not validated). The brain-only model does not lateralize odour, so seeking is a rule here:
+# it only injects DNg100 + a unilateral DNa02 proportional to the bearing error; the body is never moved by it.
+SMELL_RADIUS_MM = 40.0  # a sugar cube closer than this "is smelled" (proxy: no odour model)
+BITTER_RADIUS_MM = 10.0  # coffee closer than this is avoided (bitter avoidance is real in flies; radius and gains are ours)
+FLOOR_Z_UM = 1600.0  # the drive seeks only while the thorax is low (on the floor), not on walls / in the air
+TURN_GAIN = 40.0 / 60.0  # Hz of DNa02 per degree of bearing error (saturates at 40 Hz at 60 deg); dead zone below
+TURN_DEADZONE_DEG = 8.0
+FEED_S = (5.0, 15.0)  # stand still this long after sugar contact (uniform draw)
+BITTER_PAUSE_S = 1.0  # stop this long after coffee contact, then walk away
+COOLDOWN_S = 60.0  # a fed-from cube is ignored this long (satiety); a cube that was avoided likewise after contact
 HEAD_SACCADE_DEG = 9.0  # head saccade amplitude at rest / walking (ours)
 HEAD_SACCADE_MS = 140.0
 HEAD_SACCADE_EVERY_S = (1.2, 4.0)
@@ -56,6 +66,9 @@ SOURCES = {
     "walk_rest_turn_takeoff": "bout durations and transition probabilities: NOT FOUND; OUR labelled numbers.",
 }
 
+FOOD_NOTE = (f"Seek / feed / avoid are OUR labelled rules (not the connectome, not validated): a sugar cube within {SMELL_RADIUS_MM:g} mm (smell proxy) makes the drive inject "
+             f"DNg100 + a unilateral DNa02 proportional to the bearing error; on contact it stands still {FEED_S[0]:g}-{FEED_S[1]:g} s, then ignores that cube {COOLDOWN_S:g} s; "
+             f"coffee within {BITTER_RADIUS_MM:g} mm turns the drive away (DNa02 on the far side); contact stops it {BITTER_PAUSE_S:g} s first. The body is moved only by the brain's DNs.")
 NOTE = ("Spontaneous drive (ours, not the connectome, not validated): a state machine over rest / walk / turn / groom / takeoff injects "
         "Poisson rates into command neurons (DNg100, DNa02, grooming DNg10/11/12, DNp01); the brain -> body path does the rest. "
         "Bout durations and transitions are our labelled numbers.")
@@ -81,6 +94,11 @@ class Spontaneous:
         self._pulse_ms = 0.0
         self._next_saccade_ms = self._rng.uniform(*HEAD_SACCADE_EVERY_S) * 1000.0
         self._saccade = (0.0, 0.0)  # (target deg, ms left)
+        self._target: dict | None = None
+        self._ignore: dict[str, float] = {}  # object id -> t_ms until which it is ignored
+        self._feed_ms = 0.0
+        self._feed_kind = "sugar"
+        self.food: dict = {"state": "none", "target": None, "bearing_deg": None, "distance_mm": None, "note": FOOD_NOTE}
         self.left_ms = self._draw("rest")
         self.log.append((0.0, "rest"))
         self.counts["rest"] = 1
@@ -101,10 +119,31 @@ class Spontaneous:
         self.log.append((round(t_ms, 1), state))
         if state == "takeoff":
             self._pulse_ms = TAKEOFF_PULSE_MS
+        elif state in ("seek", "avoid"):
+            self.left_ms = 1e12  # held by the rule while its object is in range
+        elif state == "feed":
+            self.left_ms = self._feed_ms
         else:
             self.left_ms = self._draw(state)
 
-    def step(self, t_ms: float, *, airborne: bool = False) -> dict:
+    def _rule(self, t_ms: float, ctx: dict) -> tuple[str | None, dict | None, float, float]:
+        """(wanted state, target, bearing deg + left, distance mm) from the pose and objects, or (None, ...) when no rule applies."""
+        x, y, yaw = ctx["x_mm"], ctx["y_mm"], ctx["yaw_deg"]
+        best = None
+        for o in ctx["objects"]:
+            if o.get("kind") not in ("sugar", "coffee") or self._ignore.get(o["id"], -1.0) > t_ms:
+                continue
+            d = math.hypot(o["pos_mm"][0] - x, o["pos_mm"][1] - y)
+            rad = BITTER_RADIUS_MM if o["kind"] == "coffee" else SMELL_RADIUS_MM
+            if d <= rad and (best is None or (o["kind"] == "coffee", -d) > (best[0]["kind"] == "coffee", -best[2])):
+                best = (o, math.degrees(math.atan2(o["pos_mm"][1] - y, o["pos_mm"][0] - x)) - yaw, d)
+        if best is None:
+            return None, None, 0.0, 0.0
+        o, b, d = best
+        flip = 180.0 if o["kind"] == "coffee" else 0.0  # avoid: the wanted heading is directly away from the cube
+        return ("avoid" if o["kind"] == "coffee" else "seek"), o, (b + flip + 180.0) % 360.0 - 180.0, d
+
+    def step(self, t_ms: float, *, airborne: bool = False, ctx: dict | None = None) -> dict:
         """Advance one chunk. Returns {'rates': {group: Hz}, 'state', 'head_deg'}: group rates to inject this chunk and the
         head saccade target (deg, + left). While the body is in its takeoff / flight the machine waits for it to finish."""
         if self.mode == "off":
@@ -117,13 +156,43 @@ class Spontaneous:
             self._pulse_ms -= dt
             if self._pulse_ms <= -dt and not airborne:  # pulse over and the body is no longer busy: it has landed
                 self._enter(t_ms, "rest")
-        else:
+        elif self.state == "feed":
             self.left_ms -= dt
             if self.left_ms <= 0:
+                self._enter(t_ms, "rest")  # ethogram resumes; the cube is ignored for COOLDOWN_S (set at contact)
+        else:
+            self.left_ms -= dt
+            if self.left_ms <= 0 and self.state not in ("seek", "avoid"):
                 self._enter(t_ms, self._next(self.state))
-        rates: dict[str, float] = {}
+        bearing = dist = None
+        if ctx is not None and self.state != "takeoff":
+            for oid in ctx.get("touched", ()):
+                o = next((q for q in ctx["objects"] if q["id"] == oid), None)
+                if o and o["kind"] in ("sugar", "coffee") and self._ignore.get(oid, -1.0) <= t_ms and self.state != "feed":
+                    self._ignore[oid] = t_ms + (COOLDOWN_S if o["kind"] == "sugar" else BITTER_PAUSE_S + 3.0) * 1000.0
+                    self._target = o
+                    if o["kind"] == "sugar":
+                        self._feed_ms = self._rng.uniform(*FEED_S) * 1000.0
+                    else:
+                        self._feed_ms = BITTER_PAUSE_S * 1000.0
+                    self._feed_kind = o["kind"]
+                    self._enter(t_ms, "feed")
+            if self.state != "feed":
+                want, tgt, bearing, dist = self._rule(t_ms, ctx) if ctx["z_um"] < FLOOR_Z_UM else (None, None, 0.0, 0.0)
+                if want and self.state != want:
+                    self._enter(t_ms, want)
+                elif not want and self.state in ("seek", "avoid"):
+                    self._enter(t_ms, "walk")
+                self._target = tgt if want else self._target
         s = self.state
-        if s == "walk":
+        rates: dict[str, float] = {}
+        if s in ("seek", "avoid") and bearing is not None:
+            rates = {} if (s == "avoid" and abs(bearing) > 90.0) else {"dng100": INJECT_HZ["walk"]["dng100"]}  # avoid: turn first, walk once facing away
+            if abs(bearing) > TURN_DEADZONE_DEG:
+                rates["dna02_left" if bearing > 0 else "dna02_right"] = min(abs(bearing) * TURN_GAIN, 40.0)
+        elif s == "feed":
+            rates = {}
+        elif s == "walk":
             rates = dict(INJECT_HZ["walk"])
         elif s in ("turn_left", "turn_right"):
             rates = {"dng100": INJECT_HZ["turn"]["dng100"], ("dna02_left" if s == "turn_left" else "dna02_right"): INJECT_HZ["turn"]["dna02"]}
@@ -141,6 +210,8 @@ class Spontaneous:
             if self._saccade[1] > 0:
                 head = self._saccade[0]
                 self._saccade = (self._saccade[0], self._saccade[1] - dt)
+        self.food = {"state": s if s in ("seek", "feed", "avoid") else "none", "target": self._target["id"] if self._target and s in ("seek", "feed", "avoid") else None,
+                     "bearing_deg": None if bearing is None else round(bearing, 1), "distance_mm": None if dist is None else round(dist, 2), "note": FOOD_NOTE}
         return {"rates": rates, "state": s, "head_deg": head}
 
     def inject(self, rates: dict[str, float]) -> tuple[np.ndarray, np.ndarray]:
