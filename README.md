@@ -9,7 +9,7 @@ noun
 
 1. an LLM agent that lets you talk to a whole fruit-fly brain, neuron by neuron.
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.13+-3776AB?logo=python&logoColor=white)
 [![uv](https://img.shields.io/badge/managed%20with-uv-DE5FE9?logo=uv&logoColor=white)](https://docs.astral.sh/uv/)
 [![MCP](https://img.shields.io/badge/tools-MCP-000000)](https://modelcontextprotocol.io)
@@ -618,6 +618,22 @@ Work is tracked per feature in [`odd/tasks/`](odd/tasks/), with test-first commi
 
 ## License
 
-Code: [MIT](LICENSE). FlyWire data is not covered by this license (see [Data](#data)).
+Code: [GNU GPL v3.0 or later](LICENSE) (until 2026-11-18 the code was MIT; it moved to the GPL so it can build on
+GPL-licensed work such as the flybody flight data and the Zhao et al. eye map, and so everything built here stays open).
+FlyWire data is not covered by this license (see [Data](#data)).
 The fly body mesh in `web/public/fly-body.*` comes from NeuroMechFly v2 / flygym, Apache-2.0, see
 `web/public/LICENSE-neuromechfly.txt`.
+
+### Built on the work of
+
+This project only exists because these teams published their work openly. Please cite them:
+
+- **FlyWire** whole-brain connectome (Dorkenwald et al. 2024; Schlegel et al. 2024, Nature) and the FlyWire consortium.
+- **Whole-brain LIF model**: Shiu et al. 2024, Nature.
+- **BANC** brain and nerve cord connectome: Bates et al. (bioRxiv 10.1101/2025.07.31.667571), CC BY 4.0.
+- **NeuroMechFly v2 / flygym**: Wang-Chen et al. 2024, Nature Methods (Apache-2.0).
+- **flybody**: Vaxenburg et al. 2025, Nature (code Apache-2.0, data GPL-3.0-or-later).
+- **Eye map**: Zhao et al. 2025 (GPL-3.0); FlyWire column assignment (Codex).
+- **Walking CPG**: Pugliese et al. 2026, Nature. **Steering**: Rayshubskiy et al. (eLife). **Looming / giant fiber**:
+  Klapoetke et al. 2017; von Reyn et al. 2014; Ache et al. 2019. **DNp03**: Croke et al. 2025.
+- **T4/T5**: Maisak et al. 2013; Haag et al. 2016; Gruntman et al. 2018/2019; Strother et al. 2018.
