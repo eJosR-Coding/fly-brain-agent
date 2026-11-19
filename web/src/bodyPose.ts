@@ -10,7 +10,7 @@ export type LegId = `leg_${"lf" | "lm" | "lh"}_${"l" | "r"}`;
  *  of the three for a wing replaces its single "extension" angle; see bodyWorld.flightWingPose for the axis mapping. */
 export type WingFlightId = `wing_${"l" | "r"}_${"stroke" | "dev" | "rot"}`;
 export type JointId =
-  | "proboscis" | "antenna_l" | "antenna_r" | "wing_l" | "wing_r" | "haltere_l" | "haltere_r" | LegId | WingFlightId;
+  | "head" | "proboscis" | "antenna_l" | "antenna_r" | "wing_l" | "wing_r" | "haltere_l" | "haltere_r" | LegId | WingFlightId;
 
 export type Validation = "validated" | "illustrative" | "exploratory";
 

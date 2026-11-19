@@ -1033,6 +1033,30 @@
      30.0
     ],
     "source": "geometry (our choice)"
+   },
+   {
+    "id": "head",
+    "parts": [
+     "c_head",
+     "l_eye",
+     "r_eye"
+    ],
+    "pivot_um": [
+     560.0,
+     0.0,
+     1240.0
+    ],
+    "axis": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "rest_deg": 0,
+    "range_deg": [
+     -30.0,
+     30.0
+    ],
+    "source": "neck pivot and yaw axis: geometry (our choice); yaw + = left; the antennae and the proboscis follow it in the viewer"
    }
   ]
  }

@@ -1,7 +1,7 @@
 """The /ws/live WebSocket: one live brain+body session at a time (see flybrain.live for the session itself).
 
 Protocol (JSON text frames; close codes are 4xxx application codes, the reason says why):
-  client -> {"type":"start","preset":name|null,"rate_hz":n,["seed":int,"chunk_ms":50,"include_active":bool,"binary_frames":bool,"body_mode":"kinematic"|"physics","vision":"arena"|null,"background_hz":n]}
+  client -> {"type":"start","preset":name|null,"rate_hz":n,["seed":int,"chunk_ms":50,"include_active":bool,"binary_frames":bool,"body_mode":"kinematic"|"physics","vision":"arena"|null,"background_hz":n,"spont":"ethogram"|"off"]} (spont defaults to "ethogram": the labelled spontaneous drive is ON)
             {"type":"stimulus","preset":name|null | "rows":[atlas rows],"rate_hz":n}   (null/no rows clears the drive)
             {"type":"ping"} (keeps an idle session alive)   {"type":"stop"}
   server -> {"type":"started",...,"arena":{"kind":"glass_cube","interior_mm","bounds_mm":[xmin,xmax,ymin,ymax],"note"}}
@@ -116,7 +116,10 @@ def _start_options(msg: dict) -> dict:
     background = msg.get("background_hz", 0)
     if isinstance(background, bool) or not isinstance(background, (int, float)) or not 0 <= background <= MAX_BACKGROUND_HZ:
         raise BadRequest(f"background_hz must be a number within 0..{MAX_BACKGROUND_HZ:g}")
-    return {"seed": seed, "chunk_ms": float(chunk_ms), "include_active": msg.get("include_active", False),
+    spont = msg.get("spont", "ethogram")
+    if spont not in ("ethogram", "off", None):
+        raise BadRequest('spont must be "ethogram" or "off"')
+    return {"seed": seed, "spont": None if spont in ("off", None) else spont, "chunk_ms": float(chunk_ms), "include_active": msg.get("include_active", False),
             "binary_frames": msg.get("binary_frames", False), "body_mode": body_mode, "vision": vision,
             "background_hz": float(background)}
 

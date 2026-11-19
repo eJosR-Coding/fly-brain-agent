@@ -7,7 +7,7 @@
  *
  *  State is plain fields, not reactive: `tick` runs from requestAnimationFrame (see liveClient) and writes straight to
  *  the sinks. */
-import { clipMatrices, escapeAt, wingCycleAt, wingsAt, worldPose } from "./bodyClip";
+import { clipMatrices, escapeAt, headAt, wingCycleAt, wingsAt, worldPose } from "./bodyClip";
 import type { JointId } from "./bodyPose";
 import { escapePose, flightWingPose } from "./bodyWorld";
 import { objectToViewer, parseLiveChunk, parseLiveHeader, type LiveChunk, type LiveHeader } from "./liveFrames";
@@ -57,7 +57,7 @@ export interface LiveStatus {
   bufferedMs: number;
 }
 
-export interface LiveStartOptions { preset: string | null; rateHz: number; seed?: number; chunkMs?: number; vision?: "arena" }
+export interface LiveStartOptions { preset: string | null; rateHz: number; seed?: number; chunkMs?: number; vision?: "arena"; spont?: "ethogram" | "off" }
 
 export interface LiveDeps {
   url: string;
@@ -138,6 +138,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
   let shownT = -1;
   let sentEscape: boolean | null = null;
   let sentWings = false;
+  let sentHead: number | null = null;
   let lastCaption: string | null = null;
   let lastObjects: string | null = null;
   let info = { speedLabel: null as string | null, backend: null as string | null, fallback: null as string | null, bodyMode: null as string | null, surface: null as string | null };
@@ -181,7 +182,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
   };
   const reset = () => {
     playback.reset();
-    header = null; z0 = null; lastSeq = -1; stopped = false; lastTick = null; shownSeq = -1; shownT = -1; sentEscape = null; sentWings = false;
+    header = null; z0 = null; lastSeq = -1; stopped = false; lastTick = null; shownSeq = -1; shownT = -1; sentEscape = null; sentWings = false; sentHead = null;
     lastCaption = null; message = null; serverCaption = ""; note = "";
     info = { speedLabel: null, backend: null, fallback: null, bodyMode: null, surface: null };
     n.received = n.played = n.ignored = n.malformed = 0;
@@ -288,6 +289,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
         if (opts.seed !== undefined) cmd.seed = opts.seed;
         if (opts.chunkMs !== undefined) cmd.chunk_ms = opts.chunkMs;
         if (opts.vision) cmd.vision = opts.vision;
+        if (opts.spont) cmd.spont = opts.spont; // the server default is "ethogram" (spontaneous drive ON); "off" turns it off
         setState("starting");
         send(cmd);
       };
@@ -324,13 +326,17 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
       // the wingbeat is drawn on the display clock (WING_FLAP_HZ), not on simulated time: at the playback rate (and with whole
       // chunks skipped) a ~10-200 Hz beat aliases to a still wing. The recorded per-frame wings still decide whether it flies.
       const wing = wingsAt(clip, f.tSec) ? (wingCycleAt(clip, (nowMs / 1000) * WING_FLAP_HZ) ?? wingsAt(clip, f.tSec)) : null;
-      if (wing || sentWings) { guard("pose", () => deps.sinks.setPose(wing ? flightWingPose(wing) : {})); sentEscape = null; }
+      // head yaw (spontaneous saccades, turn lead, grooming sweep; ours): carried in every pose message while the chunk has it
+      const head = headAt(clip, f.tSec);
+      const withHead = (p: Record<string, number>) => (head === null ? p : { ...p, head });
+      if (wing || sentWings) { guard("pose", () => deps.sinks.setPose(withHead(wing ? flightWingPose(wing) : {}))); sentEscape = null; }
       sentWings = wing !== null;
       const esc = wing ? false : escapeAt(clip, f.tSec);
-      if (!wing && (esc !== (sentEscape ?? false) || sentEscape === null && esc)) {
-        guard("pose", () => deps.sinks.setPose(escapePose(esc)));
+      if (!wing && (esc !== (sentEscape ?? false) || sentEscape === null && esc || head !== sentHead)) {
+        guard("pose", () => deps.sinks.setPose(withHead(escapePose(esc))));
       }
       sentEscape = esc;
+      sentHead = head;
       return true;
     },
     dispose() {
