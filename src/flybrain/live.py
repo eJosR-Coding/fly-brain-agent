@@ -169,6 +169,7 @@ class LiveSession:
         self._speeds: deque[float] = deque(maxlen=SPEED_WINDOW)
         self._closed = False
         self._gf_hits: deque[bool] = deque(maxlen=GF_WINDOW_CHUNKS)
+        self._land_hits: deque[bool] = deque(maxlen=GF_WINDOW_CHUNKS)
         self._gf_quiet = 0  # chunks left of the refractory period
         self._threat_az: dict[str, float] = {}  # threat id -> azimuth of its start from the heading, for the jump direction
         # a cancelled websocket task leaves its worker thread finishing a chunk: close/step/stimulus never overlap
@@ -220,6 +221,14 @@ class LiveSession:
         self._gf_hits.clear()
         azs = [self._threat_az[o["id"]] for o in self.world.objects if o["kind"] == "threat" and o["id"] in self._threat_az]
         return (azs[-1] + 180.0) if azs else 180.0
+
+    def _land_trigger(self, landing_hz: float, airborne: bool) -> bool:
+        """Landing rule (ours, not validated): DNp07 + DNp10 > 0 Hz in >= 2 of the last 3 chunks, counted only while airborne."""
+        if not airborne:
+            self._land_hits.clear()
+            return False
+        self._land_hits.append(landing_hz > 0.0)
+        return sum(self._land_hits) >= GF_MIN_HITS
 
     def world_clear(self) -> int:
         with self._lock:
@@ -380,6 +389,9 @@ class LiveSession:
         with self._body_lock():
             if away is not None:
                 self.body.takeoff(away)
+            if hasattr(self.body, "set_air") and getattr(self.body, "busy", False):
+                self.body.set_air(dn.get("dng02", 0.0), dn.get("dnp03_left", 0.0), dn.get("dnp03_right", 0.0),
+                                  self._land_trigger(float(dn.get("dnp07", 0.0)) + float(dn.get("dnp10", 0.0)), self.body.state == "airborne"))
             if getattr(self.body, "takes_command", False):  # kinematic body: the exact pace and turn, not a clipped drive
                 out = self.body.advance(self.chunk_ms, sample.drive, sample.escape, pace=sample.pace, turn=sample.turn)
             else:
@@ -420,6 +432,8 @@ class LiveSession:
         }
         if "state" in out:
             msg["state"], msg["state_seq"] = out["state"], list(out["state_seq"])
+            if "air" in out:
+                msg["air"] = out["air"]
             if "wings" in out:
                 msg["wings"], msg["wings_note"] = np.asarray(out["wings"]).tolist(), out["wings_note"]
             msg["takeoff"] = {"triggered": away is not None, "gf_hits": list(self._gf_hits), "rule": GF_RULE_NOTE, "note": getattr(self.body, "takeoff_note", None)}

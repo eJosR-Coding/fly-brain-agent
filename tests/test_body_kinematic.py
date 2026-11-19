@@ -254,3 +254,33 @@ def test_flight_asset_carries_its_provenance():
     prov = f.doc["provenance"]
     assert prov["doi"] == "10.25378/janelia.25309105.v4" and prov["license"] == "GPL-3.0-or-later"
     assert {c["kind"] for c in f.clips} == {"straight", "left", "right"} and f.wing.shape == (100, 3)
+
+
+def _air(asym_l, asym_r, dng02=0.0, land_at_s=None, chunks=200):
+    b = KinematicBody()
+    run(b, 2, pace=0.0)
+    b.takeoff(180.0, "straight")
+    outs = []
+    for i in range(chunks):
+        if b.state in ("airborne", "takeoff"):
+            b.set_air(dng02, asym_l, asym_r, land_at_s is not None and i * 0.05 >= land_at_s)
+        outs.append(b.advance(50.0, [0.0, 0.0], False, pace=0.0, turn=0.0))
+    return b, outs
+
+
+def test_brain_flight_silent_dns_keep_the_pattern_and_the_dn_asymmetry_steers():
+    _, silent = _air(0.0, 0.0, chunks=40)
+    w = np.concatenate([o["wings"] for o in silent if "wings" in o])
+    assert np.allclose(w[:, :3], w[:, 3:])  # no DN activity: both wings alike
+    _, steer = _air(50.0, 0.0, dng02=50.0, chunks=40)
+    w2 = np.concatenate([o["wings"] for o in steer if "wings" in o])
+    assert np.ptp(w2[:, 0]) > np.ptp(w2[:, 3])  # left DNp03 raises the left stroke amplitude, lowers the right
+    yaw = lambda outs: outs[-1]["thorax"]["yaw_deg"][-1]
+    assert yaw(steer) < yaw(silent) - 5  # a left DNp03 turns the fly right (Croke's contralateral saccade)
+
+
+def test_brain_flight_lands_on_the_landing_dns_or_the_max_airtime():
+    b, outs = _air(0.0, 0.0, land_at_s=1.0, chunks=100)
+    assert b.landing_cause == "landing_dn" and outs[-1]["state"] == "standing"
+    b, outs = _air(0.0, 0.0, chunks=220)  # silent landing neurons: the labelled fallback
+    assert b.landing_cause == "max_airtime" and outs[-1]["state"] == "standing"

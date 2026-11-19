@@ -20,6 +20,12 @@ DN_GROUPS = {
     "dna02_left": ("DNa02", "left"),
     "dna02_right": ("DNa02", "right"),
     "dnp01": ("DNp01", None),
+    # flight readouts (F3): DNg02 is a population of subtypes DNg02_a..h ("*" = every subtype); DNp03 per side; the landing pair DNp07 / DNp10
+    "dng02": ("DNg02*", None),
+    "dnp03_left": ("DNp03", "left"),
+    "dnp03_right": ("DNp03", "right"),
+    "dnp07": ("DNp07", None),
+    "dnp10": ("DNp10", None),
 }
 
 
@@ -30,7 +36,7 @@ def dn_group_rows(atlas) -> dict[str, np.ndarray]:
     side = n["side"].to_numpy(dtype=object)
     out = {}
     for name, (ct, sd) in DN_GROUPS.items():
-        mask = cell_type == ct
+        mask = np.array([str(c).startswith(ct[:-1]) for c in cell_type]) if ct.endswith("*") else cell_type == ct
         if sd is not None:
             mask &= side == sd
         out[name] = np.flatnonzero(mask).astype(np.int64)
