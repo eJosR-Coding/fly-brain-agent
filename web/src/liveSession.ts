@@ -7,7 +7,7 @@
  *
  *  State is plain fields, not reactive: `tick` runs from requestAnimationFrame (see liveClient) and writes straight to
  *  the sinks. */
-import { clipMatrices, escapeAt, wingsAt, worldPose } from "./bodyClip";
+import { clipMatrices, escapeAt, wingCycleAt, wingsAt, worldPose } from "./bodyClip";
 import type { JointId } from "./bodyPose";
 import { escapePose, flightWingPose } from "./bodyWorld";
 import { parseLiveChunk, parseLiveHeader, type LiveChunk, type LiveHeader } from "./liveFrames";
@@ -109,6 +109,9 @@ export function closeMessage(code: number, reason: string, state: LiveState | "l
 }
 
 /** The line under the body while a session runs: only what the server reported, plus the server's own caption. */
+/** display flapping rate of a flying fly (Hz of wall time) */
+export const WING_FLAP_HZ = 20;
+
 export function liveCaption(s: Pick<LiveStatus, "speedLabel" | "backend" | "fallback" | "bodyMode" | "dropped" | "serverCaption"> & { worldBlocked?: boolean; flightNote?: string }): string {
   const parts = ["live", s.speedLabel ?? "waiting for the first chunk"];
   if (s.backend) parts.push(`brain: ${s.backend}`);
@@ -120,7 +123,7 @@ export function liveCaption(s: Pick<LiveStatus, "speedLabel" | "backend" | "fall
 }
 
 export function createLiveSession(deps: LiveDeps): LiveSession {
-  const playback = createPlayback<LiveChunk>({ targetMs: 100, maxChunks: 6 });
+  const playback = createPlayback<LiveChunk>({ targetMs: 100, maxChunks: 8 });
   let state: LiveState = "idle";
   let message: string | null = null;
   let socket: SocketLike | null = null;
@@ -234,7 +237,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
         n.received++;
         playback.push(parsed.chunk);
         info = { speedLabel: parsed.chunk.info.speedLabel, backend: parsed.chunk.info.backend ?? info.backend, fallback: parsed.chunk.info.fallback, bodyMode: parsed.chunk.info.bodyMode, worldBlocked: parsed.chunk.info.worldBlocked };
-        flightNote = typeof msg.wings_note === "string" ? `flight (not validated): ${msg.wings_note}` : "";
+        flightNote = typeof msg.wings_note === "string" ? `flight (not validated): ${msg.wings_note}; shown flapping at ${WING_FLAP_HZ} Hz so it is visible (the real wingbeat is ~200 Hz)` : "";
         refreshCaption();
         const wo = (msg.world as { objects?: unknown } | undefined)?.objects;
         if (Array.isArray(wo)) {
@@ -313,12 +316,14 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
       const f = playback.advance(dt);
       if (!f) return true;
       const { clip, seq } = f.item;
-      if (seq === shownSeq && f.tSec === shownT) return true; // held: nothing moved
+      if (seq === shownSeq && f.tSec === shownT && !wingsAt(clip, f.tSec)) return true; // held: nothing moved (flying wings keep flapping)
       if (seq !== shownSeq) n.played++;
       shownSeq = seq; shownT = f.tSec;
       guard("frame", () => deps.sinks.setFrame(clipMatrices(clip, f.tSec)));
       guard("world", () => deps.sinks.setWorld(worldPose(clip, f.tSec)));
-      const wing = wingsAt(clip, f.tSec);
+      // the wingbeat is drawn on the display clock (WING_FLAP_HZ), not on simulated time: at the playback rate (and with whole
+      // chunks skipped) a ~10-200 Hz beat aliases to a still wing. The recorded per-frame wings still decide whether it flies.
+      const wing = wingsAt(clip, f.tSec) ? (wingCycleAt(clip, (nowMs / 1000) * WING_FLAP_HZ) ?? wingsAt(clip, f.tSec)) : null;
       if (wing || sentWings) { guard("pose", () => deps.sinks.setPose(wing ? flightWingPose(wing) : {})); sentEscape = null; }
       sentWings = wing !== null;
       const esc = wing ? false : escapeAt(clip, f.tSec);

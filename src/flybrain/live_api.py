@@ -43,6 +43,7 @@ DEFAULT_IDLE_S = 300.0
 BUSY_WAIT_S = 3.0  # a new start waits at most this long for the previous session's teardown
 MAX_RATE_HZ = 10_000.0
 MAX_STIM_ROWS = 200_000
+LEAD_S = 0.25  # a session that outruns real time waits: the viewer buffers ~6 chunks and would drop the surplus
 CODE_BAD_REQUEST, CODE_ORIGIN, CODE_IDLE, CODE_BUSY, CODE_UNAVAILABLE = 4400, 4403, 4408, 4409, 4503
 
 
@@ -248,6 +249,7 @@ async def _stream(ws: WebSocket, app: FastAPI, session, idle_s: float) -> None:
             gone.set()
 
     reader = asyncio.create_task(read())
+    t_start = time.monotonic()
     try:
         while not gone.is_set():
             while not commands.empty():
@@ -269,6 +271,11 @@ async def _stream(ws: WebSocket, app: FastAPI, session, idle_s: float) -> None:
             await ws.send_json(msg)
             if blob is not None:
                 await ws.send_bytes(blob)
+            sim_s = getattr(session, "t_ms", None)
+            if isinstance(sim_s, (int, float)):  # faster than real time: stay at most LEAD_S ahead (slower is never padded)
+                ahead = sim_s / 1000.0 - (time.monotonic() - t_start) - LEAD_S
+                if ahead > 0:
+                    await asyncio.sleep(ahead)
             await asyncio.sleep(0)  # let the reader task run between chunks
     finally:
         reader.cancel()

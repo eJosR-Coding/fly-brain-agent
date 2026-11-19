@@ -235,6 +235,8 @@ def test_takeoff_flies_a_real_clip_then_descends_lands_and_stands():
     w = np.concatenate([o["wings"] for o in outs if "wings" in o])
     assert w.shape[1] == 6 and np.ptp(w[:, 0]) > 100  # stroke sweeps > 100 deg (flybody wingbeat), both wings alike
     assert np.allclose(w[:, :3], w[:, 3:]) and "wings" not in outs[-1]  # wings folded at the end
+    cyc = max((o["wing_cycle"] for o in outs if "wing_cycle" in o), key=lambda c: np.ptp(c[:, 0]))  # one whole wingbeat per chunk, for the viewer's own flap rate
+    assert cyc.shape == (16, 6) and np.ptp(cyc[:, 0]) > 100
 
 
 def test_flight_stays_inside_the_glass_and_legs_tuck():
