@@ -41,7 +41,7 @@ def test_rates_are_spikes_per_neuron_trial_and_second():
 
 def test_silent_groups_are_zero_traces_and_missing_cell_types_are_skipped():
     out = br.dn_readouts(record([8], [[5, 5]]), ATLAS)  # only a non-DN neuron spiked
-    assert {r["name"] for r in out} == set(br.DN_GROUPS) and all(not any(r["hz"]) for r in out)
+    assert {r["name"] for r in out} == {"dng100", "dna01_left", "dna01_right", "dna02_left", "dna02_right", "dnp01"} and all(not any(r["hz"]) for r in out)
     no_dn = SimpleNamespace(neurons=pd.DataFrame({"cell_type": ["ORN"], "side": ["left"]}))
     assert br.dn_readouts(record([0], [[1]]), no_dn) == []
 

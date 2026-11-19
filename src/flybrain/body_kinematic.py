@@ -73,6 +73,15 @@ TAKEOFF_NOTE = ("takeoff + flight (ours, not validated): short-mode jump after t
                 "(flybody dataset, Vaxenburg et al. 2025, GPL-3.0+) played "
                 f"{FLIGHT_SLOWDOWN:g}x slower with the path scaled x{FLIGHT_SCALE_MM / 10:g} to fit the cube, a simple eased descent and a landing. "
                 f"The wingbeat (~200 Hz in the data) is replayed at {WING_DISPLAY_HZ:g} Hz, a stated slowdown; legs tucked; no flight physics")
+# Brain-driven flight (F3, ours, not validated). Rates are mean Hz per neuron of the DN group; at 0 Hz everything is the F2 pattern.
+AIR_SMOOTH_S = 0.05  # first-order smoothing of the brain's flight command (a stated choice)
+DNG02_REF_HZ, DNG02_GAIN = 50.0, 0.30  # stroke amplitude x (1 + 0.30 * min(rate / 50 Hz, 1)): direction from Namiki 2022, numbers ours
+DNP03_REF_HZ, DNP03_AMP_GAIN = 50.0, 0.30  # asymmetry (L - R) / 50 Hz in [-1, 1]; ipsilateral stroke x (1 + 0.3 a), contralateral x (1 - 0.3 a): direction Croke 2025
+DNP03_YAW_DEG_S = 90.0  # yaw rate = -90 deg/s * asymmetry (a left DNp03 turns the fly right: Croke's contralateral saccade); the size is ours
+LAND_MIN_AIR_S = 0.5  # the landing DNs are ignored for the first 0.5 s of flight (the takeoff itself drives them); ours
+MAX_AIR_S = 6.0  # max-airtime fallback: the fly lands after 6 s of flight even if the landing neurons never fire (ours)
+AIR_NOTE = ("brain-driven flight (ours, not validated): DNg02 -> stroke amplitude (Namiki 2022), DNp03 left/right -> per-wing amplitude and "
+            "yaw (Croke 2025), landing DNs DNp07/DNp10 -> landing (Croke 2025 names them landing neurons); every gain and threshold is ours")
 MIDDLE_LEGS = ("lm", "rm")
 
 
@@ -264,6 +273,10 @@ class KinematicBody:
         self._wing_cycles = 0.0
         self._tuck = 0.0
         self._wing_w = 0.0
+        self._air: dict | None = None  # the brain's flight command (set_air); None = F2 behaviour (clip end -> timed descent)
+        self._air_f = {"amp": 1.0, "asym": 0.0}  # smoothed command
+        self._yaw_steer = 0.0  # yaw (rad) accumulated by DNp03 steering in the air
+        self.landing_cause: str | None = None
         lib = self.lib
         self._leg_idx = [i for i, b in enumerate(lib.bodies) if b[:2] in lib.legs]
         self._leg_cox = [next(j for j, b in enumerate(lib.bodies) if b == lib.bodies[i][:3] + "coxa") for i in self._leg_idx]
@@ -314,8 +327,16 @@ class KinematicBody:
         self._to_t_ms, self._air_ms, self._land_ms, self._desc_s = 0.0, 0.0, 0.0, 0.0
         self._fl_prev, self._fl_vel, self._fl_lift_mm = (0.0, 0.0), (0.0, 0.0), 0.0
         self._wing_cycles = self._tuck = self._wing_w = 0.0
+        self._air, self._air_f, self._yaw_steer, self.landing_cause = None, {"amp": 1.0, "asym": 0.0}, 0.0, None
         self.state = "takeoff"
         return True
+
+    def set_air(self, dng02_hz: float, dnp03_left_hz: float, dnp03_right_hz: float, land: bool) -> None:
+        """The brain's flight command for the next chunk (see the F3 constants): DNg02 sets the stroke amplitude, the DNp03 left - right
+        asymmetry sets the per-wing amplitude and the yaw rate, `land` (the landing DNs crossed the live session's rule) lands the fly."""
+        amp = 1.0 + DNG02_GAIN * min(max(dng02_hz / DNG02_REF_HZ, 0.0), 1.0)
+        asym = min(max((dnp03_left_hz - dnp03_right_hz) / DNP03_REF_HZ, -1.0), 1.0)
+        self._air = {"amp": amp, "asym": asym, "land": bool(land)}
 
     def _flight_at(self, t_s: float) -> tuple[float, float, float, float]:
         """(x, y mm in the heading frame, z mm above the floor, yaw rad relative) of the clip at recorded time t_s."""
@@ -331,7 +352,13 @@ class KinematicBody:
         i = int(u) % len(pat)
         a = pat[i] + (pat[(i + 1) % len(pat)] - pat[i]) * (u - int(u))
         deg = np.degrees(a) * self._wing_w
-        return np.concatenate([deg, deg])
+        left, right = deg.copy(), deg.copy()
+        if self._air is not None:  # stroke amplitude about the mean stroke: DNg02 (both wings), DNp03 asymmetry (opposite on the two wings)
+            m = np.degrees(pat[:, 0].mean()) * self._wing_w
+            amp, asym = self._air_f["amp"], self._air_f["asym"]
+            left[0] = m + (deg[0] - m) * amp * (1.0 + DNP03_AMP_GAIN * asym)
+            right[0] = m + (deg[0] - m) * amp * (1.0 - DNP03_AMP_GAIN * asym)
+        return np.concatenate([left, right])
 
     def _takeoff_frame(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float, np.ndarray]:
         """One 5 ms frame of takeoff / flight / descent / landing: (pos, quat, contact, lift_um, dx_mm, dy_mm, wings).
@@ -353,7 +380,12 @@ class KinematicBody:
             self._tuck = ramp
             self._wing_w = ramp
             turn = (self._fl_head - self._fl_yaw0 + math.pi) % (2 * math.pi) - math.pi
-            self.yaw_rad = self._fl_yaw0 + turn * _smooth(self._air_ms / FLIGHT_TURN_MS) + yaw_rel
+            if self._air is not None:
+                k = min(1.0, FRAME_S / AIR_SMOOTH_S)
+                for key in ("amp", "asym"):
+                    self._air_f[key] += (self._air[key] - self._air_f[key]) * k
+                self._yaw_steer += math.radians(-DNP03_YAW_DEG_S * self._air_f["asym"]) * FRAME_S
+            self.yaw_rad = self._fl_yaw0 + turn * _smooth(self._air_ms / FLIGHT_TURN_MS) + yaw_rel + self._yaw_steer
             ch, sh = self._to_dir
             tx, ty = x * ch - y * sh, x * sh + y * ch
             dx, dy = tx - self._fl_prev[0], ty - self._fl_prev[1]
@@ -361,8 +393,14 @@ class KinematicBody:
             self._fl_lift_mm = min(z * _smooth(self._air_ms / 100.0), FLIGHT_CEILING_MM)
             lift = self._fl_lift_mm * 1000.0
             ext = 1.0 - ramp
-            if t_rec >= (len(self._clip["x"]) - 1) / self._flight.doc["sample_rate_hz"]:
-                self.state, self._desc_s = "descending", 0.0
+            if self._air is None:
+                clip_end = t_rec >= (len(self._clip["x"]) - 1) / self._flight.doc["sample_rate_hz"]
+                cause = "clip_end" if clip_end else None
+            else:  # brain-driven: hover at the end of the clip until the landing DNs fire (or the max airtime)
+                s_air = self._air_ms / 1000.0
+                cause = ("landing_dn" if self._air["land"] and s_air >= LAND_MIN_AIR_S else "max_airtime" if s_air >= MAX_AIR_S else None)
+            if cause:
+                self.state, self._desc_s, self.landing_cause = "descending", 0.0, cause
         elif self.state == "descending":
             self._desc_s += FRAME_S
             u = self._desc_s / DESCENT_S
@@ -370,6 +408,7 @@ class KinematicBody:
             lift = self._fl_lift_mm * (1.0 - e) * 1000.0
             dx, dy = (v * (1.0 - e) for v in self._fl_vel)
             self._tuck = 1.0 - _smooth((self._desc_s - (DESCENT_S - 0.15)) / 0.15)  # legs come down before touchdown
+            ext = 1.0 - self._tuck  # and the middle legs extend for it (reverse of the takeoff push)
             if u >= 1.0:
                 self.state, self._land_ms, lift = "landed", 0.0, 0.0
         else:  # landed
@@ -517,6 +556,9 @@ class KinematicBody:
             "thorax": {"pos_um": thorax, "yaw_deg": np.round(yaw, 3)},
             "body_mode": self.mode,
         }
+        if self._air is not None:
+            out["air"] = {"amp": round(self._air_f["amp"], 3), "asym": round(self._air_f["asym"], 3), "land": self._air["land"],
+                          "landing_cause": self.landing_cause, "note": AIR_NOTE}
         if wings.any():
             out["wings"] = np.round(wings, 2)
             out["wings_note"] = WING_NOTE
