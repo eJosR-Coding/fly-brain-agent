@@ -396,7 +396,10 @@ class LiveSession:
         self._touched = self.world.touching(*self._pose)
         head_deg = 0.0
         if self.spont is not None:
-            sp = self.spont.step(self.t_ms, airborne=bool(getattr(self.body, "busy", False)))
+            pos, yaw = self._pose
+            ctx = {"x_mm": float(pos[-1][0]) / 1000.0, "y_mm": float(pos[-1][1]) / 1000.0, "z_um": float(pos[-1][2]), "yaw_deg": float(yaw[-1]),
+                   "objects": self.world.objects, "touched": self._touched}
+            sp = self.spont.step(self.t_ms, airborne=bool(getattr(self.body, "busy", False)), ctx=ctx)
             self._spont_rates = sp["rates"]
             self._spont_sig = tuple(sorted(sp["rates"].items()))
             head_deg = float(sp["head_deg"])
@@ -502,7 +505,7 @@ class LiveSession:
             resp = {k: msg["dn"].get(k, 0.0) for k in ("dng100", "dna02_left", "dna02_right", "groom", "dnp01") if k in msg["dn"]}
             msg["spont"] = {"mode": self.spont.mode, "state": self.spont.state, "note": spontaneous.NOTE, "injected_hz": inj, "response_hz": resp,
                             "groom_rule": f"body grooms while the grooming DNs (DNg10/11/12) average >= {spontaneous.GROOM_ON_HZ:g} Hz (off below {spontaneous.GROOM_OFF_HZ:g}); ours",
-                            "counts": dict(self.spont.counts)}
+                            "counts": dict(self.spont.counts), "food": dict(self.spont.food)}
         if self.touch_rows:
             msg["senses"]["touch"] = {"sides": touch_now, "driven_cells": sum(len(self.touch_rows.get(s, ())) for s in touch_now),
                                       "rate_hz": TOUCH_HZ if touch_now else 0.0, "note": TOUCH_NOTE,

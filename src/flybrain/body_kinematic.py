@@ -44,6 +44,7 @@ FORMAT = "fly-motion-library/1"
 BINS = 50  # playback table: 3 bins per 5 ms frame at 12 Hz
 GROOM_STOPS_BELOW_PACE = 0.15  # a grooming request stops the legs unless the walking command is stronger than this (ours)
 RAMP_S = 0.1  # walking <-> standing transition
+MIN_WALK_PACE = 0.02  # below this pace the fly stands (a residual turn rate of a fraction of a Hz must not keep the legs stepping)
 CAPTION = "Body: recorded physics gait (NeuroMechFly walking controller), blended live from the brain's drive; not a physics simulation."
 WORLD_NOTE = ("World rule (not the brain): the fly's adhesive pads let it walk on any glass surface; at an edge it pitches onto the "
               "next surface (the heading keeps its tangential part, the into-wall part becomes up).")
@@ -551,7 +552,7 @@ class KinematicBody:
             t = 0.0 if turn is None else float(turn)
             if not (math.isfinite(p) and math.isfinite(t)):
                 raise ValueError("pace and turn must be finite")
-            return min(max(p, 0.0), 1.0), min(max(t, -1.0), 1.0), p > 0.0
+            return min(max(p, 0.0), 1.0), min(max(t, -1.0), 1.0), p > MIN_WALK_PACE
         base = float(drive.mean())
         if base <= 1e-9:
             return 0.0, 0.0, False

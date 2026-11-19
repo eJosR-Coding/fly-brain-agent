@@ -66,3 +66,36 @@ def test_head_flying_is_zero():
     for _ in range(100):
         h.step(0.005, 0.0, True)
     assert abs(h.deg) < 0.5
+
+
+def _ctx(objects, touched=(), x=0.0, y=0.0, yaw=0.0):
+    return {"x_mm": x, "y_mm": y, "z_um": 1000.0, "yaw_deg": yaw, "objects": objects, "touched": list(touched)}
+
+
+def _sp():
+    rows = {k: np.arange(2) for k in ("dng100", "dna02_left", "dna02_right", "groom", "dnp01")}
+    return spontaneous.Spontaneous(rows, seed=1)
+
+
+def test_seek_turns_toward_sugar_and_feed_stops_then_cooldown():
+    sp = _sp()
+    sugar = {"id": "sugar1", "kind": "sugar", "pos_mm": [5.0, 8.0, 0.75]}  # about 58 deg to the left
+    out = sp.step(0.0, ctx=_ctx([sugar]))
+    assert out["state"] == "seek" and "dna02_left" in out["rates"] and "dna02_right" not in out["rates"] and out["rates"]["dng100"] > 0
+    assert sp.food["target"] == "sugar1"
+    out = sp.step(50.0, ctx=_ctx([sugar], touched=["sugar1"]))
+    assert out["state"] == "feed" and out["rates"] == {}
+    for i in range(1, 400):
+        out = sp.step(50.0 * (i + 1), ctx=_ctx([sugar]))
+        if out["state"] != "feed":
+            break
+    assert 5.0 <= 50.0 * i / 1000 <= 15.5 and out["state"] != "seek"  # cooldown: the cube is ignored
+
+
+def test_coffee_turns_away_and_touch_pauses():
+    sp = _sp()
+    coffee = {"id": "coffee1", "kind": "coffee", "pos_mm": [6.0, 0.0, 0.75]}
+    out = sp.step(0.0, ctx=_ctx([coffee]))
+    assert out["state"] == "avoid" and ("dna02_left" in out["rates"] or "dna02_right" in out["rates"])
+    out = sp.step(50.0, ctx=_ctx([coffee], touched=["coffee1"]))
+    assert out["state"] == "feed" and out["rates"] == {}
