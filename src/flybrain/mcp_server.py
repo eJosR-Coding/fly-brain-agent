@@ -302,10 +302,10 @@ def build_server(
 
     @server.tool()
     async def world_add(item: str = "sugar", ahead_mm: float = 3, left_mm: float = 0) -> dict:
-        """Drop a sugar or coffee cube into the RUNNING live glass cube, ahead_mm/left_mm from the fly. Touching it (mouth within 1 mm) drives taste neurons: sugar=sweet, coffee=bitter (caffeine proxy, ours)."""
+        """Drop a sugar or coffee cube into the RUNNING live cube, ahead_mm/left_mm from the fly. A labelled rule (ours) makes a floor-walking fly seek sugar within 40 mm and avoid coffee within 10 mm via its turn/walk neurons; mouth contact drives taste neurons (sugar=sweet, coffee=bitter proxy) and it feeds."""
         session = _live()
         obj = await asyncio.to_thread(session.world_add, item, ahead_mm, left_mm)
-        return {"added": obj, "note": "ours, not validated; the fly's reaction is the brain's"}
+        return {"added": obj, "note": "seek/avoid/feed timing is our rule (not validated); taste -> MN9 is the brain's"}
 
     @server.tool()
     async def world_threat(side: str = "front") -> dict:
