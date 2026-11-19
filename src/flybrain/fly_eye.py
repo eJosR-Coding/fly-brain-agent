@@ -186,6 +186,22 @@ class Box:
     lum: float = 0.1
 
 
+@dataclass(frozen=True)
+class MovingSphere:
+    """A dark sphere flying on a straight line at constant velocity (mm, arena frame). Alive for `life_ms` after `t0_ms`."""
+
+    p0: tuple[float, float, float]
+    vel_mm_s: tuple[float, float, float]
+    radius_mm: float
+    t0_ms: float
+    life_ms: float = float("inf")
+    stop_ms: float = float("inf")  # it stops moving this long after the spawn (and stays until life_ms)
+
+
+LOOM_EDGE_DEG = 1.0  # soft edge of a disc, same as the calibration sweep's looming disc
+LOOM_DARKENING = 0.9  # luminance x (1 - 0.9 * mask) inside the disc, same as the calibration
+
+
 class ArenaScene:
     """The glass cube (interior_mm wide, centred on the start, floor at z = 0) as luminance in [0, 1] along rays."""
 
@@ -197,6 +213,8 @@ class ArenaScene:
         self.background = BACKGROUND
         self._lo = np.array([-self.half, -self.half, 0.0])
         self._hi = np.array([self.half, self.half, self.height])
+        self.moving: list[MovingSphere] = []  # set per chunk by the caller together with `t_ms` (the chunk's start time)
+        self.t_ms = 0.0
 
     def luminance(self, eye_pos_mm, yaw_deg, dirs_head) -> np.ndarray:
         """(F, n) luminance seen from eye positions (F, 3) mm with headings yaw_deg (F,) along head-frame dirs (n, 3)."""
@@ -241,7 +259,27 @@ class ArenaScene:
             tmin = np.where(dw == 0, np.where(inside_slab, -np.inf, np.inf), np.minimum(t1, t2)).max(axis=-1)
             tmax = np.where(dw == 0, np.where(inside_slab, np.inf, -np.inf), np.maximum(t1, t2)).min(axis=-1)
             lum = np.where((tmax >= np.maximum(tmin, 0.0)) & (np.maximum(tmin, 0.0) < t), box.lum, lum)
+        for sph in self.moving:
+            lum = self._sphere(lum, o, dw, t, sph)
         return lum
+
+    def _sphere(self, lum, o, dw, t, sph: MovingSphere) -> np.ndarray:
+        """Darken the rays that fall inside the angular disc of a moving sphere (the calibration's soft-edged disc model:
+        half-angle asin(r / d), 1 deg sigmoid edge, luminance x (1 - 0.9 mask)); frame f is at t_ms + 5 ms (f + 1)."""
+        F = dw.shape[0]
+        te = self.t_ms + FRAME_MS * (np.arange(F) + 1.0) - sph.t0_ms  # (F,) ms since spawn
+        alive = (te >= 0.0) & (te <= sph.life_ms)
+        if not alive.any():
+            return lum
+        c = np.asarray(sph.p0, float)[None, :] + np.asarray(sph.vel_mm_s, float)[None, :] * (np.minimum(te, sph.stop_ms)[:, None] / 1000.0)  # (F, 3)
+        oc = c[:, None, :] - o  # (F, 1, 3) eye -> centre
+        d = np.linalg.norm(oc, axis=-1)  # (F, 1)
+        u = oc / np.maximum(d, 1e-9)[..., None]
+        ang = np.arccos(np.clip((dw * u).sum(axis=-1), -1.0, 1.0))  # (F, n)
+        theta = np.arcsin(np.clip(sph.radius_mm / np.maximum(d, 1e-9), 0.0, 1.0))  # (F, 1) half-angle
+        mask = 1.0 / (1.0 + np.exp((ang - theta) / np.radians(LOOM_EDGE_DEG)))
+        mask = mask * alive[:, None] * (d < t)  # not behind the glass
+        return lum * (1.0 - LOOM_DARKENING * mask)
 
 
 # -- motion ----------------------------------------------------------------------------------------------------

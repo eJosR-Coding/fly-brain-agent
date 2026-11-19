@@ -364,3 +364,30 @@ def test_touch_sides_follow_the_wall_relative_to_the_heading():
     assert live.touch_sides(["x_min"], 0.0) == []  # wall behind: no antenna
     assert live.touch_sides(["x_max"], 90.0) == ["right"]  # heading +y, wall at +x is on its right
     assert live.touch_sides([], 0.0) == []
+
+
+def test_world_threat_is_a_moving_object_and_leaves_after_its_life():
+    from flybrain import live_world
+
+    s, *_ = make()
+    o = s.world_threat("right")
+    assert o["kind"] == "threat" and o["size_mm"] == 2 * live_world.THREAT_R_MM
+    first = s.step()["world"]["objects"][0]["pos_mm"]
+    assert s.step()["world"]["objects"][0]["pos_mm"] != first  # it moves
+    with pytest.raises(ValueError):
+        s.world_threat("up")
+    for _ in range(40):
+        msg = s.step()
+    assert msg["world"]["objects"] == []  # life over (~1.1 s)
+    assert "state" not in msg  # the fake body has no takeoff
+
+
+def test_moving_sphere_darkens_the_rays_it_covers_and_grows():
+    from flybrain import fly_eye
+
+    scene = fly_eye.ArenaScene()
+    dirs = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    base = scene.luminance(np.array([[0.0, 0.0, 1.3]]), np.zeros(1), dirs)
+    scene.moving = [fly_eye.MovingSphere((10.0, 0.0, 1.3), (-25.0, 0.0, 0.0), 1.0, 0.0)]
+    lum = scene.luminance(np.array([[0.0, 0.0, 1.3]]), np.zeros(1), dirs)
+    assert lum[0, 0] < 0.2 * base[0, 0] and abs(lum[0, 1] - base[0, 1]) < 1e-6

@@ -104,6 +104,15 @@ def arena_spec(interior_mm: float = ARENA_INTERIOR_MM) -> dict:
     return {"kind": "glass_cube", "interior_mm": float(interior_mm), "bounds_mm": [-h, h, -h, h], "note": ARENA_NOTE}
 
 
+# Giant-fibre takeoff trigger (OUR rule; calibrated on the stored exp-cl chunks, not validated): the combined DNp01 rate of a 50 ms
+# chunk counts as a "hit" when > 0 Hz; takeoff fires when at least GF_MIN_HITS of the last GF_WINDOW_CHUNKS chunks are hits.
+# 0 false alarms in 35 walking / rest runs (a, b, c, incl. blind and uniform-floor controls: at most 1 hit chunk in any 3);
+# 10/10 loom runs (r/v 20 and 40 ms) trigger, mean 840 / 790 ms after the loom starts (the loom lasts 800 ms).
+GF_WINDOW_CHUNKS = 3
+GF_MIN_HITS = 2
+GF_REFRACTORY_CHUNKS = 10  # no new takeoff for 500 ms after one finished
+GF_RULE_NOTE = (f"takeoff trigger (ours, not validated): DNp01 > 0 Hz in >= {GF_MIN_HITS} of the last {GF_WINDOW_CHUNKS} chunks of 50 ms")
+
 NOTE = ("Live mode runs as fast as the computer allows and reports its real speed (speed_factor): it is NOT real time "
         "unless it says so. The brain is the connectome model, the DN -> walking-drive mapping is OUR choice "
         "(not published) and the body is NeuroMechFly, not the connectome.")
@@ -159,6 +168,9 @@ class LiveSession:
         self._stimulus: tuple[list[int] | None, float] = (None, 0.0)
         self._speeds: deque[float] = deque(maxlen=SPEED_WINDOW)
         self._closed = False
+        self._gf_hits: deque[bool] = deque(maxlen=GF_WINDOW_CHUNKS)
+        self._gf_quiet = 0  # chunks left of the refractory period
+        self._threat_az: dict[str, float] = {}  # threat id -> azimuth of its start from the heading, for the jump direction
         # a cancelled websocket task leaves its worker thread finishing a chunk: close/step/stimulus never overlap
         self._lock = threading.RLock()
 
@@ -180,6 +192,34 @@ class LiveSession:
             wx = x + ahead_mm * np.cos(a) - left_mm * np.sin(a)
             wy = y + ahead_mm * np.sin(a) + left_mm * np.cos(a)
             return self.world.add(item, float(wx), float(wy))
+
+    def world_threat(self, side: str = "front") -> dict:
+        """Throw a dark sphere at the fly's head from `side` (left | right | front). ValueError on bad input."""
+        with self._lock:
+            pos, yaw = self._pose
+            head = (float(pos[-1][0]) / 1000.0 + fly_eye.HEAD_FORWARD_MM * np.cos(np.radians(float(yaw[-1]))),
+                    float(pos[-1][1]) / 1000.0 + fly_eye.HEAD_FORWARD_MM * np.sin(np.radians(float(yaw[-1]))),
+                    float(pos[-1][2]) / 1000.0 + fly_eye.HEAD_UP_MM)
+            obj = self.world.add_threat(side, head, float(yaw[-1]), self.t_ms)
+            self._threat_az[obj["id"]] = live_world.THREAT_AZ_DEG[str(side).strip().lower()]
+            return obj
+
+    def _gf_trigger(self, dnp01_hz: float) -> float | None:
+        """Update the GF window with this chunk's DNp01 rate; the jump direction (deg from the heading, away from the
+        threat) when takeoff fires, else None."""
+        if not hasattr(self.body, "takeoff") or getattr(self.body, "busy", False):
+            self._gf_hits.clear()
+            self._gf_quiet = GF_REFRACTORY_CHUNKS
+            return None
+        if self._gf_quiet > 0:
+            self._gf_quiet -= 1
+            return None
+        self._gf_hits.append(dnp01_hz > 0.0)
+        if sum(self._gf_hits) < GF_MIN_HITS:
+            return None
+        self._gf_hits.clear()
+        azs = [self._threat_az[o["id"]] for o in self.world.objects if o["kind"] == "threat" and o["id"] in self._threat_az]
+        return (azs[-1] + 180.0) if azs else 180.0
 
     def world_clear(self) -> int:
         with self._lock:
@@ -320,6 +360,9 @@ class LiveSession:
         t0 = self._clock()
         seen = None
         self._touched = self.world.touching(*self._pose)
+        scene = getattr(self.vision, "scene", None)
+        if scene is not None and hasattr(scene, "moving"):
+            scene.moving, scene.t_ms = self.world.spheres(), self.t_ms
         if self.vision is not None:
             seen = self.vision.process(*self._pose)
             self._apply_vision(seen)
@@ -333,7 +376,10 @@ class LiveSession:
         t1 = self._clock()
         dn = {name: chunk.group_hz(rows) for name, rows in self.groups.items()}
         sample = self.mapper.step(dn)
+        away = self._gf_trigger(float(dn.get("dnp01", 0.0)))
         with self._body_lock():
+            if away is not None:
+                self.body.takeoff(away)
             if getattr(self.body, "takes_command", False):  # kinematic body: the exact pace and turn, not a clipped drive
                 out = self.body.advance(self.chunk_ms, sample.drive, sample.escape, pace=sample.pace, turn=sample.turn)
             else:
@@ -350,6 +396,7 @@ class LiveSession:
         factor = self.chunk_ms / wall_ms
         self._speeds.append(factor)
         self.t_ms += self.chunk_ms
+        self.world.advance(self.t_ms)
         stim_rows, stim_rate = self._stimulus
         frames = np.asarray(out["frames"])
         binary = force_binary or self.binary_frames
@@ -371,6 +418,9 @@ class LiveSession:
             "body_mode": self.body_mode, "body_caption": self.body_caption,
             "senses": self._senses({k: seen.stats[k] for k in ("driven_cells", "max_rate_hz", "mean_rate_hz")} if seen else None),
         }
+        if "state" in out:
+            msg["state"], msg["state_seq"] = out["state"], list(out["state_seq"])
+            msg["takeoff"] = {"triggered": away is not None, "gf_hits": list(self._gf_hits), "rule": GF_RULE_NOTE, "note": getattr(self.body, "takeoff_note", None)}
         if self.touch_rows:
             msg["senses"]["touch"] = {"sides": touch_now, "driven_cells": sum(len(self.touch_rows.get(s, ())) for s in touch_now),
                                       "rate_hz": TOUCH_HZ if touch_now else 0.0, "note": TOUCH_NOTE,

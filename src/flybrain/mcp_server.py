@@ -308,6 +308,12 @@ def build_server(
         return {"added": obj, "note": "ours, not validated; the fly's reaction is the brain's"}
 
     @server.tool()
+    async def world_threat(side: str = "front") -> dict:
+        """Throw a dark ball at the running live fly (left|right|front); its eye sees it loom."""
+        obj = await asyncio.to_thread(_live().world_threat, side)
+        return {"added": {"id": obj["id"], "size_mm": obj["size_mm"]}, "note": "ours, not validated; takeoff is the brain's DNp01 + our rule"}
+
+    @server.tool()
     async def world_clear() -> dict:
         """Remove every cube from the running live glass cube."""
         return {"removed": await asyncio.to_thread(_live().world_clear)}

@@ -69,6 +69,7 @@ export function createSandbox(theme: Theme, floorY: number, interiorMm: number =
   const objects = new THREE.Group();
   objects.name = "objects";
   const boxGeometry = own(new THREE.BoxGeometry(1, 1, 1));
+  let sphereGeometry: THREE.SphereGeometry | null = null; // diameter 1: scaled by size_mm; made on the first threat so it is only owned then
   const boxEdges = own(new THREE.EdgesGeometry(boxGeometry));
   const outline = own(new THREE.LineBasicMaterial({ color: theme.highlightHex, transparent: true, opacity: 0.5, depthWrite: false }));
   const kindMaterial = Object.fromEntries(OBJECT_KINDS.map((k) => [k, own(new THREE.MeshBasicMaterial({ color: OBJECT_COLORS[k] }))])) as Record<ObjectKind, THREE.MeshBasicMaterial>;
@@ -76,14 +77,14 @@ export function createSandbox(theme: Theme, floorY: number, interiorMm: number =
   group.add(floor, edges, glass, objects);
 
   const place = (o: SandboxObject) => {
-    const mesh = new THREE.Mesh(boxGeometry, kindMaterial[o.kind]);
+    const mesh = new THREE.Mesh(o.kind === "threat" ? (sphereGeometry ??= own(new THREE.SphereGeometry(0.5, 16, 12))) : boxGeometry, kindMaterial[o.kind]);
     mesh.name = `object:${o.id}`;
     mesh.position.set(o.pos_mm[0], floorY + o.pos_mm[1], o.pos_mm[2]);
     mesh.scale.setScalar(o.size_mm);
     mesh.frustumCulled = false;
     const lines = new THREE.LineSegments(boxEdges, outline);
     lines.frustumCulled = false;
-    mesh.add(lines);
+    if (o.kind !== "threat") mesh.add(lines);
     objects.add(mesh);
   };
 

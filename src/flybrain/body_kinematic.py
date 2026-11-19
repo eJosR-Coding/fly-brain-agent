@@ -52,6 +52,19 @@ BLOCK_TAU_S = 0.15
 RATE_FLOOR = 0.2
 
 
+# Takeoff (short mode of the giant-fibre escape, von Reyn et al. 2014, Nat Neurosci 17:1 : GF-driven, middle legs extend,
+# little wing raise). Everything numeric below is OUR labelled choice, not fitted and not validated; there is no flight model.
+TAKEOFF_PREP_MS = 20.0  # middle legs extend; the root is still
+TAKEOFF_LEG_EXTENSION = 1.35  # middle-leg bodies move to 1.35 x their distance from the coxa (pose only; quaternions untouched)
+TAKEOFF_V_UP_MM_S = 300.0  # ballistic launch: 300 mm/s up, 200 mm/s away from the threat, gravity 9810 mm/s^2
+TAKEOFF_V_AWAY_MM_S = 200.0
+GRAVITY_MM_S2 = 9810.0
+LANDED_MS = 100.0  # after touchdown the legs relax back to the standing pose
+TAKEOFF_NOTE = ("takeoff (ours, not validated): short-mode jump after the giant fibre rule fired: middle legs extend, ballistic hop "
+                "(300 mm/s up, 200 mm/s away), then a fall and landing; there is no flight model yet")
+MIDDLE_LEGS = ("lm", "rm")
+
+
 def _unpack(b64: str, shape: tuple[int, ...]) -> np.ndarray:
     return np.frombuffer(base64.b64decode(b64), dtype="<i2").reshape(shape).astype(float)
 
@@ -186,6 +199,7 @@ class KinematicBody:
     mode = "kinematic"
     takes_command = True  # advance() accepts the exact pace / turn (the live session passes them)
     caption = CAPTION
+    takeoff_note = TAKEOFF_NOTE
 
     def __init__(self, library: MotionLibrary | None = None, bounds: tuple[float, float, float, float] | None = None) -> None:
         self.lib = library or load_library()
@@ -203,7 +217,14 @@ class KinematicBody:
         self.x_mm = self.y_mm = 0.0
         self.yaw_rad = 0.0
         self._cmd: tuple[float, float] | None = None  # last (pace, turn)
+        self.state = "standing"  # standing | walking | takeoff | airborne | landed
+        self._to_t_ms: float | None = None  # ms since the takeoff trigger (None = no takeoff running)
+        self._to_dir = (0.0, 0.0)
+        self._land_ms = 0.0
+        self._air_ms = 0.0  # time since lift-off
         lib = self.lib
+        self._mid = [i for i, b in enumerate(lib.bodies) if b[:2] in MIDDLE_LEGS]
+        self._mid_coxa = {i: next(j for j, b in enumerate(lib.bodies) if b == lib.bodies[i][:3] + "coxa") for i in self._mid}
         self.header = {
             "format": "fly-walk/1",
             "units": {"position": "um", "quaternion": f"w,x,y,z x {QUAT_SCALE}", "time": "s"},
@@ -230,6 +251,52 @@ class KinematicBody:
 
     def close(self) -> None:
         return None
+
+    @property
+    def busy(self) -> bool:
+        """A takeoff is running (takeoff, airborne or landed)."""
+        return self._to_t_ms is not None
+
+    def takeoff(self, away_deg: float = 180.0) -> bool:
+        """Start the labelled short-mode takeoff, jumping `away_deg` from the heading (180 = backwards). False if busy."""
+        if self.busy:
+            return False
+        a = self.yaw_rad + math.radians(away_deg)
+        self._to_dir = (math.cos(a), math.sin(a))
+        self._to_t_ms, self._air_ms, self._land_ms = 0.0, 0.0, 0.0
+        self.state = "takeoff"
+        return True
+
+    def _takeoff_frame(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float]:
+        """One 5 ms frame of the takeoff: (pos, quat, contact, lift_um, dx_mm, dy_mm). Advances the state machine."""
+        stand, ms = self.lib.stand, FRAME_S * 1000.0
+        dx = dy = lift = 0.0
+        if self.state == "takeoff":
+            ext = min(1.0, (self._to_t_ms + ms) / TAKEOFF_PREP_MS)
+            self._to_t_ms += ms
+            if self._to_t_ms >= TAKEOFF_PREP_MS:
+                self.state, self._air_ms = "airborne", 0.0
+        elif self.state == "airborne":
+            ext = 1.0
+            self._air_ms += ms
+            ts = self._air_ms / 1000.0
+            h = TAKEOFF_V_UP_MM_S * ts - 0.5 * GRAVITY_MM_S2 * ts * ts
+            if h <= 0.0:
+                self.state, self._land_ms, h = "landed", 0.0, 0.0
+            lift = h * 1000.0
+            dx, dy = (TAKEOFF_V_AWAY_MM_S * FRAME_S * c for c in self._to_dir)
+        else:  # landed
+            self._land_ms += ms
+            ext = max(0.0, 1.0 - self._land_ms / LANDED_MS)
+            if self._land_ms >= LANDED_MS:
+                self._to_t_ms, self.state = None, "standing"
+        pos = stand.pos.copy()
+        for i in self._mid:
+            c = pos[self._mid_coxa[i]].copy()
+            if i != self._mid_coxa[i]:
+                pos[i] = c + (stand.pos[i] - c) * (1.0 + (TAKEOFF_LEG_EXTENSION - 1.0) * ext)
+        contact = np.zeros_like(stand.contact) if self.state == "airborne" else stand.contact
+        return pos, stand.quat, contact, lift, dx, dy
 
     # -- command ------------------------------------------------------------------------
 
@@ -269,7 +336,26 @@ class KinematicBody:
         yaw = np.empty(n)
         blocked = False
         walls: set[str] = set()
+        seq: list[str] = []
         for j in range(n):
+            if self.busy:
+                phase_now = self.state
+                pos, quat, cont, lift, tdx, tdy = self._takeoff_frame()
+                nx, ny = self.x_mm + tdx, self.y_mm + tdy
+                if self.bounds is not None:
+                    cx, cy = min(max(nx, self.bounds[0]), self.bounds[1]), min(max(ny, self.bounds[2]), self.bounds[3])
+                    blocked = blocked or cx != nx or cy != ny
+                    nx, ny = cx, cy
+                self.x_mm, self.y_mm = nx, ny
+                self.walk_w, self.achieved = 0.0, 1.0
+                frames[j, :, :3] = np.round(pos)
+                frames[j, :, 3:] = np.round(quat * QUAT_SCALE)
+                contact[j] = cont
+                thorax[j] = (round(nx * 1000.0), round(ny * 1000.0), round(stand.thorax_z_um + lift))
+                yaw[j] = math.degrees(self.yaw_rad)
+                if not seq or seq[-1] != phase_now:
+                    seq.append(phase_now)
+                continue
             a = (j + 1) / n
             p, t = prev[0] + (c_pace - prev[0]) * a, prev[1] + (c_turn - prev[1]) * a
             self.walk_w = min(1.0, self.walk_w + step_w) if walking else max(0.0, self.walk_w - step_w)
@@ -325,7 +411,10 @@ class KinematicBody:
                 self.ticks += 1
                 self.cycles += CPG_HZ / SAMPLE_HZ * max(RATE_FLOOR, self.achieved)
         self.frames += n
+        if not self.busy:
+            self.state = "walking" if walking and self.walk_w > 0.0 else "standing"
         out = {
+            "state": self.state, "state_seq": seq or [self.state],
             "n_frames": n,
             "frames": frames,
             "contact": contact,

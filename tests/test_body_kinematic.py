@@ -215,3 +215,14 @@ def test_gait_phase_slows_when_a_wall_blocks_the_fly():
         held.advance(100, [1, 1], pace=0.67, turn=0.0)
     assert free.cycles == pytest.approx(48.0)  # unblocked: the native 12 Hz
     assert held.cycles < 0.35 * free.cycles  # held at the wall: legs no longer pedal at full rate
+
+
+def test_takeoff_runs_takeoff_airborne_landed_then_stands_and_the_root_leaves_the_floor():
+    b = body()
+    run(b, 2, pace=0.0)
+    assert b.takeoff(180.0) and not b.takeoff(180.0)  # busy
+    outs = [b.advance(50.0, [0.0, 0.0], False, pace=0.0, turn=0.0) for _ in range(6)]
+    seq = [s for o in outs for s in o["state_seq"]]
+    assert [s for i, s in enumerate(seq) if i == 0 or seq[i - 1] != s][:3] == ["takeoff", "airborne", "landed"]
+    z = np.concatenate([o["thorax"]["pos_um"][:, 2] for o in outs])
+    assert z.max() > z.min() + 2000 and outs[-1]["state"] == "standing" and not b.busy

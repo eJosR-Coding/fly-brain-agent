@@ -47,7 +47,7 @@ SYSTEM_PROMPT = (
     "Shiu et al. 2024 parameters). For the published presets (sugar, bitter, water, jo_ce) and any 'give', "
     "'dale', 'add', 'remove', 'silence' or 'reset' request, use fly (a persistent doll); use stimulate only "
     "for a selection_id you found. Exception: 'dale/give sugar or coffee (azucar, cafe)' -> world_add first (a cube the live fly can touch); "
-    "only if it says no live session is running, use fly. world_clear removes the cubes. Always call results a model's prediction, not the living fly "
+    "only if it says no live session is running, use fly. world_clear removes the cubes. 'lanzale algo/asustala' -> world_threat. Always call results a model's prediction, not the living fly "
     "(no neuromodulation, plasticity or nerve cord); run it once. If a result has a warning, relay it "
     "plainly. After fly, say what changed in one sentence (never quote field names), readouts by meaning "
     "('proboscis extension'). Temperature, hunger, sleep are not inputs; runaway activity: 'the model saturates'. "
