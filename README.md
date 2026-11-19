@@ -632,7 +632,7 @@ This project only exists because these teams published their work openly. Please
 - **Whole-brain LIF model**: Shiu et al. 2024, Nature.
 - **BANC** brain and nerve cord connectome: Bates et al. (bioRxiv 10.1101/2025.07.31.667571), CC BY 4.0.
 - **NeuroMechFly v2 / flygym**: Wang-Chen et al. 2024, Nature Methods (Apache-2.0).
-- **flybody**: Vaxenburg et al. 2025, Nature (code Apache-2.0, data GPL-3.0-or-later).
+- **flybody**: Vaxenburg et al. 2025, Nature (code Apache-2.0, data GPL-3.0-or-later). The flight clips in `src/flybrain/data/fly-flight-clips.json` (and the one-wingbeat pattern) are derived from its `datasets_flight-imitation.zip` (Figshare, DOI 10.25378/janelia.25309105.v4; real trajectories from Muijres et al. 2014, 2015); built by `scripts/build_flight_clips.py`.
 - **Eye map**: Zhao et al. 2025 (GPL-3.0); FlyWire column assignment (Codex).
 - **Walking CPG**: Pugliese et al. 2026, Nature. **Steering**: Rayshubskiy et al. (eLife). **Looming / giant fiber**:
   Klapoetke et al. 2017; von Reyn et al. 2014; Ache et al. 2019. **DNp03**: Croke et al. 2025.

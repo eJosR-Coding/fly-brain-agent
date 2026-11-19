@@ -7,9 +7,9 @@
  *
  *  State is plain fields, not reactive: `tick` runs from requestAnimationFrame (see liveClient) and writes straight to
  *  the sinks. */
-import { clipMatrices, escapeAt, worldPose } from "./bodyClip";
+import { clipMatrices, escapeAt, wingsAt, worldPose } from "./bodyClip";
 import type { JointId } from "./bodyPose";
-import { escapePose } from "./bodyWorld";
+import { escapePose, flightWingPose } from "./bodyWorld";
 import { parseLiveChunk, parseLiveHeader, type LiveChunk, type LiveHeader } from "./liveFrames";
 import { createPlayback } from "./livePlayback";
 import type { WorldPose } from "./bodyClip";
@@ -109,14 +109,14 @@ export function closeMessage(code: number, reason: string, state: LiveState | "l
 }
 
 /** The line under the body while a session runs: only what the server reported, plus the server's own caption. */
-export function liveCaption(s: Pick<LiveStatus, "speedLabel" | "backend" | "fallback" | "bodyMode" | "dropped" | "serverCaption"> & { worldBlocked?: boolean }): string {
+export function liveCaption(s: Pick<LiveStatus, "speedLabel" | "backend" | "fallback" | "bodyMode" | "dropped" | "serverCaption"> & { worldBlocked?: boolean; flightNote?: string }): string {
   const parts = ["live", s.speedLabel ?? "waiting for the first chunk"];
   if (s.backend) parts.push(`brain: ${s.backend}`);
   if (s.fallback) parts.push(`fallback: ${s.fallback}`);
   if (s.bodyMode) parts.push(`body: ${s.bodyMode}`);
   if (s.worldBlocked) parts.push("stopped by the glass (world rule)");
   if (s.dropped > 0) parts.push(`dropped ${s.dropped} chunk${s.dropped === 1 ? "" : "s"}`);
-  return parts.join(" · ") + (s.serverCaption ? ` — ${s.serverCaption}` : "");
+  return parts.join(" · ") + (s.serverCaption ? ` — ${s.serverCaption}` : "") + (s.flightNote ? ` — ${s.flightNote}` : "");
 }
 
 export function createLiveSession(deps: LiveDeps): LiveSession {
@@ -134,10 +134,12 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
   let shownSeq = -1;
   let shownT = -1;
   let sentEscape: boolean | null = null;
+  let sentWings = false;
   let lastCaption: string | null = null;
   let lastObjects: string | null = null;
   let info = { speedLabel: null as string | null, backend: null as string | null, fallback: null as string | null, bodyMode: null as string | null, worldBlocked: false };
   let serverCaption = "";
+  let flightNote = ""; // the wing-slowdown label, while the chunk in view carries flight wings
   let note = "";
   const n = { received: 0, played: 0, ignored: 0, malformed: 0 };
 
@@ -163,6 +165,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
     if (lastObjects !== null) guard("objects", () => deps.sinks.setObjects?.([]));
     lastObjects = null;
     sentEscape = false;
+    sentWings = false;
   };
   const release = () => { // drop the socket and everything tied to it
     generation++;
@@ -175,7 +178,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
   };
   const reset = () => {
     playback.reset();
-    header = null; z0 = null; lastSeq = -1; stopped = false; lastTick = null; shownSeq = -1; shownT = -1; sentEscape = null;
+    header = null; z0 = null; lastSeq = -1; stopped = false; lastTick = null; shownSeq = -1; shownT = -1; sentEscape = null; sentWings = false;
     lastCaption = null; message = null; serverCaption = ""; note = "";
     info = { speedLabel: null, backend: null, fallback: null, bodyMode: null, worldBlocked: false };
     n.received = n.played = n.ignored = n.malformed = 0;
@@ -192,7 +195,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
     caption(text ?? deps.defaultCaption);
     setState(next);
   };
-  const refreshCaption = () => caption(liveCaption({ ...info, dropped: playback.dropped, serverCaption }));
+  const refreshCaption = () => caption(liveCaption({ ...info, dropped: playback.dropped, serverCaption, flightNote }));
   const malformed = () => { n.malformed++; };
 
   const onMessage = (data: unknown) => {
@@ -231,6 +234,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
         n.received++;
         playback.push(parsed.chunk);
         info = { speedLabel: parsed.chunk.info.speedLabel, backend: parsed.chunk.info.backend ?? info.backend, fallback: parsed.chunk.info.fallback, bodyMode: parsed.chunk.info.bodyMode, worldBlocked: parsed.chunk.info.worldBlocked };
+        flightNote = typeof msg.wings_note === "string" ? `flight (not validated): ${msg.wings_note}` : "";
         refreshCaption();
         const wo = (msg.world as { objects?: unknown } | undefined)?.objects;
         if (Array.isArray(wo)) {
@@ -314,8 +318,11 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
       shownSeq = seq; shownT = f.tSec;
       guard("frame", () => deps.sinks.setFrame(clipMatrices(clip, f.tSec)));
       guard("world", () => deps.sinks.setWorld(worldPose(clip, f.tSec)));
-      const esc = escapeAt(clip, f.tSec);
-      if (esc !== (sentEscape ?? false) || sentEscape === null && esc) {
+      const wing = wingsAt(clip, f.tSec);
+      if (wing || sentWings) { guard("pose", () => deps.sinks.setPose(wing ? flightWingPose(wing) : {})); sentEscape = null; }
+      sentWings = wing !== null;
+      const esc = wing ? false : escapeAt(clip, f.tSec);
+      if (!wing && (esc !== (sentEscape ?? false) || sentEscape === null && esc)) {
         guard("pose", () => deps.sinks.setPose(escapePose(esc)));
       }
       sentEscape = esc;

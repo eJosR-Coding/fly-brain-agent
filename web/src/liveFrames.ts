@@ -81,6 +81,9 @@ export function parseLiveChunk(raw: unknown, header: LiveHeader, z0: number | nu
   const p0 = (a: number[]): Vec3 => [a[1] / 1000, (a[2] - base) / 1000, a[0] / 1000]; // flygym (x fwd, y left, z up) -> viewer, mm
   const world = new Float64Array(n * 3);
   pos.forEach((p, i) => world.set(p0(p), i * 3));
+  if (Array.isArray(m.wings) && m.wings.length === n && m.wings.every((r) => Array.isArray(r) && r.length === 6 && r.every(isNum))) {
+    clip.wings = Float64Array.from((m.wings as number[][]).flat());
+  }
   clip.world = { pos: world, yawRad: Float64Array.from(th.yaw_deg as number[], (d) => (d * Math.PI) / 180) };
   return {
     z0: base,
