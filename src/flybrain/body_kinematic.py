@@ -35,12 +35,13 @@ from pathlib import Path
 
 import numpy as np
 
-from flybrain import body_drive, body_surface
+from flybrain import body_drive, body_groom, body_surface
 from flybrain.body_runner import CPG_HZ, QUAT_SCALE, SAMPLE_HZ, chunk_frames
 
 LIBRARY_PATH = Path(os.environ.get("FLYBRAIN_MOTION_LIBRARY") or Path(__file__).resolve().parents[2] / "web" / "public" / "fly-motion-library.json")
 FORMAT = "fly-motion-library/1"
 BINS = 50  # playback table: 3 bins per 5 ms frame at 12 Hz
+GROOM_STOPS_BELOW_PACE = 0.15  # a grooming request stops the legs unless the walking command is stronger than this (ours)
 RAMP_S = 0.1  # walking <-> standing transition
 CAPTION = "Body: recorded physics gait (NeuroMechFly walking controller), blended live from the brain's drive; not a physics simulation."
 WORLD_NOTE = ("World rule (not the brain): the fly's adhesive pads let it walk on any glass surface; at an edge it pitches onto the "
@@ -288,7 +289,14 @@ class KinematicBody:
         self._air_f = {"amp": 1.0, "asym": 0.0}  # smoothed command
         self._yaw_steer = 0.0  # yaw (rad) accumulated by DNp03 steering in the air
         self.landing_cause: str | None = None
+        self.head = body_groom.Head()
+        self._saccade = self._head_turn = 0.0
+        self.groom_w = 0.0  # 0 = legs on the floor, 1 = front legs rubbing
+        self._groom_req = False
         lib = self.lib
+        self._front = {sd: [i for i, b in enumerate(lib.bodies) if b.startswith(sd + "_")] for sd in ("lf", "rf")}
+        self._front_cox = {sd: next(i for i, b in enumerate(lib.bodies) if b == f"{sd}_coxa") for sd in ("lf", "rf")}
+        self._front_leg_no = {sd: lib.legs.index(sd) for sd in ("lf", "rf")}
         self._leg_idx = [i for i, b in enumerate(lib.bodies) if b[:2] in lib.legs]
         self._leg_cox = [next(j for j, b in enumerate(lib.bodies) if b == lib.bodies[i][:3] + "coxa") for i in self._leg_idx]
         self._leg_mid = np.array([lib.bodies[i][:2] in MIDDLE_LEGS for i in self._leg_idx])
@@ -323,6 +331,14 @@ class KinematicBody:
     def busy(self) -> bool:
         """A takeoff is running (takeoff, airborne or landed)."""
         return self._to_t_ms is not None
+
+    def set_head(self, saccade_deg: float, turn: float = 0.0) -> None:
+        """The head's saccade target (deg, + left) and the turn command it leads (labelled: body_groom)."""
+        self._saccade, self._head_turn = float(saccade_deg), float(turn)
+
+    def set_groom(self, on: bool) -> None:
+        """The grooming request (from the brain's grooming DNs, see live.py); the legs rub only while the fly is not walking."""
+        self._groom_req = bool(on)
 
     def takeoff(self, away_deg: float = 180.0, kind: str = "straight") -> bool:
         """Start the labelled takeoff + flight, heading `away_deg` from the current heading (180 = backwards). `kind` picks a
@@ -489,22 +505,30 @@ class KinematicBody:
             raise ValueError(f"drive must be two finite numbers [left, right], got {drive!r}")
         escape = bool(escape)
         c_pace, c_turn, walking = self._command(d, pace, turn)
+        if self._groom_req and c_pace < GROOM_STOPS_BELOW_PACE:  # grooming suppresses walking (a residual turn command alone does not keep the legs stepping)
+            c_pace, c_turn, walking = 0.0, 0.0, False
         walking = walking and not escape
         prev = self._cmd if self._cmd is not None else (c_pace, c_turn)
         self._cmd = (c_pace, c_turn)
         lib, stand = self.lib, self.lib.stand
         step_w = FRAME_S / RAMP_S
+        step_g = FRAME_S / body_groom.GROOM_RAMP_S
         frames = np.empty((n, len(lib.bodies), 7), int)
         contact = np.empty((n, len(lib.legs)), int)
         thorax = np.empty((n, 3), int)
         yaw = np.empty(n)
         wings = np.zeros((n, 6))
         tquat = np.zeros((n, 4))
+        head_yaw = np.zeros(n)
         self._walker.events = []
         ev_frames: list[int] = []
         seq: list[str] = []
         for j in range(n):
+            t_s = (self.frames + j) * FRAME_S
             if self.busy:
+                self.groom_w = 0.0
+                self.head.command(0.0, 0.0, False)
+                head_yaw[j] = self.head.step(FRAME_S, t_s, True)
                 phase_now = self.state
                 pos, quat, cont, lift, tdx, tdy, wing = self._takeoff_frame()
                 wings[j] = wing
@@ -551,9 +575,17 @@ class KinematicBody:
             quat = w * quat + (1.0 - w) * stand.quat
             quat /= np.linalg.norm(quat, axis=-1, keepdims=True)
             z = w * z + (1.0 - w) * stand.thorax_z_um
+            can_groom = self._groom_req and not walking and self.walk_w < 0.2
+            self.groom_w = min(1.0, self.groom_w + step_g) if can_groom else max(0.0, self.groom_w - step_g)
+            if self.groom_w > 0.0:
+                pos, quat = body_groom.groom_pose(pos, quat, self._front, self._front_cox, self.groom_w, t_s)
+            self.head.command(self._saccade, self._head_turn, self.groom_w > 0.5)
+            head_yaw[j] = self.head.step(FRAME_S, t_s, False)
             frames[j, :, :3] = np.round(pos)
             frames[j, :, 3:] = np.round(quat * QUAT_SCALE)
             contact[j] = (lead.contact[int(round(x)) % BINS * len(lead.contact) // BINS] if w >= 0.5 else stand.contact)
+            if self.groom_w > 0.3:
+                contact[j] = np.where(np.isin(np.arange(len(lib.legs)), list(self._front_leg_no.values())), 0, contact[j])
             # root motion from the blended MEASURED speed / yaw rate on the CURRENT SURFACE (see body_surface.py)
             fwd, lat = speed * w * FRAME_S, lateral * w * FRAME_S
             n_ev = len(self._walker.events)
@@ -580,6 +612,8 @@ class KinematicBody:
             "drive": np.tile(np.round(np.zeros(2) if escape else d, 4), (n, 1)),
             "thorax": {"pos_um": thorax, "yaw_deg": np.round(yaw, 3), "quat": np.round(tquat, 5)},
             "body_mode": self.mode,
+            "head_yaw_deg": np.round(head_yaw, 2), "head_note": body_groom.HEAD_NOTE,
+            "groom": self.groom_w > 0.5, "groom_note": body_groom.GROOM_NOTE,
         }
         if self._air is not None:
             out["air"] = {"amp": round(self._air_f["amp"], 3), "asym": round(self._air_f["asym"], 3), "land": self._air["land"],

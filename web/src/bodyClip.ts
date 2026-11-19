@@ -37,6 +37,8 @@ export interface WalkClip {
   wings?: Float64Array;
   /** one whole wingbeat, [sample][6] (same units), for the viewer to flap at its own display rate; absent when the chunk has no flight wings */
   wingCycle?: Float64Array;
+  /** head yaw per frame (degrees, + left), from a live chunk; absent otherwise */
+  head?: Float64Array;
 }
 
 /** Root transform of the whole fly at one time: `matrix` (column-major 4x4, viewer frame, mm) carries the mesh from the
@@ -177,6 +179,12 @@ export function wingCycleAt(clip: WalkClip, phase: number): number[] | null {
   const out: number[] = [];
   for (let k = 0; k < 6; k++) out.push(c[i * 6 + k] + (c[j * 6 + k] - c[i * 6 + k]) * a);
   return out;
+}
+
+/** Head yaw (degrees, + left) of the frame at time t, or null when the clip carries none. */
+export function headAt(clip: WalkClip, t: number): number | null {
+  if (!clip.head || clip.head.length !== clip.nFrames) return null;
+  return clip.head[locate(clip, t).i];
 }
 
 /** The escape flag of the frame at time t (false when the clip carries none). */

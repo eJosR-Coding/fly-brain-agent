@@ -88,6 +88,7 @@ export function parseLiveChunk(raw: unknown, header: LiveHeader, z0: number | nu
   if (Array.isArray(m.wing_cycle) && m.wing_cycle.length >= 2 && m.wing_cycle.every((r) => Array.isArray(r) && r.length === 6 && r.every(isNum))) {
     clip.wingCycle = Float64Array.from((m.wing_cycle as number[][]).flat());
   }
+  if (Array.isArray(m.head_yaw_deg) && m.head_yaw_deg.length === n && m.head_yaw_deg.every(isNum)) clip.head = Float64Array.from(m.head_yaw_deg as number[]);
   clip.world = { pos: world, yawRad: Float64Array.from(th.yaw_deg as number[], (d) => (d * Math.PI) / 180) };
   if (Array.isArray(th.quat) && th.quat.length === n && th.quat.every((r) => Array.isArray(r) && r.length === 4 && r.every(isNum))) {
     clip.world.quat = Float64Array.from((th.quat as number[][]).flat()); // full 3D orientation (surface walking): the viewer must not re-apply yaw only

@@ -60,6 +60,8 @@ const FOLLOW_ALPHA = 0.18;
 const FOLLOW_EPS = 1e-4;
 
 /** The static fly body as light line segments on the page's own background. Throws a clear Error without WebGL. */
+const HEAD_CARRIED = new Set<string>(["antenna_l", "antenna_r", "proboscis"]);
+
 export function createBodyScene(
   container: HTMLElement,
   body: ParsedBody,
@@ -340,7 +342,17 @@ function assembleBodyScene(
   };
 
   const setPose = (angles: Partial<Record<JointId, number>>) => {
+    // the head yaws about its neck pivot and carries the antennae and the proboscis with it: their own rotation is applied first, then the head's
+    const headJ = rigged.find((r) => r.id === "head");
+    const headDeg = angles.head;
+    const headM = headJ && typeof headDeg === "number" && Number.isFinite(headDeg)
+      ? new THREE.Matrix4().fromArray(rotationMatrix(headJ.axis, (headDeg * Math.PI) / 180, headJ.pivot)) : null;
     for (const j of rigged) {
+      if (j.id === "head") {
+        own.set(j.group, headM ?? new THREE.Matrix4());
+        placeGroup(j.group);
+        continue;
+      }
       const deg = angles[j.id];
       const rad = typeof deg === "number" && Number.isFinite(deg) ? (deg * Math.PI) / 180 : 0;
       const fl = (k: string) => { const v = (angles as Record<string, number | undefined>)[`${j.id}_${k}`]; return typeof v === "number" && Number.isFinite(v) ? (v * Math.PI) / 180 : null; };
@@ -351,7 +363,8 @@ function assembleBodyScene(
         placeGroup(j.group);
         continue;
       }
-      own.set(j.group, new THREE.Matrix4().fromArray(rotationMatrix(j.axis, rad, j.pivot)));
+      const jm = new THREE.Matrix4().fromArray(rotationMatrix(j.axis, rad, j.pivot));
+      own.set(j.group, headM && HEAD_CARRIED.has(j.id) ? headM.clone().multiply(jm) : jm);
       placeGroup(j.group);
     }
     invalidate();

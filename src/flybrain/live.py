@@ -28,6 +28,7 @@ import numpy as np
 from flybrain import body_drive
 from flybrain import fly_eye
 from flybrain import live_world
+from flybrain import spontaneous
 from flybrain.fly_eye import VISION_LABEL
 from flybrain.body_readouts import dn_group_rows
 from flybrain.simulation import ChunkSpikes
@@ -148,7 +149,7 @@ class LiveSession:
                  max_active: int = MAX_ACTIVE_ROWS, binary_frames: bool = False,
                  brain_lock=None, body_lock=None, arena: dict | None = None, vision=None,
                  taste_rows: dict[str, np.ndarray] | None = None, touch_rows: dict[str, np.ndarray] | None = None,
-                 leg_rows: dict[str, dict[str, np.ndarray]] | None = None) -> None:
+                 leg_rows: dict[str, dict[str, np.ndarray]] | None = None, spont: spontaneous.Spontaneous | None = None) -> None:
         self.brain, self.body, self.groups = brain, body, groups
         self.chunk_ms, self.mapper = float(chunk_ms), mapper or body_drive.DriveMapper(chunk_ms)
         self._clock, self.thermal, self._brain_fallback = clock, thermal, brain_fallback
@@ -163,6 +164,12 @@ class LiveSession:
         # antennal touch: sides blocked by a wall in the PREVIOUS chunk (the contact is known after the body moved)
         self.touch_rows = touch_rows or {}
         self.leg_rows = leg_rows or {}
+        # spontaneous drive (ours): a labelled behaviour scheduler that injects rates into command neurons, never moves the body
+        self.spont = spont
+        self._spont_rates: dict[str, float] = {}
+        self._spont_sig: tuple = ()
+        self._groom_on = False  # hysteresis state of the grooming rule
+        self._groom_hz = 0.0
         self._touch: list[str] = []
         self._touched: list[str] = []
         self._touch_latch: list[str] = []  # sides of the last surface-transition contact ...
@@ -265,11 +272,11 @@ class LiveSession:
     def _apply_taste(self) -> None:
         """No eye: set user stimulus + taste rates on the brain when the touched set changed."""
         hz = self.world.taste(self._touched, self.taste_rows)
-        sig = (tuple(sorted(hz.items())), tuple(self._touch))
+        sig = (tuple(sorted(hz.items())), tuple(self._touch), self._spont_sig)
         if sig == self._taste_sig:
             return
         self._taste_sig = sig
-        if not hz and not self._touch:
+        if not hz and not self._touch and not self._spont_sig:
             self._applied = None
             rows, rate = self._stimulus
             self.brain.set_stimulus(rows, rate)
@@ -292,6 +299,10 @@ class LiveSession:
         lr = leg_touch_rows(self.leg_rows, self._touch)
         if len(lr):
             rows, rates = np.concatenate([rows, lr]), np.concatenate([rates, np.full(len(lr), LEG_TOUCH_HZ)])
+        if self.spont is not None and self._spont_rates:
+            sr, sh = self.spont.inject(self._spont_rates)
+            if len(sr):
+                rows, rates = np.concatenate([rows, sr]), np.concatenate([rates, sh])
         user_rows, user_rate = self._stimulus
         if user_rows and user_rate > 0:
             rows, rates = np.concatenate([rows, np.asarray(user_rows, dtype=np.int64)]), np.concatenate([rates, np.full(len(user_rows), user_rate)])
@@ -320,7 +331,8 @@ class LiveSession:
                 "dn_names": list(self.groups),
                 "caption": body_drive.CAPTION + (" " + VISION_CAPTION if self._senses()["vision"] else ""),
                 "senses": {**self._senses(), **({"caption": VISION_CAPTION} if self._senses()["vision"] else {})},
-                "note": NOTE, "binary_frames": self.binary_frames, "arena": self.arena}
+                "note": NOTE, "binary_frames": self.binary_frames, "arena": self.arena,
+                "spont": {"mode": self.spont.mode if self.spont else "off", "note": spontaneous.NOTE}}
 
     # -- one chunk -----------------------------------------------------------------------
 
@@ -382,6 +394,12 @@ class LiveSession:
         t0 = self._clock()
         seen = None
         self._touched = self.world.touching(*self._pose)
+        head_deg = 0.0
+        if self.spont is not None:
+            sp = self.spont.step(self.t_ms, airborne=bool(getattr(self.body, "busy", False)))
+            self._spont_rates = sp["rates"]
+            self._spont_sig = tuple(sorted(sp["rates"].items()))
+            head_deg = float(sp["head_deg"])
         scene = getattr(self.vision, "scene", None)
         if scene is not None and hasattr(scene, "moving"):
             scene.moving, scene.t_ms = self.world.spheres(), self.t_ms
@@ -390,7 +408,7 @@ class LiveSession:
             self._apply_vision(seen)
             tb = self._clock()
         else:
-            if self._touched or self._taste_sig or self._touch:
+            if self._touched or self._taste_sig or self._touch or self._spont_sig:
                 with self._brain_lock():
                     self._apply_taste()
             tb = t0
@@ -399,7 +417,15 @@ class LiveSession:
         dn = {name: chunk.group_hz(rows) for name, rows in self.groups.items()}
         sample = self.mapper.step(dn)
         away = self._gf_trigger(float(dn.get("dnp01", 0.0)))
+        self._groom_hz += 0.5 * (float(dn.get("groom", 0.0)) - self._groom_hz)  # light smoothing of the grooming DNs
+        if self._groom_hz >= spontaneous.GROOM_ON_HZ:
+            self._groom_on = True
+        elif self._groom_hz <= spontaneous.GROOM_OFF_HZ:
+            self._groom_on = False
         with self._body_lock():
+            if hasattr(self.body, "set_head"):
+                self.body.set_head(head_deg, sample.turn)
+                self.body.set_groom(self._groom_on)
             if away is not None:
                 self.body.takeoff(away)
             if hasattr(self.body, "set_air") and getattr(self.body, "busy", False):
@@ -466,6 +492,17 @@ class LiveSession:
                 if "wing_cycle" in out:
                     msg["wing_cycle"] = np.asarray(out["wing_cycle"]).tolist()
             msg["takeoff"] = {"triggered": away is not None, "gf_hits": list(self._gf_hits), "rule": GF_RULE_NOTE, "note": getattr(self.body, "takeoff_note", None)}
+        if "head_yaw_deg" in out:
+            msg["head_yaw_deg"] = np.asarray(out["head_yaw_deg"]).tolist()
+            msg["head_note"] = out.get("head_note")
+        if "groom" in out:
+            msg["groom"] = {"active": bool(out["groom"]), "note": out.get("groom_note")}
+        if self.spont is not None:
+            inj = {g: hz for g, hz in self._spont_rates.items()}
+            resp = {k: msg["dn"].get(k, 0.0) for k in ("dng100", "dna02_left", "dna02_right", "groom", "dnp01") if k in msg["dn"]}
+            msg["spont"] = {"mode": self.spont.mode, "state": self.spont.state, "note": spontaneous.NOTE, "injected_hz": inj, "response_hz": resp,
+                            "groom_rule": f"body grooms while the grooming DNs (DNg10/11/12) average >= {spontaneous.GROOM_ON_HZ:g} Hz (off below {spontaneous.GROOM_OFF_HZ:g}); ours",
+                            "counts": dict(self.spont.counts)}
         if self.touch_rows:
             msg["senses"]["touch"] = {"sides": touch_now, "driven_cells": sum(len(self.touch_rows.get(s, ())) for s in touch_now),
                                       "rate_hz": TOUCH_HZ if touch_now else 0.0, "note": TOUCH_NOTE,
@@ -510,6 +547,10 @@ def readout_groups(atlas, row_index) -> dict[str, np.ndarray]:
         groups["mn9"] = preset_rows(atlas, row_index, "mn9")
     except ValueError:
         pass
+    ct = atlas.neurons["cell_type"].fillna("")
+    groom = np.flatnonzero(ct.str.fullmatch(r"DNg1[012](_[a-z])?").to_numpy())  # anterior-grooming DN clusters (Braun et al. 2024 name DNg10, DNg12; DNg11 is in the same cluster)
+    if len(groom):
+        groups["groom"] = groom.astype(np.int64)
     return groups
 
 
@@ -519,7 +560,7 @@ MAX_BACKGROUND_HZ = 1000.0
 
 def build_live_session(atlas, row_index, sims, body_lock=None, *, seed: int = 0, chunk_ms: float = CHUNK_MS,
                        include_active: bool = False, binary_frames: bool = False, body_mode: str = "kinematic",
-                       vision: str | None = None, background_hz: float = 0.0) -> LiveSession:
+                       vision: str | None = None, background_hz: float = 0.0, spont: str | None = "ethogram") -> LiveSession:
     """The real brain (GPU when decided, usable and cool; else CPU) and the real body, ready to step.
 
     body_mode "kinematic" (default, fast: the recorded physics gait blended live, no flygym needed) or "physics"
@@ -566,6 +607,14 @@ def build_live_session(atlas, row_index, sims, body_lock=None, *, seed: int = 0,
         brain.close()
         raise
     cpu = sims.simulation()
+    if spont not in (None, *spontaneous.MODES):
+        raise ValueError(f"spont must be one of {(None, *spontaneous.MODES)}")
+    groups = readout_groups(atlas, row_index)
+    sp = None
+    if spont == "ethogram":
+        rows = {"dng100": groups.get("dng100"), "dna02_left": groups.get("dna02_left"), "dna02_right": groups.get("dna02_right"),
+                "groom": groups.get("groom"), "dnp01": groups.get("dnp01")}
+        sp = spontaneous.Spontaneous({k: v for k, v in rows.items() if v is not None}, seed=seed, chunk_ms=chunk_ms)
     taste = {}
     for name in ("sugar", "bitter"):
         try:
@@ -590,7 +639,7 @@ def build_live_session(atlas, row_index, sims, body_lock=None, *, seed: int = 0,
     except Exception:  # noqa: BLE001 - no mapping / ids in this atlas: leg touch then drives nothing
         leg = {}
     return LiveSession(
-        brain, body, readout_groups(atlas, row_index), chunk_ms=chunk_ms, thermal=sims.thermal,
+        brain, body, groups, chunk_ms=chunk_ms, spont=sp, thermal=sims.thermal,
         brain_fallback=lambda: cpu.open_stream(seed=seed), include_active=include_active,
         binary_frames=binary_frames, arena=arena, vision=front, taste_rows=taste, touch_rows=touch, leg_rows=leg, brain_lock=sims.exclusive, body_lock=(lambda: body_lock) if body_lock is not None else None,
     )
