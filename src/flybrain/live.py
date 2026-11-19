@@ -398,7 +398,12 @@ class LiveSession:
         if self.spont is not None:
             pos, yaw = self._pose
             ctx = {"x_mm": float(pos[-1][0]) / 1000.0, "y_mm": float(pos[-1][1]) / 1000.0, "z_um": float(pos[-1][2]), "yaw_deg": float(yaw[-1]),
-                   "objects": self.world.objects, "touched": self._touched}
+                   "objects": self.world.objects, "touched": self._touched, "t_ms": self.t_ms,
+                   "bounds_mm": list(self.arena["bounds_mm"]) if self.arena else None}
+            if self._quat is not None:  # surface frame: heading f = first column, dorsal axis n = third column
+                from .body_surface import matrix_from_quat
+                r = matrix_from_quat(np.asarray(self._quat).reshape(-1, 4)[-1])
+                ctx["f"], ctx["n"] = r[:, 0], r[:, 2]
             sp = self.spont.step(self.t_ms, airborne=bool(getattr(self.body, "busy", False)), ctx=ctx)
             self._spont_rates = sp["rates"]
             self._spont_sig = tuple(sorted(sp["rates"].items()))
@@ -431,6 +436,8 @@ class LiveSession:
                 self.body.set_groom(self._groom_on)
             if away is not None:
                 self.body.takeoff(away)
+            if hasattr(self.body, "set_seek"):  # flight with sugar present: steer to it and land beside it (our labelled rule)
+                self.body.set_seek(self.spont.flight_target(ctx) if (self.spont is not None and getattr(self.body, "busy", False)) else None)
             if hasattr(self.body, "set_air") and getattr(self.body, "busy", False):
                 self.body.set_air(dn.get("dng02", 0.0), dn.get("dnp03_left", 0.0), dn.get("dnp03_right", 0.0),
                                   self._land_trigger(float(dn.get("dnp07", 0.0)) + float(dn.get("dnp10", 0.0)), self.body.state == "airborne"))

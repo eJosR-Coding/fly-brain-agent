@@ -87,6 +87,8 @@ DNG02_REF_HZ, DNG02_GAIN = 50.0, 0.30  # stroke amplitude x (1 + 0.30 * min(rate
 DNP03_REF_HZ, DNP03_AMP_GAIN = 50.0, 0.30  # asymmetry (L - R) / 50 Hz in [-1, 1]; ipsilateral stroke x (1 + 0.3 a), contralateral x (1 - 0.3 a): direction Croke 2025
 DNP03_YAW_DEG_S = 90.0  # yaw rate = -90 deg/s * asymmetry (a left DNp03 turns the fly right: Croke's contralateral saccade); the size is ours
 LAND_MIN_AIR_S = 0.5  # the landing DNs are ignored for the first 0.5 s of flight (the takeoff itself drives them); ours
+SEEK_TURN_DEG_S = 150.0  # flight toward sugar (labelled rule): path turns toward the cube at most this fast
+SEEK_LAND_MM = 3.0  # ... and lands when this close horizontally
 MAX_AIR_S = 8.0  # max-airtime fallback: the fly lands after 8 s of flight even if the landing neurons never fire (ours)
 # Continuous flight (OUR rule, not validated; flight DNs are silent in this model): recorded clips are CHAINED with position and heading
 # continuity so the fly never hovers; near a glass wall a recorded left / right saccade-evasion clip turns it away; a bout lasts 3-8 s.
@@ -389,6 +391,10 @@ class KinematicBody:
         self.state = "takeoff"
         return True
 
+    def set_seek(self, target: dict | None) -> None:
+        """Flight toward sugar (OUR labelled rule, not the connectome): the path/heading turn toward the cube and the landing is commanded when close."""
+        self._seek = target
+
     def set_air(self, dng02_hz: float, dnp03_left_hz: float, dnp03_right_hz: float, land: bool) -> None:
         """The brain's flight command for the next chunk (see the F3 constants): DNg02 sets the stroke amplitude, the DNp03 left - right
         asymmetry sets the per-wing amplitude and the yaw rate, `land` (the landing DNs crossed the live session's rule) lands the fly."""
@@ -470,6 +476,15 @@ class KinematicBody:
                 st = math.radians(-DNP03_YAW_DEG_S * self._air_f["asym"]) * FRAME_S
                 self._yaw_steer += st
                 self._clip_dir += st  # the path follows the steering
+            sk = getattr(self, "_seek", None)
+            land_seek = False
+            if sk is not None:
+                want = math.atan2(sk["y_mm"] - self.y_mm, sk["x_mm"] - self.x_mm)
+                diff = (want - self._clip_dir + math.pi) % (2 * math.pi) - math.pi
+                st2 = max(-1.0, min(1.0, diff / FRAME_S / math.radians(SEEK_TURN_DEG_S))) * math.radians(SEEK_TURN_DEG_S) * FRAME_S
+                self._clip_dir += st2
+                self._yaw_steer += st2
+                land_seek = sk["dist_mm"] <= SEEK_LAND_MM
             # position: the clip's own increment, rotated to the clip frame (continuous across chained clips)
             ddx, ddy = x1 - x0, y1 - y0
             ch, sh = math.cos(self._clip_dir), math.sin(self._clip_dir)
@@ -501,6 +516,7 @@ class KinematicBody:
                     self._next_clip()
             s_air = self._air_ms / 1000.0
             cause = ("landing_dn" if self._air is not None and self._air["land"] and s_air >= LAND_MIN_AIR_S
+                     else "sugar_seek" if land_seek and s_air >= LAND_MIN_AIR_S
                      else "bout_end" if s_air >= self._bout_s else None)
             if cause:
                 self.state, self._desc_s, self.landing_cause = "descending", 0.0, cause
