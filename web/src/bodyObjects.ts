@@ -3,13 +3,13 @@
  *  mm, the fly starts at the origin) with Y the height above the floor; `size_mm` is its edge. */
 import { containsBox, type Bounds } from "./bodyCube";
 
-export type ObjectKind = "sugar" | "coffee";
+export type ObjectKind = "sugar" | "coffee" | "threat";
 export interface SandboxObject { id: string; kind: ObjectKind; pos_mm: [number, number, number]; size_mm: number }
 
-export const OBJECT_KINDS: readonly ObjectKind[] = ["sugar", "coffee"];
+export const OBJECT_KINDS: readonly ObjectKind[] = ["sugar", "coffee", "threat"];
 export const MAX_OBJECTS = 64;
-/** sugar white-ish, coffee dark brown */
-export const OBJECT_COLORS: Record<ObjectKind, number> = { sugar: 0xf2efe6, coffee: 0x4a2c1a };
+/** sugar white-ish, coffee dark brown, threat near-black (a sphere, size_mm = diameter) */
+export const OBJECT_COLORS: Record<ObjectKind, number> = { sugar: 0xf2efe6, coffee: 0x4a2c1a, threat: 0x111111 };
 
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 

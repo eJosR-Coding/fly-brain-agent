@@ -11,7 +11,7 @@ def test_server_lists_the_tools(tiny_atlas):
         "search_neurons", "count_neurons", "describe_neuron", "list_selection",
         "neighbors", "find_path", "lesion_effect", "top_hubs", "preset_selection", "stimulate",
         "fly", "dose_response", "silencing_screen", "looming_escape",
-        "world_add", "world_clear",
+        "world_add", "world_threat", "world_clear",
     }
 
 
@@ -169,7 +169,7 @@ def _definition_chars(tiny_atlas) -> dict[str, int]:
 
 def test_tool_definitions_stay_within_the_token_budget(tiny_atlas):
     sizes = _definition_chars(tiny_atlas)
-    assert len(sizes) == 16
+    assert len(sizes) == 17
     assert sum(sizes.values()) <= TOOL_DEFS_BUDGET_CHARS, sizes
 
 
