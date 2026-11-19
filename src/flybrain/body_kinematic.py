@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import base64
 import json
+import random
 import math
 import os
 from dataclasses import dataclass, field
@@ -75,7 +76,7 @@ WING_CYCLE_SAMPLES = 16  # one whole wingbeat per chunk (current weight and ampl
 LANDED_MS = 100.0  # after touchdown the legs relax back to the standing pose and the wings fold
 WING_NOTE = ("wings: flybody flight-imitation wingbeat (one real cycle: stroke, deviation, rotation; ~200 Hz in the data); "
              "both wings share it (no steering asymmetry yet)")
-TAKEOFF_NOTE = ("takeoff + flight (ours, not validated): short-mode jump after the giant fibre rule fired, then a real fly flight clip "
+TAKEOFF_NOTE = ("takeoff + flight (ours, not validated; flight DNs are silent in this model, so continuous flight, wall-evasion saccades and 3-8 s bouts are OUR rules over recorded clips): short-mode jump after the giant fibre rule fired, then a real fly flight clip "
                 "(flybody dataset, Vaxenburg et al. 2025, GPL-3.0+) played "
                 f"{FLIGHT_SLOWDOWN:g}x slower with the path scaled x{FLIGHT_SCALE_MM / 10:g} to fit the cube, a simple eased descent and a landing. "
                 f"The wingbeat (~200 Hz in the data) is replayed at {WING_DISPLAY_HZ:g} Hz, a stated slowdown; legs tucked; no flight physics")
@@ -85,7 +86,15 @@ DNG02_REF_HZ, DNG02_GAIN = 50.0, 0.30  # stroke amplitude x (1 + 0.30 * min(rate
 DNP03_REF_HZ, DNP03_AMP_GAIN = 50.0, 0.30  # asymmetry (L - R) / 50 Hz in [-1, 1]; ipsilateral stroke x (1 + 0.3 a), contralateral x (1 - 0.3 a): direction Croke 2025
 DNP03_YAW_DEG_S = 90.0  # yaw rate = -90 deg/s * asymmetry (a left DNp03 turns the fly right: Croke's contralateral saccade); the size is ours
 LAND_MIN_AIR_S = 0.5  # the landing DNs are ignored for the first 0.5 s of flight (the takeoff itself drives them); ours
-MAX_AIR_S = 6.0  # max-airtime fallback: the fly lands after 6 s of flight even if the landing neurons never fire (ours)
+MAX_AIR_S = 8.0  # max-airtime fallback: the fly lands after 8 s of flight even if the landing neurons never fire (ours)
+# Continuous flight (OUR rule, not validated; flight DNs are silent in this model): recorded clips are CHAINED with position and heading
+# continuity so the fly never hovers; near a glass wall a recorded left / right saccade-evasion clip turns it away; a bout lasts 3-8 s.
+BOUT_S = (3.0, 8.0)  # flight bout duration, uniform, seeded (ours)
+WALL_LOOK_MM = 20.0  # look-ahead along the heading: a wall inside it triggers an evasive saccade clip (ours)
+CRUISE_MM = 25.0  # slow pull of the altitude toward this height so chained clips do not drift into floor or ceiling (ours)
+CRUISE_PULL_PER_S = 0.4
+MIN_LIFT_MM = 3.0
+FLIGHT_SEED = 20240611
 AIR_NOTE = ("brain-driven flight (ours, not validated): DNg02 -> stroke amplitude (Namiki 2022), DNp03 left/right -> per-wing amplitude and "
             "yaw (Croke 2025), landing DNs DNp07/DNp10 -> landing (Croke 2025 names them landing neurons); every gain and threshold is ours")
 MIDDLE_LEGS = ("lm", "rm")
@@ -289,6 +298,14 @@ class KinematicBody:
         self._air_f = {"amp": 1.0, "asym": 0.0}  # smoothed command
         self._yaw_steer = 0.0  # yaw (rad) accumulated by DNp03 steering in the air
         self.landing_cause: str | None = None
+        self._rng = random.Random(FLIGHT_SEED)
+        self._bout_s = 5.0
+        self._clip_t = 0.0  # recorded seconds into the current clip
+        self._clip_dir = 0.0  # world angle of the clip's x axis
+        self._clip_first = True
+        self._yaw_base = self._yaw_off = 0.0
+        self.saccades = 0  # evasive saccade clips played (counter for the smoke test)
+        self.air_clamps = 0  # frames where the cube clamp had to move the fly while airborne (should stay 0)
         self.head = body_groom.Head()
         self._saccade = self._head_turn = 0.0
         self.groom_w = 0.0  # 0 = legs on the floor, 1 = front legs rubbing
@@ -366,6 +383,8 @@ class KinematicBody:
         self._fl_prev, self._fl_vel, self._fl_lift_mm = (0.0, 0.0), (0.0, 0.0), 0.0
         self._wing_cycles = self._tuck = self._wing_w = 0.0
         self._air, self._air_f, self._yaw_steer, self.landing_cause = None, {"amp": 1.0, "asym": 0.0}, 0.0, None
+        self._bout_s = self._rng.uniform(*BOUT_S)
+        self._clip_t, self._clip_dir, self._clip_first, self._yaw_base, self._yaw_off = 0.0, self._fl_head, True, 0.0, 0.0
         self.state = "takeoff"
         return True
 
@@ -382,6 +401,25 @@ class KinematicBody:
         u = min(t_s * self._flight.doc["sample_rate_hz"], len(c["x"]) - 1.0)
         f = lambda k: float(np.interp(u, np.arange(len(c[k])), c[k]))
         return f("x") * FLIGHT_SCALE_MM, f("y") * FLIGHT_SCALE_MM, f("z_abs") * FLIGHT_SCALE_MM, math.radians(f("yaw_deg"))
+
+    def _next_clip(self) -> None:
+        """Chain the next flight clip: a recorded saccade away from a wall the heading will reach soon, else a straight clip (ours)."""
+        kind = "straight"
+        if self.bounds is not None:
+            mg = body_surface.BODY_MARGIN_MM
+            d = self._clip_dir
+            px, py = self.x_mm + math.cos(d) * WALL_LOOK_MM, self.y_mm + math.sin(d) * WALL_LOOK_MM
+            nx = (1.0 if px < self.bounds[0] + mg else -1.0 if px > self.bounds[1] - mg else 0.0)
+            ny = (1.0 if py < self.bounds[2] + mg else -1.0 if py > self.bounds[3] - mg else 0.0)
+            if nx or ny:  # inward normal (sum at a corner); the clip turns toward the inward side
+                kind = "left" if math.cos(d) * ny - math.sin(d) * nx > 0 else "right"
+                if abs(math.cos(d) * ny - math.sin(d) * nx) < 1e-6:
+                    kind = self._rng.choice(("left", "right"))
+        pool = [c for c in self._flight.clips if c["kind"] == kind] or self._flight.clips
+        self._clip = self._rng.choice(pool)
+        self._clip_t = 0.0
+        if kind != "straight":
+            self.saccades += 1
 
     def _wing_angles(self, cycles: float | None = None) -> np.ndarray:
         """(6,) raw flybody wing angles in degrees [stroke, deviation, rotation] left then right, scaled by the wing weight."""
@@ -413,31 +451,56 @@ class KinematicBody:
                 self._fl_yaw0 = self.yaw_rad
         elif self.state == "airborne":
             self._air_ms += ms
-            t_rec = self._air_ms / 1000.0 / FLIGHT_SLOWDOWN
-            x, y, z, yaw_rel = self._flight_at(t_rec)
+            sr = self._flight.doc["sample_rate_hz"]
+            n_last = (len(self._clip["x"]) - 1) / sr
+            t0 = self._clip_t
+            self._clip_t = t1 = t0 + FRAME_S / FLIGHT_SLOWDOWN
+            x1, y1, z1, a1 = self._flight_at(min(t1, n_last))
+            x0, y0, z0, a0 = self._flight_at(t0)
             ramp = _smooth(self._air_ms / RAMP_MS)
             self._tuck = ramp
             self._wing_w = ramp
             turn = (self._fl_head - self._fl_yaw0 + math.pi) % (2 * math.pi) - math.pi
+            st = 0.0
             if self._air is not None:
                 k = min(1.0, FRAME_S / AIR_SMOOTH_S)
                 for key in ("amp", "asym"):
                     self._air_f[key] += (self._air[key] - self._air_f[key]) * k
-                self._yaw_steer += math.radians(-DNP03_YAW_DEG_S * self._air_f["asym"]) * FRAME_S
-            self.yaw_rad = self._fl_yaw0 + turn * _smooth(self._air_ms / FLIGHT_TURN_MS) + yaw_rel + self._yaw_steer
-            ch, sh = self._to_dir
-            tx, ty = x * ch - y * sh, x * sh + y * ch
-            dx, dy = tx - self._fl_prev[0], ty - self._fl_prev[1]
-            self._fl_prev, self._fl_vel = (tx, ty), (dx, dy)
-            self._fl_lift_mm = min(z * _smooth(self._air_ms / 100.0), FLIGHT_CEILING_MM)
+                st = math.radians(-DNP03_YAW_DEG_S * self._air_f["asym"]) * FRAME_S
+                self._yaw_steer += st
+                self._clip_dir += st  # the path follows the steering
+            # position: the clip's own increment, rotated to the clip frame (continuous across chained clips)
+            ddx, ddy = x1 - x0, y1 - y0
+            ch, sh = math.cos(self._clip_dir), math.sin(self._clip_dir)
+            dx, dy = ddx * ch - ddy * sh, ddx * sh + ddy * ch
+            self._fl_vel = (dx, dy)
+            self._yaw_base += a1 - a0
+            self._clip_dir += a1 - a0  # the heading and the path turn together: chained clips are continuous
+            self._yaw_off = turn * _smooth(self._air_ms / FLIGHT_TURN_MS)
+            self.yaw_rad = self._fl_yaw0 + self._yaw_off + self._yaw_base + self._yaw_steer
+            if self._clip_first:  # the first clip also takes the lift-off height ramp
+                self._fl_lift_mm = z1 * _smooth(self._air_ms / 100.0)
+            else:
+                self._fl_lift_mm += (z1 - z0)
+            self._fl_lift_mm += (CRUISE_MM - self._fl_lift_mm) * CRUISE_PULL_PER_S * FRAME_S
+            self._fl_lift_mm = min(max(self._fl_lift_mm, MIN_LIFT_MM), FLIGHT_CEILING_MM)
             lift = self._fl_lift_mm * 1000.0
             ext = 1.0 - ramp
-            if self._air is None:
-                clip_end = t_rec >= (len(self._clip["x"]) - 1) / self._flight.doc["sample_rate_hz"]
-                cause = "clip_end" if clip_end else None
-            else:  # brain-driven: hover at the end of the clip until the landing DNs fire (or the max airtime)
-                s_air = self._air_ms / 1000.0
-                cause = ("landing_dn" if self._air["land"] and s_air >= LAND_MIN_AIR_S else "max_airtime" if s_air >= MAX_AIR_S else None)
+            if t1 >= n_last:  # chain: the next clip starts from the current position and heading
+                self._clip_first = False
+                self._clip_dir = self.yaw_rad
+                self._next_clip()
+            elif self._clip["kind"] == "straight" and self.bounds is not None:  # a wall came within the look-ahead mid-clip: switch to a saccade now
+                mg = body_surface.BODY_MARGIN_MM
+                d = self._clip_dir
+                px, py = self.x_mm + math.cos(d) * WALL_LOOK_MM * 0.8, self.y_mm + math.sin(d) * WALL_LOOK_MM * 0.8
+                if not (self.bounds[0] + mg < px < self.bounds[1] - mg and self.bounds[2] + mg < py < self.bounds[3] - mg):
+                    self._clip_first = False
+                    self._clip_dir = self.yaw_rad
+                    self._next_clip()
+            s_air = self._air_ms / 1000.0
+            cause = ("landing_dn" if self._air is not None and self._air["land"] and s_air >= LAND_MIN_AIR_S
+                     else "bout_end" if s_air >= self._bout_s else None)
             if cause:
                 self.state, self._desc_s, self.landing_cause = "descending", 0.0, cause
         elif self.state == "descending":
@@ -535,7 +598,10 @@ class KinematicBody:
                 nx, ny = self.x_mm + tdx, self.y_mm + tdy
                 if self.bounds is not None:  # flight stays inside the cube
                     mg = body_surface.BODY_MARGIN_MM
-                    nx, ny = min(max(nx, self.bounds[0] + mg), self.bounds[1] - mg), min(max(ny, self.bounds[2] + mg), self.bounds[3] - mg)
+                    cx, cy = min(max(nx, self.bounds[0] + mg), self.bounds[1] - mg), min(max(ny, self.bounds[2] + mg), self.bounds[3] - mg)
+                    if self.state == "airborne" and (cx != nx or cy != ny):
+                        self.air_clamps += 1
+                    nx, ny = cx, cy
                 self.x_mm, self.y_mm = nx, ny
                 self.walk_w, self.achieved = 0.0, 1.0
                 frames[j, :, :3] = np.round(pos)
