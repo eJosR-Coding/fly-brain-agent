@@ -15,14 +15,13 @@ import { loadWalkClip } from "./bodyClip";
 import { createWalkPlayer, type WalkPlayer } from "./bodyWalk";
 import { createClipPlayer, type ClipPlayer } from "./bodyClipPlayer";
 import { createLiveClient, DEV_PRESET, DEV_RATE_HZ, type LiveClient } from "./liveClient";
-import { createBodyFlow, FLOW_PRESETS, type BodyFlow, type FlowKey } from "./bodyFlow";
+import { createBodyFlow, type BodyFlow, type FlowKey } from "./bodyFlow";
 import { mountLayout, type Layout } from "./layoutPanes";
 import type { Pane } from "./layoutState";
 import { commitScene } from "./sceneLoad";
 import { shouldOpenOnBoot, shouldOpenOnChange } from "./sceneOpen";
 import { PathOrder } from "./pathOrder";
 import { chartsChipState, simChipsDisabled } from "./chipState";
-import { LOOMING_RUN, loomingLegend, parseLoomingRun } from "./looming";
 import { afterNewChat, EMPTY, legendOf, modeStage, StageHolder, type Stage } from "./stage";
 import { createScene, type BrainScene } from "./scene";
 import { Latest, runLatest } from "./latest";
@@ -30,12 +29,12 @@ import { loadLatestActivity } from "./activityLoader";
 import { deriveStatus, parseHealth, versionLine, type Health } from "./status";
 import { readTheme } from "./theme";
 import { loadLandmarks, loadRegions, type Regions } from "./regions";
-import { activityLegend, formatSimulating, loadActivity, parseSimulation, type Activity } from "./activity";
+import { activityLegend, loadActivity, type Activity } from "./activity";
 import { createPlayer, type Player } from "./player";
 import { createChartsPanel, type ChartsPanel } from "./chartsPanel";
 import { mountInspector } from "./inspector";
 import { pathLegend } from "./path";
-import { formatExperimentProgress, parseChart, parseProgress, type ExperimentChart } from "./experiments";
+import { type ExperimentChart } from "./experiments";
 import { addGroup, addSubgroup, renderKey } from "./controls";
 import { greyHex, keyRows, loadNt, ntTier, type Transmitters } from "./transmitters";
 import type { Theme } from "./theme";
@@ -48,12 +47,6 @@ const CHIPS: { label: string; params: Record<string, string> | null }[] = [
   { label: "PEN", params: { cell_type: "PEN" } },
   { label: "clear", params: null },
 ];
-
-/** Stimulus and readout of the experiment chips: sugar-sensing neurons -> MN9, like the sugar chip. */
-const EXPERIMENT_BODY = { preset: "sugar", readout_preset: "mn9" };
-
-/** The sugar experiment of the Shiu et al. 2024 example: 20 sugar-sensing neurons at 100 Hz, MN9 as readout. */
-const SUGAR_RUN = { preset: "sugar", readout_preset: "mn9", rate_hz: 100, duration_ms: 1000, trials: 3 };
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 let brainScene: BrainScene | null = null;
@@ -169,17 +162,6 @@ function syncFlowChips(): void {
   if (moveChip) moveChip.disabled = off || busy || !shown?.a.id;
 }
 
-/** Press on a brain -> body chip: stop when it is the one running, else run it. */
-function pressFlowChip(key: FlowKey): void {
-  if (!bodyFlow) return;
-  if (activeFlowKey === key && bodyFlow.state !== "idle") { bodyFlow.stop(); return; }
-  liveClient?.stop();
-  walkPlayer?.stop();
-  activeFlowKey = key;
-  openBrain(); // the recording is shown on the real scene: start loading it while the physics runs
-  void bodyFlow.runPreset(key);
-}
-
 /** A recording plus, for a silenced run, its baseline (so the difference map is available). */
 async function loadWithBaseline(id: string): Promise<{ a: Activity; baseline: Activity | null }> {
   const a = await loadActivity(id);
@@ -204,48 +186,6 @@ function showActivity({ a, baseline }: { a: Activity; baseline: Activity | null 
   syncFlowChips();
 }
 
-/** "give sugar": POST /api/simulate (no LLM), then fetch the frames and play them. */
-async function giveSugar(): Promise<void> {
-  if (simulating) return;
-  openBrain(); // the wave is shown on the real scene: start loading it while the simulation runs
-  walkPlayer?.stop();
-  simulating = true;
-  renderSimChips();
-  latest.invalidate(); // a search finishing later must not replace the wave
-  const started = performance.now();
-  // the progress text owns the legend only until something else (a recording from the chat) takes it
-  const lease = stageHolder.lease();
-  const pending = () => {
-    const s: Stage = { kind: "message", text: formatSimulating(SUGAR_RUN.duration_ms, (performance.now() - started) / 1000) };
-    if (lease.paint(s)) paintLegend(s);
-  };
-  pending();
-  const tick = window.setInterval(pending, 1000);
-  try {
-    const res = await fetch("/api/simulate", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(SUGAR_RUN),
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(typeof body.detail === "string" ? body.detail : `HTTP ${res.status}`);
-    const sim = parseSimulation(body);
-    if (typeof sim === "string") throw new Error(`unexpected simulation answer: ${sim}`);
-    const applied = await loadLatestActivity(activityLatest, () => loadWithBaseline(sim.simulationId), (loaded) => {
-      showActivity(loaded, activityLegend(sim.active, loaded.a.nRows, sim.readoutHz === null ? null : { label: "MN9", hz: sim.readoutHz }));
-      setActiveChip("give sugar");
-    });
-    if (!applied) return; // a newer recording (from the chat) took the stage while this one loaded
-  } catch (e) {
-    renderLegend(null, `simulation failed: ${(e as Error).message}`);
-  } finally {
-    window.clearInterval(tick);
-    simulating = false;
-    renderSimChips();
-    if (lease.release()) paintLegend(stageHolder.current); // nothing replaced the progress text: back to what was there
-  }
-}
-
 /** Chips that run the simulator (one at a time). */
 function simChips(): HTMLButtonElement[] {
   return [...(sugarChip ? [sugarChip] : []), ...experimentChips];
@@ -261,103 +201,6 @@ function showExperimentChart(c: ExperimentChart): void {
   charts?.setOpen(true);
   chartsHasContent = true;
   syncChartsChip();
-}
-
-/** The no-LLM experiment chips: the sugar -> MN9 dose-response sweep and the 8-candidate silencing screen. */
-async function runExperiment(path: "dose_response" | "screen", chip: HTMLButtonElement, label: string): Promise<void> {
-  if (simulating || !charts) return;
-  openBrain();
-  walkPlayer?.stop();
-  simulating = true;
-  renderSimChips();
-  latest.invalidate();
-  const started = performance.now();
-  const lease = stageHolder.lease(); // the progress text must not overwrite a recording that took the legend meanwhile
-  chip.textContent = `${label} · starting`;
-  let finished = false; // a poll still in flight must not overwrite the final legend
-  const poll = async () => {
-    if (finished) return;
-    try {
-      const res = await fetch("/api/experiments/progress");
-      const p = res.ok ? await res.json() : null;
-      const prog = p && p.running ? parseProgress(p) : null;
-      if (finished) return;
-      const secs = Math.floor((performance.now() - started) / 1000);
-      if (prog) chip.textContent = formatExperimentProgress(prog);
-      const s: Stage = { kind: "message", text: `${prog ? formatExperimentProgress(prog) : `${label} · starting`} · ${secs} s · model run on the whole brain` };
-      if (lease.paint(s)) paintLegend(s);
-    } catch {
-      /* the next tick tries again */
-    }
-  };
-  void poll();
-  const tick = window.setInterval(() => void poll(), 1000);
-  try {
-    const res = await fetch(`/api/experiments/${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(EXPERIMENT_BODY),
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(typeof body.detail === "string" ? body.detail : `HTTP ${res.status}`);
-    const chart = parseChart(body.chart);
-    if (typeof chart === "string") throw new Error(`unexpected chart: ${chart}`);
-    showExperimentChart(chart);
-    renderLegend(null, `${label} done · ${body.runtime_s} s · ${chart.kind === "screen" ? `${body.significant_count} of ${body.candidates} significant after correction` : body.ec50_hz === null ? "no half-max rate" : `EC50 ${body.ec50_hz} Hz`}`);
-  } catch (e) {
-    renderLegend(null, `${label} failed: ${(e as Error).message}`);
-  } finally {
-    finished = true;
-    window.clearInterval(tick);
-    chip.textContent = label;
-    simulating = false;
-    renderSimChips();
-    if (lease.release()) paintLegend(stageHolder.current);
-  }
-}
-
-const LOOMING_LABEL = "looming disc (escape)";
-
-/** The validated looming experiment (no LLM): runs the four conditions, then plays the LOOMING one on the body. */
-async function runLooming(chip: HTMLButtonElement): Promise<void> {
-  if (simulating) return;
-  openBrain();
-  simulating = true;
-  renderSimChips();
-  latest.invalidate();
-  const started = performance.now();
-  const lease = stageHolder.lease();
-  chip.textContent = `${LOOMING_LABEL} · running`;
-  const pending = () => {
-    const s: Stage = { kind: "message", text: `${LOOMING_LABEL} · ${Math.floor((performance.now() - started) / 1000)} s · 4 conditions x ${LOOMING_RUN.trials} trials on the whole brain` };
-    if (lease.paint(s)) paintLegend(s);
-  };
-  pending();
-  const tick = window.setInterval(pending, 1000);
-  try {
-    const res = await fetch("/api/experiments/looming", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(LOOMING_RUN),
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(typeof body.detail === "string" ? body.detail : `HTTP ${res.status}`);
-    const run = parseLoomingRun(body);
-    if (typeof run === "string") throw new Error(`unexpected looming answer: ${run}`);
-    const applied = await loadLatestActivity(activityLatest, () => loadWithBaseline(run.simulationId), (loaded) => {
-      showActivity(loaded, loomingLegend(run));
-      setActiveChip(LOOMING_LABEL);
-    });
-    if (!applied) return;
-  } catch (e) {
-    renderLegend(null, `${LOOMING_LABEL} failed: ${(e as Error).message}`);
-  } finally {
-    window.clearInterval(tick);
-    chip.textContent = LOOMING_LABEL;
-    simulating = false;
-    renderSimChips();
-    if (lease.release()) paintLegend(stageHolder.current);
-  }
 }
 
 /** Resolve a highlight payload to row indices (inline, or fetched as binary). */
@@ -398,71 +241,14 @@ function renderStatus(modelEl: HTMLElement): void {
 function setupChips(): void {
   const runItems = addGroup($("chips"), "run", "RUN");
   const hlItems = addGroup($("chips"), "highlight", "HIGHLIGHT");
-  const sugar = document.createElement("button");
-  sugar.className = "chip run";
-  sugar.textContent = "give sugar";
-  sugar.title = "simulate 1 s of the fly tasting sugar (Shiu et al. 2024 model): 20 sugar-sensing neurons at 100 Hz, MN9 read out";
-  sugar.addEventListener("click", () => void giveSugar());
-  sugarChip = sugar;
-  runItems.appendChild(sugar);
-  for (const [path, label, title] of [
-    ["dose_response", "dose", "sweep the sugar neurons from 10 to 200 Hz and plot MN9's response (dose-response curve, 3 trials per rate, ~20 s)"],
-    ["screen", "screen", "silence the 8 busiest non-sensory neurons one at a time and rank their effect on MN9 (3 trials each, ~40 s)"],
-  ] as const) {
-    const b = document.createElement("button");
-    b.className = "chip run";
-    b.textContent = label;
-    b.title = title;
-    b.addEventListener("click", () => void runExperiment(path, b, label));
-    experimentChips.push(b);
-    runItems.appendChild(b);
-  }
-  const walk = document.createElement("button");
-  walk.className = "chip run";
-  walk.textContent = "physics walk (demo)";
-  walk.title = "replay a physics simulation of tripod walking (NeuroMechFly v2, flygym 2.1.1) on the body; a published controller, not driven by the brain model";
-  walk.setAttribute("aria-pressed", "false");
-  walk.addEventListener("click", () => { liveClient?.stop(); bodyFlow?.stop(); void walkPlayer?.toggle(); });
-  walkChip = walk;
-  runItems.appendChild(walk);
-  for (const key of Object.keys(FLOW_PRESETS) as FlowKey[]) {
-    const b = document.createElement("button");
-    b.className = "chip run";
-    b.textContent = FLOW_PRESETS[key].label;
-    b.title = FLOW_PRESETS[key].title;
-    b.setAttribute("aria-pressed", "false");
-    b.addEventListener("click", () => pressFlowChip(key));
-    flowChips.set(key, b);
-    runItems.appendChild(b);
-  }
-  const move = document.createElement("button");
-  move.className = "chip run";
-  move.textContent = "move body";
-  move.title = "compute the physics body that this recording's descending neurons would drive (our mapping; about 8 s of compute per simulated second, up to 3 s of the run) and replay it with the recording";
-  move.disabled = true;
-  move.addEventListener("click", () => {
-    if (!bodyFlow || !shown?.a.id) return;
-    walkPlayer?.stop();
-    activeFlowKey = null;
-    void bodyFlow.moveBody(shown.a.id, shown.a.durationMs);
-  });
-  moveChip = move;
-  runItems.appendChild(move);
   const liveBtn = document.createElement("button");
   liveBtn.className = "chip run";
-  liveBtn.textContent = "live (dev)";
-  liveBtn.title = `dev entry: start or stop a live brain+body session in the glass cube (${DEV_PRESET} at ${DEV_RATE_HZ} Hz). Runs as fast as the computer allows and shows its real speed; the chat will drive it later`;
+  liveBtn.textContent = "live";
+  liveBtn.title = `dev entry: start or stop a live brain+body session in the glass cube (${DEV_PRESET} at ${DEV_RATE_HZ} Hz). Shows its real speed; the chat adds cubes and threats to it`;
   liveBtn.setAttribute("aria-pressed", "false");
   liveBtn.addEventListener("click", () => liveClient?.toggle());
   liveChip = liveBtn;
   runItems.appendChild(liveBtn);
-  const loom = document.createElement("button");
-  loom.className = "chip run";
-  loom.textContent = LOOMING_LABEL;
-  loom.title = "a looming disc on the right eye's motion detectors (T4/T5), 300 Hz, 5 trials (~1 min); plays DNp01's response, and the body raises its wings (our illustration)";
-  loom.addEventListener("click", () => void runLooming(loom));
-  experimentChips.push(loom);
-  runItems.appendChild(loom);
   for (const chip of CHIPS) {
     const b = document.createElement("button");
     b.className = chip.params ? "chip" : "chip sep";

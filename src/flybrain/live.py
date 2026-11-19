@@ -436,6 +436,8 @@ class LiveSession:
                 msg["air"] = out["air"]
             if "wings" in out:
                 msg["wings"], msg["wings_note"] = np.asarray(out["wings"]).tolist(), out["wings_note"]
+                if "wing_cycle" in out:
+                    msg["wing_cycle"] = np.asarray(out["wing_cycle"]).tolist()
             msg["takeoff"] = {"triggered": away is not None, "gf_hits": list(self._gf_hits), "rule": GF_RULE_NOTE, "note": getattr(self.body, "takeoff_note", None)}
         if self.touch_rows:
             msg["senses"]["touch"] = {"sides": touch_now, "driven_cells": sum(len(self.touch_rows.get(s, ())) for s in touch_now),

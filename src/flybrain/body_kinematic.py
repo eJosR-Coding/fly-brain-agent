@@ -58,7 +58,7 @@ RATE_FLOOR = 0.2
 TAKEOFF_PREP_MS = 20.0  # middle legs extend; the root is still
 TAKEOFF_LEG_EXTENSION = 1.35  # middle-leg bodies move to 1.35 x their distance from the coxa (pose only; quaternions untouched)
 FLIGHT_PATH = Path(__file__).resolve().parent / "data" / "fly-flight-clips.json"
-FLIGHT_SLOWDOWN = 10.0  # the recorded flight (0.2-0.6 s) plays 10x slower, so it lasts seconds on screen
+FLIGHT_SLOWDOWN = 3.0  # the recorded flight (0.2-0.6 s) plays 3x slower, so it lasts about a second on screen
 FLIGHT_SCALE_MM = 5.0  # mm of world per dataset length unit (assumed cm: 10 mm) x 0.5, so the flight stays inside the 50 mm cube
 FLIGHT_CEILING_MM = 45.0  # world rule: the glass ceiling
 FLIGHT_TURN_MS = 150.0  # the body swings from its heading to the flight heading
@@ -66,9 +66,10 @@ RAMP_MS = 100.0  # wings unfold and legs tuck (and the reverse at landing)
 LEG_TUCK = 0.55  # leg bodies move to 0.55 x their distance from the coxa in flight (a labelled flight pose)
 DESCENT_S = 1.0  # after the clip: height eases to the floor, forward speed decays to zero
 WING_DISPLAY_HZ = 10.0  # wingbeat pattern replayed at 10 Hz in simulated time (real ~200 Hz aliases at the 200 Hz frame rate)
+WING_CYCLE_SAMPLES = 16  # one whole wingbeat per chunk (current weight and amplitude): the viewer flaps it at its own display rate
 LANDED_MS = 100.0  # after touchdown the legs relax back to the standing pose and the wings fold
-WING_NOTE = (f"wings: flybody flight-imitation wingbeat (one real cycle: stroke, deviation, rotation) replayed at {WING_DISPLAY_HZ:g} Hz instead of "
-             "~200 Hz (the real rate aliases at the display frame rate); both wings share it (no steering asymmetry yet)")
+WING_NOTE = ("wings: flybody flight-imitation wingbeat (one real cycle: stroke, deviation, rotation; ~200 Hz in the data); "
+             "both wings share it (no steering asymmetry yet)")
 TAKEOFF_NOTE = ("takeoff + flight (ours, not validated): short-mode jump after the giant fibre rule fired, then a real fly flight clip "
                 "(flybody dataset, Vaxenburg et al. 2025, GPL-3.0+) played "
                 f"{FLIGHT_SLOWDOWN:g}x slower with the path scaled x{FLIGHT_SCALE_MM / 10:g} to fit the cube, a simple eased descent and a landing. "
@@ -345,10 +346,10 @@ class KinematicBody:
         f = lambda k: float(np.interp(u, np.arange(len(c[k])), c[k]))
         return f("x") * FLIGHT_SCALE_MM, f("y") * FLIGHT_SCALE_MM, f("z_abs") * FLIGHT_SCALE_MM, math.radians(f("yaw_deg"))
 
-    def _wing_angles(self) -> np.ndarray:
+    def _wing_angles(self, cycles: float | None = None) -> np.ndarray:
         """(6,) raw flybody wing angles in degrees [stroke, deviation, rotation] left then right, scaled by the wing weight."""
         pat = self._flight.wing
-        u = (self._wing_cycles % 1.0) * len(pat)
+        u = ((self._wing_cycles if cycles is None else cycles) % 1.0) * len(pat)
         i = int(u) % len(pat)
         a = pat[i] + (pat[(i + 1) % len(pat)] - pat[i]) * (u - int(u))
         deg = np.degrees(a) * self._wing_w
@@ -562,6 +563,7 @@ class KinematicBody:
         if wings.any():
             out["wings"] = np.round(wings, 2)
             out["wings_note"] = WING_NOTE
+            out["wing_cycle"] = np.round([self._wing_angles(k / WING_CYCLE_SAMPLES) for k in range(WING_CYCLE_SAMPLES)], 2)
         if self.bounds is not None:
             out["world"] = {"bounds_mm": list(self.bounds), "blocked": blocked, "walls": sorted(walls), "note": WORLD_NOTE}
         else:

@@ -33,6 +33,8 @@ export interface WalkClip {
   world: { pos: Float64Array; yawRad: Float64Array } | null;
   /** flight wing angles, frame-major [frame][6] (degrees, flybody convention, left then right), from a live chunk; absent otherwise */
   wings?: Float64Array;
+  /** one whole wingbeat, [sample][6] (same units), for the viewer to flap at its own display rate; absent when the chunk has no flight wings */
+  wingCycle?: Float64Array;
 }
 
 /** Root transform of the whole fly at one time: `matrix` (column-major 4x4, viewer frame, mm) carries the mesh from the
@@ -161,6 +163,18 @@ export function wingsAt(clip: WalkClip, t: number): number[] | null {
   const i = locate(clip, t).i;
   const w = Array.from(clip.wings.subarray(i * 6, i * 6 + 6));
   return w.some((v) => v !== 0) ? w : null;
+}
+
+/** Wing angles of the display wingbeat at phase (cycles, any real): the chunk's whole wingbeat sampled linearly, wrapped. Null without one. */
+export function wingCycleAt(clip: WalkClip, phase: number): number[] | null {
+  const c = clip.wingCycle;
+  if (!c || c.length < 12 || c.length % 6 !== 0 || !Number.isFinite(phase)) return null;
+  const n = c.length / 6;
+  const u = (((phase % 1) + 1) % 1) * n;
+  const i = Math.floor(u) % n, j = (i + 1) % n, a = u - Math.floor(u);
+  const out: number[] = [];
+  for (let k = 0; k < 6; k++) out.push(c[i * 6 + k] + (c[j * 6 + k] - c[i * 6 + k]) * a);
+  return out;
 }
 
 /** The escape flag of the frame at time t (false when the clip carries none). */
