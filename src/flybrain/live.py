@@ -15,8 +15,10 @@ message says so (`fallback`). A GPU error does the same.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import threading
+from pathlib import Path
 import time
 from collections import deque
 from collections.abc import Callable
@@ -51,8 +53,32 @@ TOUCH_HZ = 25.0  # OUR constant rate for antennal mechanosensors when the body i
 TOUCH_HEAD_ON_DEG = 30.0  # a wall within this angle of the heading touches both antennae
 TOUCH_NOTE = (f"Touch is OURS (not validated): while a glass wall blocks the fly, the antennal mechanosensors (Johnston's organ JO-* "
               f"and antennal bristles BM_Ant) on the side of the contact fire at a constant {TOUCH_HZ:g} Hz (both when head-on); the leg "
-              "mechanosensors are in the VNC, which this brain-only connectome does not contain; what the fly does is the brain's")
+              "touch route is in leg_note; what the fly does is the brain's")
+LEG_TOUCH_HZ = TOUCH_HZ  # OUR constant rate for the matched ascending neurons of the legs on the contact side (labelled, not validated)
+LEG_TOUCH_JSON = Path(__file__).parent / "data" / "leg_touch_ans.json"
+LEG_TOUCH_NOTE = (f"Leg touch is OURS (not validated): the leg mechanosensory route is leg bristle / hair-plate neurons -> nerve cord -> ascending "
+                  f"neurons (BANC v888 connectivity, <= 2 synapses) -> brain; the brain-only FlyWire connectome starts at the ascending neurons, so "
+                  f"the matched ascending neurons of the legs on the contact side (front legs only when head-on) fire at a constant {LEG_TOUCH_HZ:g} Hz")
 _WALL_NORMAL_DEG = {"x_max": 0.0, "y_max": 90.0, "x_min": 180.0, "y_min": -90.0}  # outward normal of each wall, arena frame
+
+
+def load_leg_touch(path: Path = LEG_TOUCH_JSON) -> dict[str, dict[str, list[int]]]:
+    """{'left'|'right': {'front': root ids, 'all': root ids}} from the packaged BANC-derived mapping ({} when absent)."""
+    try:
+        legs = json.loads(Path(path).read_text())["legs"]
+    except (OSError, KeyError, ValueError):
+        return {}
+    out: dict[str, dict[str, list[int]]] = {}
+    for side in ("left", "right"):
+        per = {leg: sorted({r for a in legs.get(f"{leg}_{side}", {}).get("ans", ()) for r in a["flywire_root_ids"]}) for leg in ("front", "middle", "hind")}
+        out[side] = {"front": per["front"], "all": sorted({r for v in per.values() for r in v})}
+    return out
+
+
+def leg_touch_rows(leg_rows: dict, sides: list[str]) -> np.ndarray:
+    """Rows of the ascending neurons to drive: head-on (both sides) the front legs of both; else all legs of the contact side."""
+    parts = [np.asarray(leg_rows.get(s, {}).get("front" if len(sides) > 1 else "all", ()), dtype=np.int64) for s in sides]
+    return np.unique(np.concatenate(parts)) if parts else np.zeros(0, dtype=np.int64)
 
 
 def touch_sides(walls, yaw_deg: float) -> list[str]:
@@ -102,7 +128,8 @@ class LiveSession:
                  thermal=None, brain_fallback: Callable[[], object] | None = None, include_active: bool = False,
                  max_active: int = MAX_ACTIVE_ROWS, binary_frames: bool = False,
                  brain_lock=None, body_lock=None, arena: dict | None = None, vision=None,
-                 taste_rows: dict[str, np.ndarray] | None = None, touch_rows: dict[str, np.ndarray] | None = None) -> None:
+                 taste_rows: dict[str, np.ndarray] | None = None, touch_rows: dict[str, np.ndarray] | None = None,
+                 leg_rows: dict[str, dict[str, np.ndarray]] | None = None) -> None:
         self.brain, self.body, self.groups = brain, body, groups
         self.chunk_ms, self.mapper = float(chunk_ms), mapper or body_drive.DriveMapper(chunk_ms)
         self._clock, self.thermal, self._brain_fallback = clock, thermal, brain_fallback
@@ -116,6 +143,7 @@ class LiveSession:
         self._taste_sig: tuple = ()
         # antennal touch: sides blocked by a wall in the PREVIOUS chunk (the contact is known after the body moved)
         self.touch_rows = touch_rows or {}
+        self.leg_rows = leg_rows or {}
         self._touch: list[str] = []
         self._touched: list[str] = []
         # the fly's eye (fly_eye.VisionFrontEnd or a stand-in): sets per-neuron T4/T5 rates every chunk from the pose of the last one
@@ -199,6 +227,9 @@ class LiveSession:
             tr = self.touch_rows.get(side)
             if tr is not None and len(tr):
                 rows, rates = np.concatenate([rows, tr]), np.concatenate([rates, np.full(len(tr), TOUCH_HZ)])
+        lr = leg_touch_rows(self.leg_rows, self._touch)
+        if len(lr):
+            rows, rates = np.concatenate([rows, lr]), np.concatenate([rates, np.full(len(lr), LEG_TOUCH_HZ)])
         user_rows, user_rate = self._stimulus
         if user_rows and user_rate > 0:
             rows, rates = np.concatenate([rows, np.asarray(user_rows, dtype=np.int64)]), np.concatenate([rates, np.full(len(user_rows), user_rate)])
@@ -342,7 +373,9 @@ class LiveSession:
         }
         if self.touch_rows:
             msg["senses"]["touch"] = {"sides": touch_now, "driven_cells": sum(len(self.touch_rows.get(s, ())) for s in touch_now),
-                                      "rate_hz": TOUCH_HZ if touch_now else 0.0, "note": TOUCH_NOTE}
+                                      "rate_hz": TOUCH_HZ if touch_now else 0.0, "note": TOUCH_NOTE,
+                                      "leg_driven_cells": len(leg_touch_rows(self.leg_rows, touch_now)),
+                                      "leg_rate_hz": LEG_TOUCH_HZ if touch_now and self.leg_rows else 0.0, "leg_note": LEG_TOUCH_NOTE}
         if seen is not None:
             msg["wall_ms"]["vision"] = round((tb - t0) * 1000.0, 3)
         if world or self.world.objects or self.world.used:
@@ -455,8 +488,14 @@ def build_live_session(atlas, row_index, sims, body_lock=None, *, seed: int = 0,
             touch[side] = r[r >= 0].astype(np.int64)
     except Exception:  # noqa: BLE001 - no such cells in this atlas: touching a wall then drives nothing
         touch = {}
+    leg = {}
+    try:
+        for side, d in load_leg_touch().items():
+            leg[side] = {k: (lambda r: r[r >= 0].astype(np.int64))(row_index.positions(np.asarray(v, dtype=np.int64))) for k, v in d.items()}
+    except Exception:  # noqa: BLE001 - no mapping / ids in this atlas: leg touch then drives nothing
+        leg = {}
     return LiveSession(
         brain, body, readout_groups(atlas, row_index), chunk_ms=chunk_ms, thermal=sims.thermal,
         brain_fallback=lambda: cpu.open_stream(seed=seed), include_active=include_active,
-        binary_frames=binary_frames, arena=arena, vision=front, taste_rows=taste, touch_rows=touch, brain_lock=sims.exclusive, body_lock=(lambda: body_lock) if body_lock is not None else None,
+        binary_frames=binary_frames, arena=arena, vision=front, taste_rows=taste, touch_rows=touch, leg_rows=leg, brain_lock=sims.exclusive, body_lock=(lambda: body_lock) if body_lock is not None else None,
     )

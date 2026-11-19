@@ -1,0 +1,989 @@
+{
+ "classes": [
+  "bristle_neuron",
+  "hair_plate_neuron"
+ ],
+ "top_per_leg_side": 15,
+ "legs": {
+  "front_left": {
+   "n_sensory": 526,
+   "n_AN_types_reached_matched": 684,
+   "ans": [
+    {
+     "type": "AN_GNG_123",
+     "an_side": "left",
+     "strength": 0.56887,
+     "flywire_root_ids": [
+      720575940640515699
+     ]
+    },
+    {
+     "type": "AN_GNG_64",
+     "an_side": "left",
+     "strength": 0.52301,
+     "flywire_root_ids": [
+      720575940654227105
+     ]
+    },
+    {
+     "type": "AN_GNG_29",
+     "an_side": "left",
+     "strength": 0.50118,
+     "flywire_root_ids": [
+      720575940617953241
+     ]
+    },
+    {
+     "type": "AN_GNG_165",
+     "an_side": "left",
+     "strength": 0.40724,
+     "flywire_root_ids": [
+      720575940617641301,
+      720575940618083749,
+      720575940618556142,
+      720575940624339996,
+      720575940622510323,
+      720575940621978365,
+      720575940624310601,
+      720575940624933765,
+      720575940631928121,
+      720575940630182716,
+      720575940644530484,
+      720575940622150152,
+      720575940621288230,
+      720575940615438521,
+      720575940613882822,
+      720575940613530093
+     ]
+    },
+    {
+     "type": "AN_GNG_167",
+     "an_side": "left",
+     "strength": 0.37015,
+     "flywire_root_ids": [
+      720575940622488103,
+      720575940623426192,
+      720575940626258448,
+      720575940628034108,
+      720575940629185084
+     ]
+    },
+    {
+     "type": "AN_GNG_137",
+     "an_side": "right",
+     "strength": 0.31309,
+     "flywire_root_ids": [
+      720575940628833989
+     ]
+    },
+    {
+     "type": "AN_GNG_169",
+     "an_side": "right",
+     "strength": 0.28777,
+     "flywire_root_ids": [
+      720575940625985098,
+      720575940618096321
+     ]
+    },
+    {
+     "type": "AN_GNG_166",
+     "an_side": "left",
+     "strength": 0.28021,
+     "flywire_root_ids": [
+      720575940605811657,
+      720575940622577300,
+      720575940620695387,
+      720575940638991349
+     ]
+    },
+    {
+     "type": "AN_GNG_178",
+     "an_side": "left",
+     "strength": 0.2788,
+     "flywire_root_ids": [
+      720575940639652678,
+      720575940641781152,
+      720575940633142831
+     ]
+    },
+    {
+     "type": "AN_GNG_91",
+     "an_side": "left",
+     "strength": 0.27413,
+     "flywire_root_ids": [
+      720575940637160937
+     ]
+    },
+    {
+     "type": "AN_GNG_137",
+     "an_side": "left",
+     "strength": 0.25886,
+     "flywire_root_ids": [
+      720575940607118275
+     ]
+    },
+    {
+     "type": "AN_GNG_VES_5",
+     "an_side": "right",
+     "strength": 0.25659,
+     "flywire_root_ids": [
+      720575940626669355
+     ]
+    },
+    {
+     "type": "AN_GNG_72",
+     "an_side": "left",
+     "strength": 0.2546,
+     "flywire_root_ids": [
+      720575940615926796
+     ]
+    },
+    {
+     "type": "AN_GNG_191",
+     "an_side": "left",
+     "strength": 0.24592,
+     "flywire_root_ids": [
+      720575940621978109,
+      720575940622401267,
+      720575940619679471
+     ]
+    },
+    {
+     "type": "AN_GNG_13",
+     "an_side": "left",
+     "strength": 0.24171,
+     "flywire_root_ids": [
+      720575940634472590
+     ]
+    }
+   ]
+  },
+  "front_right": {
+   "n_sensory": 531,
+   "n_AN_types_reached_matched": 684,
+   "ans": [
+    {
+     "type": "AN_GNG_123",
+     "an_side": "right",
+     "strength": 1.00107,
+     "flywire_root_ids": [
+      720575940639301747
+     ]
+    },
+    {
+     "type": "AN_GNG_165",
+     "an_side": "right",
+     "strength": 0.6089,
+     "flywire_root_ids": [
+      720575940622399783,
+      720575940624974473,
+      720575940613194818,
+      720575940606300508,
+      720575940618880865,
+      720575940608603512,
+      720575940621712821,
+      720575940619119600,
+      720575940632512703,
+      720575940633281272,
+      720575940634388622,
+      720575940617937287,
+      720575940613580594,
+      720575940621668533,
+      720575940633000162,
+      720575940627008359,
+      720575940613235615,
+      720575940657604737,
+      720575940624082788,
+      720575940614118546,
+      720575940619297520,
+      720575940625178501
+     ]
+    },
+    {
+     "type": "AN_GNG_23",
+     "an_side": "right",
+     "strength": 0.42067,
+     "flywire_root_ids": [
+      720575940630705170
+     ]
+    },
+    {
+     "type": "AN_GNG_178",
+     "an_side": "right",
+     "strength": 0.39159,
+     "flywire_root_ids": [
+      720575940617871394,
+      720575940638858549,
+      720575940620589147
+     ]
+    },
+    {
+     "type": "AN_GNG_VES_7",
+     "an_side": "right",
+     "strength": 0.36295,
+     "flywire_root_ids": [
+      720575940620752408,
+      720575940620294420,
+      720575940621975773
+     ]
+    },
+    {
+     "type": "AN_GNG_134",
+     "an_side": "right",
+     "strength": 0.3197,
+     "flywire_root_ids": [
+      720575940629041790
+     ]
+    },
+    {
+     "type": "AN_GNG_91",
+     "an_side": "right",
+     "strength": 0.30291,
+     "flywire_root_ids": [
+      720575940637650830
+     ]
+    },
+    {
+     "type": "AN_GNG_SAD_1",
+     "an_side": "right",
+     "strength": 0.28832,
+     "flywire_root_ids": [
+      720575940619153136
+     ]
+    },
+    {
+     "type": "AN_GNG_96",
+     "an_side": "right",
+     "strength": 0.26899,
+     "flywire_root_ids": [
+      720575940630300434
+     ]
+    },
+    {
+     "type": "AN_GNG_VES_1",
+     "an_side": "left",
+     "strength": 0.26675,
+     "flywire_root_ids": [
+      720575940629820794
+     ]
+    },
+    {
+     "type": "AN_multi_117",
+     "an_side": "left",
+     "strength": 0.24635,
+     "flywire_root_ids": [
+      720575940626148520,
+      720575940621227173
+     ]
+    },
+    {
+     "type": "AN_VES_GNG_3",
+     "an_side": "right",
+     "strength": 0.24174,
+     "flywire_root_ids": [
+      720575940635462757
+     ]
+    },
+    {
+     "type": "AN_GNG_137",
+     "an_side": "right",
+     "strength": 0.23174,
+     "flywire_root_ids": [
+      720575940628833989
+     ]
+    },
+    {
+     "type": "AN_AVLP_51",
+     "an_side": "right",
+     "strength": 0.20963,
+     "flywire_root_ids": [
+      720575940612608790,
+      720575940625140755,
+      720575940629087682,
+      720575940622239553,
+      720575940627239336,
+      720575940629008655,
+      720575940639746979,
+      720575940632632474,
+      720575940614380771,
+      720575940614398570
+     ]
+    },
+    {
+     "type": "AN_GNG_FLA_2",
+     "an_side": "left",
+     "strength": 0.20592,
+     "flywire_root_ids": [
+      720575940623118029
+     ]
+    }
+   ]
+  },
+  "middle_left": {
+   "n_sensory": 514,
+   "n_AN_types_reached_matched": 678,
+   "ans": [
+    {
+     "type": "AN_GNG_191",
+     "an_side": "left",
+     "strength": 0.7021,
+     "flywire_root_ids": [
+      720575940621978109,
+      720575940622401267,
+      720575940619679471
+     ]
+    },
+    {
+     "type": "AN_GNG_134",
+     "an_side": "left",
+     "strength": 0.42392,
+     "flywire_root_ids": [
+      720575940633185676
+     ]
+    },
+    {
+     "type": "AN_GNG_165",
+     "an_side": "left",
+     "strength": 0.39999,
+     "flywire_root_ids": [
+      720575940617641301,
+      720575940618083749,
+      720575940618556142,
+      720575940624339996,
+      720575940622510323,
+      720575940621978365,
+      720575940624310601,
+      720575940624933765,
+      720575940631928121,
+      720575940630182716,
+      720575940644530484,
+      720575940622150152,
+      720575940621288230,
+      720575940615438521,
+      720575940613882822,
+      720575940613530093
+     ]
+    },
+    {
+     "type": "AN_GNG_169",
+     "an_side": "right",
+     "strength": 0.34269,
+     "flywire_root_ids": [
+      720575940625985098,
+      720575940618096321
+     ]
+    },
+    {
+     "type": "AN_GNG_VES_8",
+     "an_side": "left",
+     "strength": 0.30576,
+     "flywire_root_ids": [
+      720575940603599206
+     ]
+    },
+    {
+     "type": "AN_GNG_VES_7",
+     "an_side": "left",
+     "strength": 0.28161,
+     "flywire_root_ids": [
+      720575940621590237,
+      720575940635029146,
+      720575940608729795
+     ]
+    },
+    {
+     "type": "AN_GNG_65",
+     "an_side": "right",
+     "strength": 0.25764,
+     "flywire_root_ids": [
+      720575940622447309
+     ]
+    },
+    {
+     "type": "AN_GNG_SAD_2",
+     "an_side": "right",
+     "strength": 0.25652,
+     "flywire_root_ids": [
+      720575940625454162
+     ]
+    },
+    {
+     "type": "AN_GNG_SAD_30",
+     "an_side": "right",
+     "strength": 0.25415,
+     "flywire_root_ids": [
+      720575940615137804,
+      720575940620303380
+     ]
+    },
+    {
+     "type": "AN_AVLP_GNG_22",
+     "an_side": "right",
+     "strength": 0.24607,
+     "flywire_root_ids": [
+      720575940623165965,
+      720575940625319245
+     ]
+    },
+    {
+     "type": "AN_GNG_VES_2",
+     "an_side": "left",
+     "strength": 0.2452,
+     "flywire_root_ids": [
+      720575940619273398
+     ]
+    },
+    {
+     "type": "AN_AVLP_GNG_4",
+     "an_side": "right",
+     "strength": 0.23858,
+     "flywire_root_ids": [
+      720575940615537041
+     ]
+    },
+    {
+     "type": "AN_GNG_WED_3",
+     "an_side": "left",
+     "strength": 0.23552,
+     "flywire_root_ids": [
+      720575940627621628
+     ]
+    },
+    {
+     "type": "AN_GNG_166",
+     "an_side": "left",
+     "strength": 0.22221,
+     "flywire_root_ids": [
+      720575940605811657,
+      720575940622577300,
+      720575940620695387,
+      720575940638991349
+     ]
+    },
+    {
+     "type": "AN_GNG_178",
+     "an_side": "left",
+     "strength": 0.22137,
+     "flywire_root_ids": [
+      720575940639652678,
+      720575940641781152,
+      720575940633142831
+     ]
+    }
+   ]
+  },
+  "middle_right": {
+   "n_sensory": 535,
+   "n_AN_types_reached_matched": 674,
+   "ans": [
+    {
+     "type": "AN_GNG_165",
+     "an_side": "right",
+     "strength": 0.44583,
+     "flywire_root_ids": [
+      720575940622399783,
+      720575940624974473,
+      720575940613194818,
+      720575940606300508,
+      720575940618880865,
+      720575940608603512,
+      720575940621712821,
+      720575940619119600,
+      720575940632512703,
+      720575940633281272,
+      720575940634388622,
+      720575940617937287,
+      720575940613580594,
+      720575940621668533,
+      720575940633000162,
+      720575940627008359,
+      720575940613235615,
+      720575940657604737,
+      720575940624082788,
+      720575940614118546,
+      720575940619297520,
+      720575940625178501
+     ]
+    },
+    {
+     "type": "AN_GNG_134",
+     "an_side": "right",
+     "strength": 0.38391,
+     "flywire_root_ids": [
+      720575940629041790
+     ]
+    },
+    {
+     "type": "AN_GNG_190",
+     "an_side": "right",
+     "strength": 0.33762,
+     "flywire_root_ids": [
+      720575940626986877,
+      720575940629669433
+     ]
+    },
+    {
+     "type": "AN_GNG_95",
+     "an_side": "right",
+     "strength": 0.33643,
+     "flywire_root_ids": [
+      720575940615301009
+     ]
+    },
+    {
+     "type": "AN_GNG_178",
+     "an_side": "right",
+     "strength": 0.28484,
+     "flywire_root_ids": [
+      720575940617871394,
+      720575940638858549,
+      720575940620589147
+     ]
+    },
+    {
+     "type": "AN_GNG_VES_7",
+     "an_side": "right",
+     "strength": 0.25361,
+     "flywire_root_ids": [
+      720575940620752408,
+      720575940620294420,
+      720575940621975773
+     ]
+    },
+    {
+     "type": "AN_AVLP_SAD_5",
+     "an_side": "right",
+     "strength": 0.24897,
+     "flywire_root_ids": [
+      720575940628074199
+     ]
+    },
+    {
+     "type": "AN_GNG_168",
+     "an_side": "right",
+     "strength": 0.22647,
+     "flywire_root_ids": [
+      720575940604820354
+     ]
+    },
+    {
+     "type": "AN_AVLP_GNG_22",
+     "an_side": "left",
+     "strength": 0.21238,
+     "flywire_root_ids": [
+      720575940632996920,
+      720575940635047068
+     ]
+    },
+    {
+     "type": "AN_GNG_VES_8",
+     "an_side": "right",
+     "strength": 0.20946,
+     "flywire_root_ids": [
+      720575940631269843
+     ]
+    },
+    {
+     "type": "AN_GNG_73",
+     "an_side": "left",
+     "strength": 0.20839,
+     "flywire_root_ids": [
+      720575940621706605
+     ]
+    },
+    {
+     "type": "AN_GNG_SAD_2",
+     "an_side": "left",
+     "strength": 0.20348,
+     "flywire_root_ids": [
+      720575940605119776
+     ]
+    },
+    {
+     "type": "AN_AVLP_GNG_18",
+     "an_side": "left",
+     "strength": 0.19527,
+     "flywire_root_ids": [
+      720575940628595944
+     ]
+    },
+    {
+     "type": "AN_GNG_27",
+     "an_side": "left",
+     "strength": 0.17453,
+     "flywire_root_ids": [
+      720575940630137425
+     ]
+    },
+    {
+     "type": "AN_GNG_160",
+     "an_side": "left",
+     "strength": 0.17229,
+     "flywire_root_ids": [
+      720575940622264444
+     ]
+    }
+   ]
+  },
+  "hind_left": {
+   "n_sensory": 561,
+   "n_AN_types_reached_matched": 669,
+   "ans": [
+    {
+     "type": "AN_GNG_165",
+     "an_side": "left",
+     "strength": 0.35524,
+     "flywire_root_ids": [
+      720575940617641301,
+      720575940618083749,
+      720575940618556142,
+      720575940624339996,
+      720575940622510323,
+      720575940621978365,
+      720575940624310601,
+      720575940624933765,
+      720575940631928121,
+      720575940630182716,
+      720575940644530484,
+      720575940622150152,
+      720575940621288230,
+      720575940615438521,
+      720575940613882822,
+      720575940613530093
+     ]
+    },
+    {
+     "type": "AN_GNG_137",
+     "an_side": "left",
+     "strength": 0.30042,
+     "flywire_root_ids": [
+      720575940607118275
+     ]
+    },
+    {
+     "type": "AN_GNG_167",
+     "an_side": "left",
+     "strength": 0.29199,
+     "flywire_root_ids": [
+      720575940622488103,
+      720575940623426192,
+      720575940626258448,
+      720575940628034108,
+      720575940629185084
+     ]
+    },
+    {
+     "type": "AN_AVLP_GNG_23",
+     "an_side": "right",
+     "strength": 0.2879,
+     "flywire_root_ids": [
+      720575940621846525,
+      720575940638197737,
+      720575940622976845,
+      720575940603767473,
+      720575940635473886,
+      720575940628508534,
+      720575940624807301,
+      720575940615322553
+     ]
+    },
+    {
+     "type": "AN_GNG_191",
+     "an_side": "left",
+     "strength": 0.25065,
+     "flywire_root_ids": [
+      720575940621978109,
+      720575940622401267,
+      720575940619679471
+     ]
+    },
+    {
+     "type": "AN_GNG_94",
+     "an_side": "left",
+     "strength": 0.24614,
+     "flywire_root_ids": [
+      720575940616195467,
+      720575940633432568
+     ]
+    },
+    {
+     "type": "AN_AVLP_GNG_22",
+     "an_side": "right",
+     "strength": 0.2344,
+     "flywire_root_ids": [
+      720575940623165965,
+      720575940625319245
+     ]
+    },
+    {
+     "type": "AN_GNG_29",
+     "an_side": "left",
+     "strength": 0.23102,
+     "flywire_root_ids": [
+      720575940617953241
+     ]
+    },
+    {
+     "type": "AN_GNG_65",
+     "an_side": "right",
+     "strength": 0.22905,
+     "flywire_root_ids": [
+      720575940622447309
+     ]
+    },
+    {
+     "type": "AN_GNG_VES_6",
+     "an_side": "right",
+     "strength": 0.20477,
+     "flywire_root_ids": [
+      720575940633507637
+     ]
+    },
+    {
+     "type": "AN_IPS_GNG_7",
+     "an_side": "left",
+     "strength": 0.1993,
+     "flywire_root_ids": [
+      720575940631372088,
+      720575940623747984,
+      720575940626621317,
+      720575940632530913,
+      720575940627137540,
+      720575940612861077
+     ]
+    },
+    {
+     "type": "AN_GNG_178",
+     "an_side": "left",
+     "strength": 0.18723,
+     "flywire_root_ids": [
+      720575940639652678,
+      720575940641781152,
+      720575940633142831
+     ]
+    },
+    {
+     "type": "AN_IPS_WED_1",
+     "an_side": "left",
+     "strength": 0.18598,
+     "flywire_root_ids": [
+      720575940602430944
+     ]
+    },
+    {
+     "type": "AN_GNG_190",
+     "an_side": "left",
+     "strength": 0.18133,
+     "flywire_root_ids": [
+      720575940631295703,
+      720575940646684292,
+      720575940627403719
+     ]
+    },
+    {
+     "type": "AN_GNG_168",
+     "an_side": "right",
+     "strength": 0.17095,
+     "flywire_root_ids": [
+      720575940604820354
+     ]
+    }
+   ]
+  },
+  "hind_right": {
+   "n_sensory": 616,
+   "n_AN_types_reached_matched": 671,
+   "ans": [
+    {
+     "type": "AN_GNG_165",
+     "an_side": "right",
+     "strength": 0.67946,
+     "flywire_root_ids": [
+      720575940622399783,
+      720575940624974473,
+      720575940613194818,
+      720575940606300508,
+      720575940618880865,
+      720575940608603512,
+      720575940621712821,
+      720575940619119600,
+      720575940632512703,
+      720575940633281272,
+      720575940634388622,
+      720575940617937287,
+      720575940613580594,
+      720575940621668533,
+      720575940633000162,
+      720575940627008359,
+      720575940613235615,
+      720575940657604737,
+      720575940624082788,
+      720575940614118546,
+      720575940619297520,
+      720575940625178501
+     ]
+    },
+    {
+     "type": "AN_AVLP_53",
+     "an_side": "right",
+     "strength": 0.32754,
+     "flywire_root_ids": [
+      720575940616824197,
+      720575940616824709,
+      720575940614607675,
+      720575940605256894,
+      720575940620637576,
+      720575940631978592,
+      720575940613608089,
+      720575940628116183,
+      720575940629856505,
+      720575940629598521,
+      720575940635677668,
+      720575940634858096
+     ]
+    },
+    {
+     "type": "AN_GNG_184",
+     "an_side": "right",
+     "strength": 0.30066,
+     "flywire_root_ids": [
+      720575940627738679,
+      720575940619737876,
+      720575940610160357,
+      720575940633724271
+     ]
+    },
+    {
+     "type": "AN_GNG_94",
+     "an_side": "right",
+     "strength": 0.27702,
+     "flywire_root_ids": [
+      720575940629337600,
+      720575940636706118
+     ]
+    },
+    {
+     "type": "AN_GNG_90",
+     "an_side": "right",
+     "strength": 0.27635,
+     "flywire_root_ids": [
+      720575940629794700
+     ]
+    },
+    {
+     "type": "AN_GNG_SAD_1",
+     "an_side": "right",
+     "strength": 0.25715,
+     "flywire_root_ids": [
+      720575940619153136
+     ]
+    },
+    {
+     "type": "AN_AVLP_GNG_23",
+     "an_side": "left",
+     "strength": 0.25316,
+     "flywire_root_ids": [
+      720575940623222185,
+      720575940659523969,
+      720575940609265476,
+      720575940623900052,
+      720575940634381454,
+      720575940603814060,
+      720575940627560386
+     ]
+    },
+    {
+     "type": "AN_GNG_VES_7",
+     "an_side": "right",
+     "strength": 0.25233,
+     "flywire_root_ids": [
+      720575940620752408,
+      720575940620294420,
+      720575940621975773
+     ]
+    },
+    {
+     "type": "AN_IPS_WED_1",
+     "an_side": "right",
+     "strength": 0.23444,
+     "flywire_root_ids": [
+      720575940631844300
+     ]
+    },
+    {
+     "type": "AN_IPS_GNG_7",
+     "an_side": "right",
+     "strength": 0.2288,
+     "flywire_root_ids": [
+      720575940623606857,
+      720575940620809599,
+      720575940630652876,
+      720575940616194443,
+      720575940651145857,
+      720575940638745060
+     ]
+    },
+    {
+     "type": "AN_GNG_178",
+     "an_side": "right",
+     "strength": 0.22184,
+     "flywire_root_ids": [
+      720575940617871394,
+      720575940638858549,
+      720575940620589147
+     ]
+    },
+    {
+     "type": "AN_GNG_88",
+     "an_side": "right",
+     "strength": 0.19396,
+     "flywire_root_ids": [
+      720575940633051499
+     ]
+    },
+    {
+     "type": "AN_GNG_190",
+     "an_side": "right",
+     "strength": 0.19274,
+     "flywire_root_ids": [
+      720575940626986877,
+      720575940629669433
+     ]
+    },
+    {
+     "type": "AN_AVLP_GNG_22",
+     "an_side": "left",
+     "strength": 0.18712,
+     "flywire_root_ids": [
+      720575940632996920,
+      720575940635047068
+     ]
+    },
+    {
+     "type": "AN_GNG_WED_3",
+     "an_side": "right",
+     "strength": 0.17838,
+     "flywire_root_ids": [
+      720575940631505711
+     ]
+    }
+   ]
+  }
+ },
+ "stats": {
+  "banc_AN_cells": 1849,
+  "banc_AN_types": 527,
+  "banc_AN_cells_matched": 1405
+ },
+ "provenance": {
+  "source": "BANC v888 (Bates et al. 2025, Nature 2026; bioRxiv 10.1101/2025.07.31.667571), female brain+nerve cord, one animal",
+  "urls": [
+   "https://storage.googleapis.com/lee-lab_brain-and-nerve-cord-fly-connectome/compiled_data/banc_888/banc_888_meta.feather",
+   "https://storage.googleapis.com/lee-lab_brain-and-nerve-cord-fly-connectome/compiled_data/banc_888/banc_888_edgelist_simple_v2.feather",
+   "https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/8TFGGB"
+  ],
+  "license": "CC BY 4.0",
+  "method": "Our choice (not validated): sensory = afferent leg neurons of the classes above, per leg and side; path strength to each ascending neuron = sum over sensory cells of (1-hop input share + 2-hop product of input shares), edgelist_simple_v2 'norm' (syn>=5); ANs aggregated by (FlyWire type name, side), top 15 kept; BANC ANs are matched to FlyWire ascending neurons by type name (fafb_cell_type, else cell_type/manc_cell_type); unmatched dropped; all FlyWire cells of the same type and side are used.",
+  "flywire_annotation": "flywire_neuron_annotations.tsv (v783), super_class=ascending"
+ }
+}
