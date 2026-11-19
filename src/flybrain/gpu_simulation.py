@@ -45,6 +45,11 @@ MAX_SPIKES_PER_STEP = 262_144  # spike event buffer capacity per tick; beyond it
 DELIVER_BLOCKS = 2048  # grid-stride blocks of the deliver kernel (spike count is read on the device)
 CHECK_EVERY = 500  # steps between overflow checks (a device sync)
 ARRIVAL_SLOTS = 18  # ring slots; must equal t_dly / dt (checked)
+LIST_SLOTS = ARRIVAL_SLOTS + 1  # work lists of the active-set path (one more than the ring: see _GPUState.advance)
+SPARSE_BLOCKS = 160  # grid-stride blocks of the active-set update kernel (the work list length is read on the device)
+SPARSE_DELIVER_BLOCKS = 256
+SWITCH_TO_DENSE = 8  # plain kernels when more than 1/8 of the neurons are still moving ...
+SWITCH_TO_SPARSE = 16  # ... and the active-set ones again below 1/16 (hysteresis)
 
 
 class GPUUnavailable(RuntimeError):
@@ -99,7 +104,8 @@ def estimate_run_bytes(n: int, n_edges: int, trials: int, n_bins: int,
     state = n * trials * (4 + 4 + 2 + 4)  # v, g float32, left int16, trial counts int32
     ring = ARRIVAL_SLOTS * n * trials * 4
     frames = n_bins * n * 4
-    return int(csr + per_neuron + state + ring + frames + max_spikes * 4 + n * 4 * 2)
+    work_lists = LIST_SLOTS * n * 8  # active-set path: int32 list + int32 flag per slot (single trial only)
+    return int(csr + per_neuron + state + ring + frames + work_lists + max_spikes * 4 + n * 4 * 2)
 
 
 # -- telemetry (best effort) ---------------------------------------------------------------
@@ -196,6 +202,13 @@ __device__ __forceinline__ float uniform(unsigned long long seed, unsigned int s
     return (float)(z >> 40) * (1.0f / 16777216.0f);
 }
 
+// the free relaxation of a ready neuron (before arrivals): ONE definition, so every kernel that asks "would this
+// neuron move?" computes the very same floats as the update itself
+__device__ __forceinline__ void relax(float& vv, float& gg, float decay_v, float decay_g, float drive, float v0) {
+    vv = v0 + (vv - v0) * decay_v + gg * drive;
+    gg = gg * decay_g;
+}
+
 extern "C" __global__ void update(
     float* v, float* g, short* left, const short* rfc, const float* p, const unsigned char* silenced,
     float* arrivals,            // this tick's ring slot: consumed and cleared here
@@ -209,14 +222,14 @@ extern "C" __global__ void update(
     if (idx >= n * trials) return;
     int i = idx / trials;
     float arr = arrivals[idx];
-    arrivals[idx] = 0.0f;
+    if (arr != 0.0f) arrivals[idx] = 0.0f;            // a zero slot is already clear: no write
     short lf = left[idx];
     bool ready = (lf == 0);
-    float vv = v[idx], gg = g[idx];
+    float v_old = v[idx], g_old = g[idx];
+    float vv = v_old, gg = g_old;
     bool spike = false;
     if (ready) {
-        vv = v0 + (vv - v0) * decay_v + gg * drive;
-        gg = gg * decay_g;
+        relax(vv, gg, decay_v, decay_g, drive, v0);
         spike = vv > v_th;
         gg += arr;                                   // arrivals of refractory neurons are ignored
     } else {
@@ -235,8 +248,8 @@ extern "C" __global__ void update(
             if (pos < cap) spike_list[pos] = idx; else atomicAdd(overflow, 1);
         }
     }
-    v[idx] = vv;
-    g[idx] = gg;
+    if (vv != v_old) v[idx] = vv;                      // an unchanged value is not written back
+    if (gg != g_old) g[idx] = gg;
 }
 
 extern "C" __global__ void deliver(
@@ -249,6 +262,139 @@ extern "C" __global__ void deliver(
         int i = idx / trials, t = idx - i * trials;
         for (int e = indptr[i] + threadIdx.x; e < indptr[i + 1]; e += blockDim.x)
             atomicAdd(&ring_dst[indices[e] * trials + t], weights[e] * w_syn);
+    }
+}
+
+// ---- active-set path (one trial): only neurons that can change are touched ----------------------------
+// A neuron whose update would leave (v, g, left) bit-identical (ready, no arrival, no kick, v and g at a float
+// fixed point) is skipped until something reaches it, so skipping it is exact. Work lists are per arrival tick
+// (`lists[tick % LIST_SLOTS]`, deduplicated with `flags`): synaptic arrivals are appended by `deliver_sparse` for
+// tick+18, still-changing neurons are appended by `update_sparse` for tick+1.
+#define DENSE_FRACTION 6
+extern "C" __global__ void update_sparse(
+    float* v, float* g, short* left, const short* rfc, const float* p, const unsigned char* silenced,
+    float* arrivals,
+    const int* list_cur, int* cnt_cur, int* flags_cur, int* list_nxt, int* cnt_nxt, int* flags_nxt,
+    int* cnt_stale,
+    int* spike_list, int* spike_cnt, int* spike_cnt_next, int* overflow,
+    int* trial_counts, unsigned int* frames, int use_frames, int bin,
+    int n, int cap, unsigned long long seed, unsigned int step,
+    float decay_v, float decay_g, float drive, float v0, float v_th, float v_rst, float kick)
+{
+    if (blockIdx.x == 0 && threadIdx.x == 0) { *spike_cnt_next = 0; *cnt_stale = 0; }
+    int count = *cnt_cur;
+    // a crowded list is slower to gather than the whole array is to stream: then every neuron is visited (a neuron
+    // outside the list is at a fixed point, so visiting it changes nothing and it is not carried)
+    bool all = count * DENSE_FRACTION > n;
+    int total = all ? n : count;
+    const unsigned int lane = threadIdx.x & 31u;
+    for (int base = blockIdx.x * blockDim.x; base < total; base += gridDim.x * blockDim.x) {
+      int s = base + threadIdx.x;
+      bool live = s < total;
+      bool carry = false;
+      int idx = 0;
+      if (live) {
+        idx = all ? s : list_cur[s];
+        flags_cur[idx] = 0;
+        float arr = arrivals[idx];
+        if (arr != 0.0f) arrivals[idx] = 0.0f;
+        short lf = left[idx];
+        bool ready = (lf == 0);
+        float v_old = v[idx], g_old = g[idx];
+        float vv = v_old, gg = g_old;
+        bool spike = false;
+        if (ready) {
+            relax(vv, gg, decay_v, decay_g, drive, v0);
+            spike = vv > v_th;
+            gg += arr;
+        } else {
+            left[idx] = lf - 1;
+        }
+        float pi = p[idx];
+        bool kicked = false;
+        if (pi > 0.0f) {
+            kicked = true;
+            if (uniform(seed, step, (unsigned int)idx) < pi) vv += kick;
+        }
+        carry = !ready || kicked;
+        if (spike) {
+            vv = v_rst;
+            gg = 0.0f;
+            left[idx] = rfc[idx];
+            atomicAdd(&trial_counts[idx], 1);
+            if (use_frames) atomicAdd(&frames[(size_t)bin * n + idx], 1u);
+            if (!silenced[idx]) {
+                int pos = atomicAdd(spike_cnt, 1);
+                if (pos < cap) spike_list[pos] = idx; else atomicAdd(overflow, 1);
+            }
+            carry = true;
+        }
+        if (vv != v_old || gg != g_old) carry = true;
+        if (vv != v_old) v[idx] = vv;
+        if (gg != g_old) g[idx] = gg;
+        carry = carry && atomicExch(&flags_nxt[idx], 1) == 0;
+      }
+      // one counter increment per warp instead of one per neuron
+      unsigned int vote = __ballot_sync(0xffffffffu, carry);
+      if (vote) {
+          int basepos = 0;
+          if (lane == 0) basepos = atomicAdd(cnt_nxt, __popc(vote));
+          basepos = __shfl_sync(0xffffffffu, basepos, 0);
+          if (carry) list_nxt[basepos + __popc(vote & ((1u << lane) - 1u))] = idx;
+      }
+    }
+}
+
+// Rebuilds the work lists from the state alone (when a chunk switches from the plain kernels to the active-set ones)
+// and counts the neurons that move at tick `first`. build == 0 only counts. A neuron is listed for tick first + j when
+// its ring slot holds a non-zero arrival (adding 0 changes nothing), and for tick `first` when it is refractory,
+// Poisson-driven, or its free relaxation would change v or g or make it spike.
+extern "C" __global__ void rebuild(
+    const float* v, const float* g, const short* left, const float* p, const float* ring,
+    int* lists, int* cnts, int* flags, int* moving,
+    int n, int first, int build,
+    float decay_v, float decay_g, float drive, float v0, float v_th)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+    bool carry = left[idx] != 0 || p[idx] > 0.0f;
+    if (!carry) {
+        float vv = v[idx], gg = g[idx];
+        relax(vv, gg, decay_v, decay_g, drive, v0);
+        carry = vv != v[idx] || gg != g[idx] || vv > v_th;
+    }
+    if (carry) atomicAdd(moving, 1);
+    if (!build) return;
+    int c0 = first % 19;
+    if (carry && atomicExch(&flags[(size_t)c0 * n + idx], 1) == 0) lists[(size_t)c0 * n + atomicAdd(&cnts[c0], 1)] = idx;
+    for (int j = 0; j < 18; j++) {
+        if (ring[(size_t)((first + j) % 18) * n + idx] == 0.0f) continue;
+        int c = (first + j) % 19;
+        if (atomicExch(&flags[(size_t)c * n + idx], 1) == 0) lists[(size_t)c * n + atomicAdd(&cnts[c], 1)] = idx;
+    }
+}
+
+// puts the Poisson-driven rows into the work list of the next tick (a stimulus may have just changed)
+extern "C" __global__ void seed_stim(const int* rows, int m, int* list, int* cnt, int* flags)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= m) return;
+    int idx = rows[i];
+    if (atomicExch(&flags[idx], 1) == 0) list[atomicAdd(cnt, 1)] = idx;
+}
+
+extern "C" __global__ void deliver_sparse(
+    const int* spike_list, const int* spike_cnt, const int* indptr, const int* indices, const float* weights,
+    float* ring_dst, int* list_dst, int* cnt_dst, int* flags_dst, int cap, float w_syn)
+{
+    int count = min(*spike_cnt, cap);
+    for (int s = blockIdx.x; s < count; s += gridDim.x) {
+        int i = spike_list[s];
+        for (int e = indptr[i] + threadIdx.x; e < indptr[i + 1]; e += blockDim.x) {
+            int tgt = indices[e];
+            atomicAdd(&ring_dst[tgt], weights[e] * w_syn);
+            if (flags_dst[tgt] == 0 && atomicExch(&flags_dst[tgt], 1) == 0) list_dst[atomicAdd(cnt_dst, 1)] = tgt;
+        }
     }
 }
 """
@@ -273,6 +419,7 @@ class GPUSimulation(Simulation):
         if self._delay != ARRIVAL_SLOTS:
             raise ValueError(f"the GPU ring buffer is built for a delay of {ARRIVAL_SLOTS} ticks, got {self._delay}")
         self.pool_limit_mb = pool_limit_mb
+        self.active_set = True  # single-trial runs and live sessions only touch neurons that can change (exact)
         self.max_spikes = max_spikes_per_step
         self._cp = None
         self._dev: dict | None = None  # resident CSR arrays, built on the first run
@@ -297,6 +444,10 @@ class GPUSimulation(Simulation):
             self._module = cp.RawModule(code=_KERNELS)
             self._update = self._module.get_function("update")
             self._deliver = self._module.get_function("deliver")
+            self._update_sparse = self._module.get_function("update_sparse")
+            self._deliver_sparse = self._module.get_function("deliver_sparse")
+            self._seed_stim = self._module.get_function("seed_stim")
+            self._rebuild = self._module.get_function("rebuild")
         return self._cp
 
     def _ensure_resident(self, cp) -> dict:
@@ -371,6 +522,7 @@ class _GPUState:
     def __init__(self, sim: "GPUSimulation", cp, stim, silenced, trials: int, seed: int, n_bins: int = 0,
                  bin_steps: int | None = None) -> None:
         p, n, T = sim.params, sim.n, trials
+        self.sparse = bool(sim.active_set and T == 1)
         self.sim, self.cp, self.k, self.bin_steps = sim, cp, 0, bin_steps
         self.dev = sim._ensure_resident(cp)
         f32, i32 = np.float32, np.int32
@@ -398,6 +550,18 @@ class _GPUState:
         self.grid_update = ((n * T + 255) // 256,)
         self.use_frames_arg = i32(1 if self.use_frames else 0)
         self.w_syn, self.cap, self.trials_arg = f32(p.w_syn), i32(sim.max_spikes), i32(T)
+        if self.sparse:
+            self.lists = cp.zeros((LIST_SLOTS, n), dtype=cp.int32)
+            self.flags = cp.zeros((LIST_SLOTS, n), dtype=cp.int32)
+            list_cnt = cp.zeros(LIST_SLOTS, dtype=cp.int32)
+            self.list_cnt_all = list_cnt
+            self.list_cnt = [list_cnt[s:] for s in range(LIST_SLOTS)]  # pointer views, built once
+            self.list_rows = [self.lists[s] for s in range(LIST_SLOTS)]
+            self.flag_rows = [self.flags[s] for s in range(LIST_SLOTS)]
+            self.stim_for, self.stim_rows = None, None
+            self.lists_valid = True  # all neurons start at their fixed point: empty lists are right for tick 0
+            self.moving = cp.zeros(1, dtype=cp.int32)
+            self.sparse_consts = (i32(n), i32(sim.max_spikes), np.uint64(_mix(seed)))
 
     def set_poisson_targets(self, stim) -> None:
         rfc_host = np.full(self.sim.n, self.sim._rfc - 1, dtype=np.int16)
@@ -411,7 +575,79 @@ class _GPUState:
         p_dev[cp.asarray(rows)] = cp.asarray(np.asarray(p_event, dtype=np.float32))
         return p_dev
 
+    def _moving_now(self, first: int, build: bool) -> int:
+        """Neurons that move at tick `first`; with `build`, also rebuilds the work lists from the state."""
+        cp, sim, f32 = self.cp, self.sim, np.float32
+        n = sim.n
+        if build:
+            self.list_cnt_all.fill(0)
+            self.flags.fill(0)
+        self.moving.fill(0)
+        sim._rebuild(((n + 255) // 256,), (256,),
+                     (self.v, self.g, self.left, self.p_dev_now, self.ring, self.lists, self.list_cnt_all, self.flags,
+                      self.moving, np.int32(n), np.int32(first), np.int32(1 if build else 0),
+                      self.decay[0], self.decay[1], self.decay[2], self.decay[3], self.decay[4]))
+        return int(self.moving[0])
+
+    def _choose_mode(self, first: int, p_dev) -> bool:
+        """True: run this advance on the active-set kernels. Busy brains (a third of the neurons still relaxing) are
+        cheaper on the plain kernels, whose cost does not depend on activity; switching rebuilds the lists from the
+        state, so it is exact in both directions."""
+        n = self.sim.n
+        if self.lists_valid:
+            busy = int(self.list_cnt[first % LIST_SLOTS][0])
+            if busy * SWITCH_TO_DENSE <= n:
+                return True
+        self.p_dev_now = p_dev
+        moving = self._moving_now(first, build=False)
+        if moving * SWITCH_TO_SPARSE >= n:
+            self.lists_valid = False
+            return False
+        self._moving_now(first, build=True)
+        self.lists_valid = True
+        return True
+
+    def _advance_sparse(self, first: int, last: int, p_dev) -> None:
+        """Active-set ticks. The work list of tick j is `lists[j % 19]`: the deliver of tick j-18 appends the arrivals
+        scheduled for j, the update of tick j-1 appends the neurons that were still changing. The deliver of tick k
+        therefore writes list `(k + 18) % 19 == (k - 1) % 19`, the one tick k-1 consumed and the update of tick k
+        empties (count reset) just before that deliver runs; 19 lists, not 18, is what makes that order safe."""
+        sim, i32, cp = self.sim, np.int32, self.cp
+        dev = self.dev
+        if self.stim_for is not p_dev:
+            self.stim_rows, self.stim_for = cp.flatnonzero(p_dev).astype(cp.int32), p_dev
+        m = int(self.stim_rows.size)
+        if m:
+            c = first % LIST_SLOTS
+            sim._seed_stim(((m + 255) // 256,), (256,),
+                           (self.stim_rows, i32(m), self.list_rows[c], self.list_cnt[c], self.flag_rows[c]))
+        n_arg, cap, seed_arg = self.sparse_consts
+        for k in range(first, last):
+            cur, nxt, stale = k % LIST_SLOTS, (k + 1) % LIST_SLOTS, (k - 1) % LIST_SLOTS
+            spk_cur, spk_nxt = k & 1, (k + 1) & 1
+            bin_k = i32(k // self.bin_steps if self.use_frames else 0)
+            sim._update_sparse(
+                (SPARSE_BLOCKS,), (256,),
+                (self.v, self.g, self.left, self.rfc, p_dev, self.sil, self.slots[k % ARRIVAL_SLOTS],
+                 self.list_rows[cur], self.list_cnt[cur], self.flag_rows[cur],
+                 self.list_rows[nxt], self.list_cnt[nxt], self.flag_rows[nxt], self.list_cnt[stale],
+                 self.spike_list, self.cnt[spk_cur], self.cnt[spk_nxt], self.overflow, self.counts, self.frames,
+                 self.use_frames_arg, bin_k, n_arg, cap, seed_arg, np.uint32(k), *self.decay),
+            )
+            dst = (k + ARRIVAL_SLOTS) % LIST_SLOTS
+            sim._deliver_sparse(
+                (SPARSE_DELIVER_BLOCKS,), (128,),
+                (self.spike_list, self.cnt[spk_cur], dev["indptr"], dev["indices"], dev["weights"],
+                 self.slots[(k + sim._delay) % ARRIVAL_SLOTS], self.list_rows[dst], self.list_cnt[dst],
+                 self.flag_rows[dst], cap, self.w_syn),
+            )
+            if (k + 1) % CHECK_EVERY == 0 and int(self.overflow[0]):
+                break  # check_overflow raises
+        self.k = max(self.k, last)
+
     def advance(self, first: int, last: int, p_dev) -> None:
+        if self.sparse and self._choose_mode(first, p_dev):
+            return self._advance_sparse(first, last, p_dev)
         sim, i32 = self.sim, np.int32
         dev = self.dev
         for k in range(first, last):
