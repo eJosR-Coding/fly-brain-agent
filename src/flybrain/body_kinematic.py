@@ -43,6 +43,13 @@ RAMP_S = 0.1  # walking <-> standing transition
 CAPTION = "Body: recorded physics gait (NeuroMechFly walking controller), blended live from the brain's drive; not a physics simulation."
 WORLD_NOTE = "World rule (not the brain): the glass wall stops the fly's root motion; the legs keep stepping."
 FRAME_S = 1.0 / SAMPLE_HZ
+# Gait phase rate follows the speed the body actually achieves (OUR choice, not a published map). Real flies step more
+# slowly when they move less (DeAngelis et al. 2019, eLife 46409: stance duration ~ 1/forward speed; Wosnitza et al.
+# 2013, J Exp Biol 216:480: speed correlates with cycle period); the library steps at a fixed 12 Hz, so a fly held
+# by a wall would pedal at full rate on the spot (foot sliding). The phase rate is therefore 12 Hz x (achieved /
+# commanded displacement), low-passed, floored so the legs never freeze while the walking command is on.
+BLOCK_TAU_S = 0.15
+RATE_FLOOR = 0.2
 
 
 def _unpack(b64: str, shape: tuple[int, ...]) -> np.ndarray:
@@ -188,7 +195,9 @@ class KinematicBody:
                 raise ValueError("bounds must be (xmin, xmax, ymin, ymax) in mm with min < max")
             bounds = (xmin, xmax, ymin, ymax)
         self.bounds = bounds
-        self.ticks = 0  # frames of walking so far: the gait phase is ticks x 12 Hz / 200 Hz
+        self.ticks = 0  # frames of walking so far
+        self.cycles = 0.0  # gait phase in cycles: advances 12 Hz / 200 Hz per walking frame x rate_scale
+        self.achieved = 1.0  # smoothed achieved / commanded root displacement (1 = free, 0 = blocked)
         self.frames = 0
         self.walk_w = 0.0  # 0 = standing, 1 = walking
         self.x_mm = self.y_mm = 0.0
@@ -213,7 +222,7 @@ class KinematicBody:
 
     @property
     def phase(self) -> float:
-        return (self.ticks * CPG_HZ / SAMPLE_HZ) % 1.0
+        return self.cycles % 1.0
 
     @property
     def t_ms(self) -> float:
@@ -302,12 +311,19 @@ class KinematicBody:
                 if ny > cy: walls.add("y_max")
                 if ny < cy: walls.add("y_min")
                 nx, ny = cx, cy
+            want = math.hypot(fwd, lat)
+            got = math.hypot(nx - self.x_mm, ny - self.y_mm)
+            if want > 1e-9 and walking:
+                self.achieved += (min(1.0, got / want) - self.achieved) * (FRAME_S / BLOCK_TAU_S)
+            elif not walking:
+                self.achieved = 1.0
             self.x_mm, self.y_mm = nx, ny
             self.yaw_rad += math.radians(rate * w) * FRAME_S
             thorax[j] = (round(nx * 1000.0), round(ny * 1000.0), round(z))
             yaw[j] = math.degrees(self.yaw_rad)
             if walking or w > 0.0:
                 self.ticks += 1
+                self.cycles += CPG_HZ / SAMPLE_HZ * max(RATE_FLOOR, self.achieved)
         self.frames += n
         out = {
             "n_frames": n,
