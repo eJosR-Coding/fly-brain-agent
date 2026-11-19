@@ -216,8 +216,10 @@ class ArenaScene:
         self.moving: list[MovingSphere] = []  # set per chunk by the caller together with `t_ms` (the chunk's start time)
         self.t_ms = 0.0
 
-    def luminance(self, eye_pos_mm, yaw_deg, dirs_head) -> np.ndarray:
-        """(F, n) luminance seen from eye positions (F, 3) mm with headings yaw_deg (F,) along head-frame dirs (n, 3)."""
+    def luminance(self, eye_pos_mm, yaw_deg, dirs_head, rot=None) -> np.ndarray:
+        """(F, n) luminance seen from eye positions (F, 3) mm with headings yaw_deg (F,) along head-frame dirs (n, 3).
+        `rot` (F, 3, 3), when given, is the full head orientation (head frame -> arena frame) and replaces the yaw-only one
+        (the fly on a wall or the ceiling)."""
         pos = np.asarray(eye_pos_mm, dtype=np.float64)
         c, s = np.cos(np.radians(np.asarray(yaw_deg, dtype=np.float64))), np.sin(np.radians(np.asarray(yaw_deg, dtype=np.float64)))
         d = np.asarray(dirs_head, dtype=np.float64)
@@ -225,6 +227,8 @@ class ArenaScene:
         dy = s[:, None] * d[None, :, 0] + c[:, None] * d[None, :, 1]
         dz = np.broadcast_to(d[None, :, 2], dx.shape)
         dw = np.stack([dx, dy, dz], axis=-1)  # (F, n, 3) world-frame directions
+        if rot is not None:
+            dw = np.einsum("fij,nj->fni", np.asarray(rot, dtype=np.float64), d)
         o = np.clip(pos, self._lo + 1e-6, self._hi - 1e-6)[:, None, :]
         with np.errstate(divide="ignore", invalid="ignore"):
             bound = np.where(dw > 0, self._hi, self._lo)
@@ -347,18 +351,25 @@ class VisionFrontEnd:
             "added to the visual drive; our choice (a spontaneous-activity floor), not a measured rate"
         ) if self.background_hz > 0 else None
 
-    def process(self, pos_um, yaw_deg) -> VisionOut:
+    def process(self, pos_um, yaw_deg, quat=None) -> VisionOut:
+        """`quat` (F, 4) w x y z: the full 3D thorax orientation (surface walking); without it the pose is yaw-only."""
         t0 = time.perf_counter()
         pos = np.asarray(pos_um, dtype=np.float64) / 1000.0
         yaw = np.asarray(yaw_deg, dtype=np.float64)
         rad = np.radians(yaw)
         eye_pos = np.column_stack([pos[:, 0] + HEAD_FORWARD_MM * np.cos(rad), pos[:, 1] + HEAD_FORWARD_MM * np.sin(rad),
                                    pos[:, 2] + HEAD_UP_MM])
+        rot = None
+        if quat is not None:
+            from flybrain.body_surface import matrix_from_quat
+
+            rot = np.stack([matrix_from_quat(q) for q in np.asarray(quat, dtype=np.float64)])
+            eye_pos = pos + rot @ np.array([HEAD_FORWARD_MM, 0.0, HEAD_UP_MM])
         rows, rates = [], []
         for side, eye in self.eyes.items():
             rows.append(eye.cell_rows)
             if self.sees:
-                drive = self._hrc[side].step(self.scene.luminance(eye_pos, yaw, eye.dirs))
+                drive = self._hrc[side].step(self.scene.luminance(eye_pos, yaw, eye.dirs) if rot is None else self.scene.luminance(eye_pos, yaw, eye.dirs, rot))
                 rates.append(MAX_RATE_HZ * eye.cell_drive(drive.on, drive.off))
             else:
                 rates.append(np.zeros(len(eye.cell_rows)))

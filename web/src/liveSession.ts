@@ -10,7 +10,7 @@
 import { clipMatrices, escapeAt, wingCycleAt, wingsAt, worldPose } from "./bodyClip";
 import type { JointId } from "./bodyPose";
 import { escapePose, flightWingPose } from "./bodyWorld";
-import { parseLiveChunk, parseLiveHeader, type LiveChunk, type LiveHeader } from "./liveFrames";
+import { objectToViewer, parseLiveChunk, parseLiveHeader, type LiveChunk, type LiveHeader } from "./liveFrames";
 import { createPlayback } from "./livePlayback";
 import type { WorldPose } from "./bodyClip";
 import { parseArena, type Arena } from "./bodyCube";
@@ -112,12 +112,12 @@ export function closeMessage(code: number, reason: string, state: LiveState | "l
 /** display flapping rate of a flying fly (Hz of wall time) */
 export const WING_FLAP_HZ = 20;
 
-export function liveCaption(s: Pick<LiveStatus, "speedLabel" | "backend" | "fallback" | "bodyMode" | "dropped" | "serverCaption"> & { worldBlocked?: boolean; flightNote?: string }): string {
+export function liveCaption(s: Pick<LiveStatus, "speedLabel" | "backend" | "fallback" | "bodyMode" | "dropped" | "serverCaption"> & { surface?: string | null; flightNote?: string }): string {
   const parts = ["live", s.speedLabel ?? "waiting for the first chunk"];
   if (s.backend) parts.push(`brain: ${s.backend}`);
   if (s.fallback) parts.push(`fallback: ${s.fallback}`);
   if (s.bodyMode) parts.push(`body: ${s.bodyMode}`);
-  if (s.worldBlocked) parts.push("stopped by the glass (world rule)");
+  if (s.surface && s.surface !== "floor" && s.surface !== "flight") parts.push(`walking on the ${s.surface === "ceiling" ? "ceiling" : `wall ${s.surface}`} (world rule: adhesive pads)`);
   if (s.dropped > 0) parts.push(`dropped ${s.dropped} chunk${s.dropped === 1 ? "" : "s"}`);
   return parts.join(" · ") + (s.serverCaption ? ` — ${s.serverCaption}` : "") + (s.flightNote ? ` — ${s.flightNote}` : "");
 }
@@ -140,7 +140,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
   let sentWings = false;
   let lastCaption: string | null = null;
   let lastObjects: string | null = null;
-  let info = { speedLabel: null as string | null, backend: null as string | null, fallback: null as string | null, bodyMode: null as string | null, worldBlocked: false };
+  let info = { speedLabel: null as string | null, backend: null as string | null, fallback: null as string | null, bodyMode: null as string | null, surface: null as string | null };
   let serverCaption = "";
   let flightNote = ""; // the wing-slowdown label, while the chunk in view carries flight wings
   let note = "";
@@ -183,7 +183,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
     playback.reset();
     header = null; z0 = null; lastSeq = -1; stopped = false; lastTick = null; shownSeq = -1; shownT = -1; sentEscape = null; sentWings = false;
     lastCaption = null; message = null; serverCaption = ""; note = "";
-    info = { speedLabel: null, backend: null, fallback: null, bodyMode: null, worldBlocked: false };
+    info = { speedLabel: null, backend: null, fallback: null, bodyMode: null, surface: null };
     n.received = n.played = n.ignored = n.malformed = 0;
   };
   const send = (cmd: Record<string, unknown>): boolean => {
@@ -236,7 +236,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
         z0 = parsed.z0;
         n.received++;
         playback.push(parsed.chunk);
-        info = { speedLabel: parsed.chunk.info.speedLabel, backend: parsed.chunk.info.backend ?? info.backend, fallback: parsed.chunk.info.fallback, bodyMode: parsed.chunk.info.bodyMode, worldBlocked: parsed.chunk.info.worldBlocked };
+        info = { speedLabel: parsed.chunk.info.speedLabel, backend: parsed.chunk.info.backend ?? info.backend, fallback: parsed.chunk.info.fallback, bodyMode: parsed.chunk.info.bodyMode, surface: parsed.chunk.info.surface };
         flightNote = typeof msg.wings_note === "string" ? `flight (not validated): ${msg.wings_note}; shown flapping at ${WING_FLAP_HZ} Hz so it is visible (the real wingbeat is ~200 Hz)` : "";
         refreshCaption();
         const wo = (msg.world as { objects?: unknown } | undefined)?.objects;
@@ -246,7 +246,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
             lastObjects = sig;
             // server frame (x forward, y left, mm; pos_mm = [x, y, height of the centre]) -> viewer (X = y, Z = x, Y above floor)
             const list = wo.flatMap((o: { id?: unknown; kind?: unknown; pos_mm?: number[]; size_mm?: unknown }) =>
-              Array.isArray(o?.pos_mm) && o.pos_mm.length === 3 ? [{ id: o.id, kind: o.kind, pos_mm: [o.pos_mm[1], o.pos_mm[2], o.pos_mm[0]], size_mm: o.size_mm }] : []);
+              Array.isArray(o?.pos_mm) && o.pos_mm.length === 3 ? [{ id: o.id, kind: o.kind, pos_mm: objectToViewer(o.pos_mm as [number, number, number]), size_mm: o.size_mm }] : []);
             guard("objects", () => deps.sinks.setObjects?.(list));
           }
         }

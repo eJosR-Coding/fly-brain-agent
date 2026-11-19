@@ -40,9 +40,9 @@ SPEED_WINDOW = 10
 BODY_MODES = ("kinematic", "physics")
 # The arena: ONE source of truth, the server's. A glass cube centred on the fly's start (the origin of the reported root),
 # standing on the floor plane. Axes of the bounds: the fly's frame at the start, x forward, y left, in mm; the viewer maps
-# x -> its Z and y -> its X. Kinematic mode enforces the walls in the body (a world rule); physics mode clamps the REPORTED root.
+# x -> its Z and y -> its X. Kinematic mode walks the fly on any glass surface (body_surface.py, a world rule); physics mode clamps the REPORTED root.
 ARENA_INTERIOR_MM = 50.0
-ARENA_NOTE = "world rule: glass walls stop the fly; not a brain decision"
+ARENA_NOTE = "world rule: the fly walks on any glass surface (adhesive pads); not a brain decision"
 PHYSICS_ARENA_NOTE = ("World rule (not the brain): the glass wall clamps the displayed root (display clamp: the physics body "
                       "itself is not stopped, its legs keep stepping).")
 VISION_CAPTION = (
@@ -51,7 +51,8 @@ VISION_CAPTION = (
 )
 TOUCH_HZ = 25.0  # OUR constant rate for antennal mechanosensors when the body is blocked by a wall (labelled, not validated). 100 Hz fired DNp01 ~12 Hz and froze the fly in the escape pose at the wall (3/3 seeds); 25 Hz does not (scratch comparison, 3 seeds)
 TOUCH_HEAD_ON_DEG = 30.0  # a wall within this angle of the heading touches both antennae
-TOUCH_NOTE = (f"Touch is OURS (not validated): while a glass wall blocks the fly, the antennal mechanosensors (Johnston's organ JO-* "
+TOUCH_MS = 100.0  # OUR duration of the touch at a surface transition (the brief contact when the fly meets the next glass surface; labelled, not validated)
+TOUCH_NOTE = (f"Touch is OURS (not validated): for {TOUCH_MS:g} ms at a surface transition (the fly meets the next glass surface), the antennal mechanosensors (Johnston's organ JO-* "
               f"and antennal bristles BM_Ant) on the side of the contact fire at a constant {TOUCH_HZ:g} Hz (both when head-on); the leg "
               "touch route is in leg_note; what the fly does is the brain's")
 LEG_TOUCH_HZ = TOUCH_HZ  # OUR constant rate for the matched ascending neurons of the legs on the contact side (labelled, not validated)
@@ -94,6 +95,15 @@ def touch_sides(walls, yaw_deg: float) -> list[str]:
         else:
             sides.add("left" if rel > 0 else "right")
     return sorted(sides)
+
+
+def _sides_from_rel(rel_deg: float) -> list[str]:
+    """Antennae touched by a contact `rel_deg` from the heading (left +): both when head-on, none when behind."""
+    if abs(rel_deg) > 90.0:
+        return []
+    if abs(rel_deg) <= TOUCH_HEAD_ON_DEG:
+        return ["left", "right"]
+    return ["left" if rel_deg > 0 else "right"]
 
 
 MAX_COMBINED_HZ = 10000.0  # the brain's per-neuron ceiling (0.1 ms tick)
@@ -155,6 +165,9 @@ class LiveSession:
         self.leg_rows = leg_rows or {}
         self._touch: list[str] = []
         self._touched: list[str] = []
+        self._touch_latch: list[str] = []  # sides of the last surface-transition contact ...
+        self._touch_left_ms = 0.0  # ... and how long it still fires
+        self._quat: np.ndarray | None = None  # full 3D thorax orientation of the last chunk (w x y z), when the body reports it
         # the fly's eye (fly_eye.VisionFrontEnd or a stand-in): sets per-neuron T4/T5 rates every chunk from the pose of the last one
         self.vision = vision
         n0 = max(1, round(self.chunk_ms / 5.0))
@@ -360,7 +373,7 @@ class LiveSession:
             if (pos[:, col] < lo).any():
                 walls.append(names[0])
             pos[:, col] = np.clip(pos[:, col], lo, hi)
-        return {"bounds_mm": list(self.arena["bounds_mm"]), "blocked": bool(walls), "walls": sorted(walls),
+        return {"bounds_mm": list(self.arena["bounds_mm"]), "surface": "floor", "clamped_walls": sorted(walls),
                 "note": PHYSICS_ARENA_NOTE}
 
     def _step_locked(self, force_binary: bool) -> tuple[dict, bytes | None]:
@@ -373,7 +386,7 @@ class LiveSession:
         if scene is not None and hasattr(scene, "moving"):
             scene.moving, scene.t_ms = self.world.spheres(), self.t_ms
         if self.vision is not None:
-            seen = self.vision.process(*self._pose)
+            seen = self.vision.process(*self._pose, **({"quat": self._quat} if self._quat is not None else {}))
             self._apply_vision(seen)
             tb = self._clock()
         else:
@@ -403,7 +416,20 @@ class LiveSession:
             world = self._clamp_root(out["thorax"]["pos_um"])
         self._pose = (np.asarray(out["thorax"]["pos_um"]), np.asarray(out["thorax"]["yaw_deg"]))
         touch_now = self._touch  # what this chunk's brain received
-        self._touch = touch_sides((world or {}).get("walls"), float(self._pose[1][-1])) if self.touch_rows else []
+        q = out["thorax"].get("quat")
+        self._quat = np.asarray(q) if q is not None else None
+        if self.touch_rows:
+            trans = (world or {}).get("transitions") or []
+            if trans:  # brief contact at a surface transition: antennae on the side of the edge, both when head-on
+                rel = float(trans[-1]["contact_rel_deg"])
+                self._touch_latch = _sides_from_rel(rel)
+                self._touch_left_ms = TOUCH_MS
+            if self._touch_left_ms > 0:
+                self._touch, self._touch_left_ms = list(self._touch_latch), self._touch_left_ms - self.chunk_ms
+            else:
+                self._touch = touch_sides((world or {}).get("clamped_walls"), float(self._pose[1][-1]))  # physics display clamp only
+        else:
+            self._touch = []
         wall_ms = max((t2 - t0) * 1000.0, 1e-6)
         factor = self.chunk_ms / wall_ms
         self._speeds.append(factor)
@@ -425,7 +451,8 @@ class LiveSession:
             "stimulus": {"rows": len(stim_rows), "rate_hz": stim_rate} if stim_rows and stim_rate > 0 else None,
             "frames": None if binary else frames.tolist(),
             "thorax": {"pos_um": np.asarray(out["thorax"]["pos_um"]).tolist(),
-                       "yaw_deg": np.asarray(out["thorax"]["yaw_deg"]).tolist()},
+                       "yaw_deg": np.asarray(out["thorax"]["yaw_deg"]).tolist(),
+                       **({"quat": np.asarray(out["thorax"]["quat"]).tolist()} if out["thorax"].get("quat") is not None else {})},
             "contact": np.asarray(out["contact"]).tolist(),
             "body_mode": self.body_mode, "body_caption": self.body_caption,
             "senses": self._senses({k: seen.stats[k] for k in ("driven_cells", "max_rate_hz", "mean_rate_hz")} if seen else None),
@@ -530,7 +557,7 @@ def build_live_session(atlas, row_index, sims, body_lock=None, *, seed: int = 0,
             from flybrain.body_kinematic import KinematicBody, load_library
 
             try:
-                body = KinematicBody(load_library(), bounds=tuple(arena["bounds_mm"]))
+                body = KinematicBody(load_library(), bounds=tuple(arena["bounds_mm"]), height_mm=arena["interior_mm"])
             except FileNotFoundError as exc:
                 raise body_runner.BodyUnavailable(f"the motion library is missing ({exc}); run scripts/build_motion_library.py") from exc
         else:
