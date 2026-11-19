@@ -223,7 +223,7 @@ def _fly(bounds=None, away=180.0, kind="straight"):
     b = KinematicBody(bounds=bounds)
     run(b, 2, pace=0.0)
     assert b.takeoff(away, kind) and not b.takeoff(away)  # busy
-    outs = [b.advance(50.0, [0.0, 0.0], False, pace=0.0, turn=0.0) for _ in range(90)]
+    outs = [b.advance(50.0, [0.0, 0.0], False, pace=0.0, turn=0.0) for _ in range(220)]
     return b, outs
 
 
@@ -286,5 +286,5 @@ def test_brain_flight_silent_dns_keep_the_pattern_and_the_dn_asymmetry_steers():
 def test_brain_flight_lands_on_the_landing_dns_or_the_max_airtime():
     b, outs = _air(0.0, 0.0, land_at_s=1.0, chunks=100)
     assert b.landing_cause == "landing_dn" and outs[-1]["state"] == "standing"
-    b, outs = _air(0.0, 0.0, chunks=220)  # silent landing neurons: the labelled fallback
-    assert b.landing_cause == "max_airtime" and outs[-1]["state"] == "standing"
+    b, outs = _air(0.0, 0.0, chunks=260)  # silent landing neurons: the 3-8 s bout ends the flight
+    assert b.landing_cause == "bout_end" and outs[-1]["state"] == "standing"

@@ -25,13 +25,13 @@ MODES = ("ethogram", "off")
 # mean bout duration (s) and the (min, max) clamp of an exponential draw: OUR numbers
 DURATIONS_S = {"rest": (2.0, 0.8, 5.0), "walk": (3.0, 1.0, 8.0), "turn_left": (0.7, 0.4, 1.5), "turn_right": (0.7, 0.4, 1.5),
                "groom": (3.0, 1.5, 6.0)}
-# P(next | current): OUR numbers. Takeoff is rare; it is followed by rest once the fly has landed.
+# P(next | current): OUR numbers. Takeoff is raised so flights are frequent (about one per 10-20 s on average, not validated); it is followed by rest once the fly has landed.
 TRANSITIONS = {
-    "rest": {"walk": 0.50, "groom": 0.25, "turn_left": 0.07, "turn_right": 0.07, "takeoff": 0.04},
-    "walk": {"rest": 0.35, "turn_left": 0.20, "turn_right": 0.20, "groom": 0.15, "takeoff": 0.03},
-    "turn_left": {"walk": 0.60, "rest": 0.25, "groom": 0.10, "takeoff": 0.02},
-    "turn_right": {"walk": 0.60, "rest": 0.25, "groom": 0.10, "takeoff": 0.02},
-    "groom": {"rest": 0.45, "walk": 0.40, "turn_left": 0.05, "turn_right": 0.05, "takeoff": 0.02},
+    "rest": {"walk": 0.38, "groom": 0.20, "turn_left": 0.06, "turn_right": 0.06, "takeoff": 0.30},
+    "walk": {"rest": 0.25, "turn_left": 0.14, "turn_right": 0.14, "groom": 0.10, "takeoff": 0.37},
+    "turn_left": {"walk": 0.45, "rest": 0.15, "groom": 0.05, "takeoff": 0.35},
+    "turn_right": {"walk": 0.45, "rest": 0.15, "groom": 0.05, "takeoff": 0.35},
+    "groom": {"rest": 0.35, "walk": 0.30, "turn_left": 0.05, "turn_right": 0.05, "takeoff": 0.25},
     "takeoff": {"rest": 1.0},
 }
 # Poisson rate (Hz) injected into each commanded group while a state lasts; calibrated against the brain's DN response
