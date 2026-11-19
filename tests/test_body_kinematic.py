@@ -138,15 +138,19 @@ def test_escape_stands_raises_the_flag_and_stops_the_root():
     assert not after["escape"].any()
 
 
-def test_a_world_boundary_stops_the_fly_at_the_wall_and_says_so():
-    b = body(bounds=(-5.0, 5.0, -5.0, 5.0))  # mm
-    outs = run(b, 60, pace=1.0, turn=0.0)  # 3 s at ~20 mm/s would reach 60 mm
+def test_surface_walking_carries_the_fly_up_the_wall_and_onto_the_ceiling():
+    b = body(bounds=(-5.0, 5.0, -5.0, 5.0))  # mm: a 10 mm cube
+    outs = run(b, 150, pace=1.0, turn=0.0)  # 7.5 s at ~20 mm/s
+    trans = [(t["from"], t["to"]) for o in outs for t in o["world"]["transitions"]]
+    assert trans[:2] == [("floor", "x_max"), ("x_max", "ceiling")]  # head-on: straight up the wall, then upside down
     pos = np.concatenate([o["thorax"]["pos_um"] for o in outs])
-    assert pos[:, 0].max() <= 5000 and pos[-1, 0] == pytest.approx(5000, abs=1)
-    assert outs[-1]["world"]["blocked"] is True and outs[0]["world"]["blocked"] is False
+    assert pos[:, 0].max() <= 5000 and pos[:, 2].max() <= 10000 and pos[:, 2].min() >= 0  # the thorax never leaves the cube
     assert "world rule" in outs[-1]["world"]["note"].lower()
+    from flybrain.body_surface import matrix_from_quat
+    on_ceiling = [o for o in outs if o["world"]["surface"] == "ceiling"]
+    assert on_ceiling and matrix_from_quat(on_ceiling[-1]["thorax"]["quat"][-1])[2, 2] < -0.9  # dorsal axis points down on the ceiling
     free = run(body(), 60, pace=1.0, turn=0.0)
-    assert np.concatenate([o["thorax"]["pos_um"] for o in free])[-1, 0] > 5000 and free[-1]["world"]["blocked"] is False
+    assert np.concatenate([o["thorax"]["pos_um"] for o in free])[-1, 0] > 5000 and free[-1]["world"]["surface"] == "floor"
     assert body().bounds is None
 
 
@@ -208,13 +212,11 @@ def test_kinematic_speed_and_yaw_match_the_physics_run_it_was_recorded_from():
     assert kin_rate == pytest.approx(phys_rate, rel=0.20)
 
 
-def test_gait_phase_slows_when_a_wall_blocks_the_fly():
-    free, held = KinematicBody(bounds=(-50, 50, -50, 50)), KinematicBody(bounds=(-1, 1, -50, 50))
+def test_gait_keeps_its_native_rate_on_every_surface():
+    walled = KinematicBody(bounds=(-1, 1, -50, 50))  # reaches a wall at once
     for _ in range(40):
-        free.advance(100, [1, 1], pace=0.67, turn=0.0)
-        held.advance(100, [1, 1], pace=0.67, turn=0.0)
-    assert free.cycles == pytest.approx(48.0)  # unblocked: the native 12 Hz
-    assert held.cycles < 0.35 * free.cycles  # held at the wall: legs no longer pedal at full rate
+        walled.advance(100, [1, 1], pace=0.67, turn=0.0)
+    assert walled.cycles == pytest.approx(48.0)  # adhesive pads: the legs step at the native 12 Hz on the wall too
 
 
 def _fly(bounds=None, away=180.0, kind="straight"):

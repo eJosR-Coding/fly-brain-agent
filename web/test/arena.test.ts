@@ -89,18 +89,18 @@ describe("live session arena and wall note", () => {
     const a = harness(); a.started(); expect(a.arenas).toEqual([null]);
     const b = harness(); b.started({ arena: { kind: "x" } }); expect(b.arenas).toEqual([null]);
   });
-  it("shows an honest caption note while the received chunk is blocked, and drops it when free", () => {
+  it("shows an honest caption note while the fly walks on a wall, and drops it when free", () => {
     const h = harness();
     h.started({ arena: serverArena() });
-    h.sock.emit(chunk(10, { seq: 0, world: { bounds_mm: [-25, 25, -25, 25], blocked: true, walls: ["x_max"], note: "n" } }));
-    expect(h.captions.at(-1)).toContain("stopped by the glass (world rule)");
-    h.sock.emit(chunk(10, { seq: 1, world: { bounds_mm: [-25, 25, -25, 25], blocked: false, walls: [], note: "n" } }));
-    expect(h.captions.at(-1)).not.toContain("stopped by the glass");
+    h.sock.emit(chunk(10, { seq: 0, world: { bounds_mm: [-25, 25, -25, 25], surface: "x_max", transitions: [], note: "n" } }));
+    expect(h.captions.at(-1)).toContain("wall x_max");
+    h.sock.emit(chunk(10, { seq: 1, world: { bounds_mm: [-25, 25, -25, 25], surface: "floor", transitions: [], note: "n" } }));
+    expect(h.captions.at(-1)).not.toContain("wall x_max");
   });
   it("liveCaption appends the note only when blocked", () => {
     const base = { speedLabel: "x1.00 real time", backend: "cpu", fallback: null, bodyMode: "kinematic", dropped: 0, serverCaption: "" };
-    expect(liveCaption({ ...base, worldBlocked: true })).toContain("stopped by the glass (world rule)");
-    expect(liveCaption({ ...base, worldBlocked: false })).not.toContain("glass");
+    expect(liveCaption({ ...base, surface: "x_max" })).toContain("wall x_max");
+    expect(liveCaption({ ...base, surface: "floor" })).not.toContain("wall");
     expect(liveCaption(base)).not.toContain("glass");
   });
 });

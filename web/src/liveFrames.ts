@@ -23,7 +23,8 @@ export interface LiveInfo {
   fallback: string | null;
   bodyMode: string | null;
   /** the world rule stopped the fly at a glass wall during this chunk */
-  worldBlocked: boolean;
+  /** The surface the fly walks on (floor | x_min | x_max | y_min | y_max | ceiling | flight), from the server's world rule; null when not reported. */
+  surface: string | null;
 }
 
 export interface LiveChunk {
@@ -69,7 +70,7 @@ export function parseLiveChunk(raw: unknown, header: LiveHeader, z0: number | nu
   const frames = m.frames;
   if (!Array.isArray(frames) || frames.length === 0) throw new Error("live chunk: no frames (binary frames are not requested)");
   const n = frames.length;
-  const th = m.thorax as { pos_um?: unknown; yaw_deg?: unknown } | undefined;
+  const th = m.thorax as { pos_um?: unknown; yaw_deg?: unknown; quat?: unknown } | undefined;
   if (typeof th !== "object" || th === null) throw new Error("live chunk: no thorax");
   const pos = asRows(th.pos_um, n, 3, "thorax.pos_um");
   if (!Array.isArray(th.yaw_deg) || th.yaw_deg.length !== n || !th.yaw_deg.every(isNum)) throw new Error("live chunk: thorax.yaw_deg must be one angle per frame");
@@ -88,6 +89,9 @@ export function parseLiveChunk(raw: unknown, header: LiveHeader, z0: number | nu
     clip.wingCycle = Float64Array.from((m.wing_cycle as number[][]).flat());
   }
   clip.world = { pos: world, yawRad: Float64Array.from(th.yaw_deg as number[], (d) => (d * Math.PI) / 180) };
+  if (Array.isArray(th.quat) && th.quat.length === n && th.quat.every((r) => Array.isArray(r) && r.length === 4 && r.every(isNum))) {
+    clip.world.quat = Float64Array.from((th.quat as number[][]).flat()); // full 3D orientation (surface walking): the viewer must not re-apply yaw only
+  }
   return {
     z0: base,
     chunk: {
@@ -95,8 +99,13 @@ export function parseLiveChunk(raw: unknown, header: LiveHeader, z0: number | nu
       info: {
         speedLabel: str(m.speed_label), speedFactor: isNum(m.speed_factor) ? m.speed_factor : null,
         backend: str(m.backend), fallback: str(m.fallback), bodyMode: str(m.body_mode),
-        worldBlocked: (m.world as { blocked?: unknown } | undefined)?.blocked === true,
+        surface: str((m.world as { surface?: unknown } | undefined)?.surface),
       },
     },
   };
+}
+
+/** Server object position [x forward, y left, height of the centre] (mm, origin = the thorax at the start) -> sandbox viewer [X = y, Y above the floor, Z = x]. One place, shared with the thorax (see parseLiveChunk / worldPose). */
+export function objectToViewer(p: readonly [number, number, number]): [number, number, number] {
+  return [p[1], p[2], p[0]];
 }

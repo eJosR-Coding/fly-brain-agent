@@ -13,8 +13,10 @@ swing onset). `KinematicBody` replays that library with the BodyStream interface
   pose, the root stops, escape also raises the `escape` flag (the viewer raises the wings; no takeoff model);
 * root motion integrates the BLENDED measured speed and yaw rate (and lateral slip), so the fly goes anywhere and curves.
   Positive turn = left = positive yaw, as in body_drive / body_runner.
-* optional `bounds` (xmin, xmax, ymin, ymax in mm, world frame): a labelled WORLD RULE, not the brain: the root is clamped
-  to the box (a wall stops forward motion; a slanted approach slides along it) and the chunk says `world.blocked`.
+* optional `bounds` (xmin, xmax, ymin, ymax in mm, world frame) + `height_mm`: the glass cube. SURFACE WALKING is a labelled
+  BODY/WORLD RULE (adhesive pads), not the brain: the fly walks on one surface (floor, x_min, x_max, y_min, y_max, ceiling) with
+  the same gait in the surface's local frame and crosses edges onto the next one (rule in body_surface.py); the chunk reports
+  `world.surface`, the `world.transitions`, and the full 3D thorax orientation (`thorax.quat`, w x y z, arena frame).
 
 Honest limits: this is a replay of recorded gaits, not a physics simulation (no terrain contact, no obstacle forces,
 the legs do not react to the wall); `advance(drive=...)` without an explicit command inverts the unclipped
@@ -33,7 +35,7 @@ from pathlib import Path
 
 import numpy as np
 
-from flybrain import body_drive
+from flybrain import body_drive, body_surface
 from flybrain.body_runner import CPG_HZ, QUAT_SCALE, SAMPLE_HZ, chunk_frames
 
 LIBRARY_PATH = Path(os.environ.get("FLYBRAIN_MOTION_LIBRARY") or Path(__file__).resolve().parents[2] / "web" / "public" / "fly-motion-library.json")
@@ -41,8 +43,10 @@ FORMAT = "fly-motion-library/1"
 BINS = 50  # playback table: 3 bins per 5 ms frame at 12 Hz
 RAMP_S = 0.1  # walking <-> standing transition
 CAPTION = "Body: recorded physics gait (NeuroMechFly walking controller), blended live from the brain's drive; not a physics simulation."
-WORLD_NOTE = "World rule (not the brain): the glass wall stops the fly's root motion; the legs keep stepping."
+WORLD_NOTE = ("World rule (not the brain): the fly's adhesive pads let it walk on any glass surface; at an edge it pitches onto the "
+              "next surface (the heading keeps its tangential part, the into-wall part becomes up).")
 FRAME_S = 1.0 / SAMPLE_HZ
+FOOT_CLEARANCE_MM = 0.16  # the recorded leg tips sit up to 0.157 mm below the thorax-height reference plane: the thorax stands this much higher so no tip passes through the glass
 # Gait phase rate follows the speed the body actually achieves (OUR choice, not a published map). Real flies step more
 # slowly when they move less (DeAngelis et al. 2019, eLife 46409: stance duration ~ 1/forward speed; Wosnitza et al.
 # 2013, J Exp Biol 216:480: speed correlates with cycle period); the library steps at a fixed 12 Hz, so a fly held
@@ -243,7 +247,7 @@ class KinematicBody:
     takeoff_note = TAKEOFF_NOTE
 
     def __init__(self, library: MotionLibrary | None = None, bounds: tuple[float, float, float, float] | None = None,
-                 flight: Flight | None = None) -> None:
+                 flight: Flight | None = None, height_mm: float | None = None) -> None:
         self.lib = library or load_library()
         if bounds is not None:
             xmin, xmax, ymin, ymax = (float(v) for v in bounds)
@@ -251,12 +255,18 @@ class KinematicBody:
                 raise ValueError("bounds must be (xmin, xmax, ymin, ymax) in mm with min < max")
             bounds = (xmin, xmax, ymin, ymax)
         self.bounds = bounds
+        self.height_mm = float(height_mm) if height_mm is not None else (bounds[1] - bounds[0] if bounds else 1e9)
+        # unbounded body: a huge box, so the same code path walks on the floor forever
+        self._walker = body_surface.SurfaceWalker(bounds or (-1e9, 1e9, -1e9, 1e9), self.height_mm)
+        self._z_base_um = 0.0
+        self._z_sign = 1.0
         self.ticks = 0  # frames of walking so far
         self.cycles = 0.0  # gait phase in cycles: advances 12 Hz / 200 Hz per walking frame x rate_scale
         self.achieved = 1.0  # smoothed achieved / commanded root displacement (1 = free, 0 = blocked)
         self.frames = 0
         self.walk_w = 0.0  # 0 = standing, 1 = walking
         self.x_mm = self.y_mm = 0.0
+        self._z_um = 0.0  # thorax height above the floor (um), arena frame
         self.yaw_rad = 0.0
         self._cmd: tuple[float, float] | None = None  # last (pace, turn)
         self.state = "standing"  # standing | walking | takeoff | airborne | landed
@@ -324,6 +334,17 @@ class KinematicBody:
         pool = [c for c in self._flight.clips if c["kind"] == kind] or self._flight.clips
         self._clip = pool[0]
         self._fl_head = self.yaw_rad + math.radians(away_deg)
+        # takeoff from a wall or the ceiling (labelled): launch away from the surface normal; the body goes upright
+        w = self._walker
+        self._z_base_um = float(self._z_um or self.lib.stand.thorax_z_um)
+        self._z_sign = 1.0
+        if w.surface != body_surface.FLOOR:
+            n = w.n
+            if math.hypot(n[0], n[1]) > 0.5:
+                self._fl_head = math.atan2(n[1], n[0])
+            else:  # ceiling: away from it is down
+                self._z_sign = -1.0
+            w.start_free()
         self._to_dir = (math.cos(self._fl_head), math.sin(self._fl_head))
         self._to_t_ms, self._air_ms, self._land_ms, self._desc_s = 0.0, 0.0, 0.0, 0.0
         self._fl_prev, self._fl_vel, self._fl_lift_mm = (0.0, 0.0), (0.0, 0.0), 0.0
@@ -367,6 +388,7 @@ class KinematicBody:
         stand, ms = self.lib.stand, FRAME_S * 1000.0
         dx = dy = lift = 0.0
         ext = tuck = 0.0
+        e_desc = None
         if self.state == "takeoff":
             ext = min(1.0, (self._to_t_ms + ms) / TAKEOFF_PREP_MS)
             self._to_t_ms += ms
@@ -406,6 +428,7 @@ class KinematicBody:
             self._desc_s += FRAME_S
             u = self._desc_s / DESCENT_S
             e = _smooth(u)
+            e_desc = e
             lift = self._fl_lift_mm * (1.0 - e) * 1000.0
             dx, dy = (v * (1.0 - e) for v in self._fl_vel)
             self._tuck = 1.0 - _smooth((self._desc_s - (DESCENT_S - 0.15)) / 0.15)  # legs come down before touchdown
@@ -419,6 +442,15 @@ class KinematicBody:
             if self._land_ms >= LANDED_MS:
                 self._to_t_ms, self.state = None, "standing"
         flying = self.state in ("airborne", "descending")
+        hover = self._z_base_um + self._z_sign * self._fl_lift_mm * 1000.0
+        if self.state in ("takeoff", "airborne") or (self.state == "descending" and e_desc is None):
+            self._z_um = self._z_base_um + self._z_sign * lift
+        elif self.state == "descending":
+            self._z_um = hover * (1.0 - e_desc) + stand.thorax_z_um * e_desc  # always lands on the floor (labelled)
+        else:
+            self._z_um = float(stand.thorax_z_um)
+        if self.bounds is not None:
+            self._z_um = min(max(self._z_um, 300.0), (self.height_mm - body_surface.BODY_MARGIN_MM) * 1000.0)
         if flying or self._wing_w > 0.0:
             self._wing_cycles += WING_DISPLAY_HZ / SAMPLE_HZ
         tuck = self._tuck
@@ -467,8 +499,9 @@ class KinematicBody:
         thorax = np.empty((n, 3), int)
         yaw = np.empty(n)
         wings = np.zeros((n, 6))
-        blocked = False
-        walls: set[str] = set()
+        tquat = np.zeros((n, 4))
+        self._walker.events = []
+        ev_frames: list[int] = []
         seq: list[str] = []
         for j in range(n):
             if self.busy:
@@ -476,17 +509,20 @@ class KinematicBody:
                 pos, quat, cont, lift, tdx, tdy, wing = self._takeoff_frame()
                 wings[j] = wing
                 nx, ny = self.x_mm + tdx, self.y_mm + tdy
-                if self.bounds is not None:
-                    cx, cy = min(max(nx, self.bounds[0]), self.bounds[1]), min(max(ny, self.bounds[2]), self.bounds[3])
-                    blocked = blocked or cx != nx or cy != ny
-                    nx, ny = cx, cy
+                if self.bounds is not None:  # flight stays inside the cube
+                    mg = body_surface.BODY_MARGIN_MM
+                    nx, ny = min(max(nx, self.bounds[0] + mg), self.bounds[1] - mg), min(max(ny, self.bounds[2] + mg), self.bounds[3] - mg)
                 self.x_mm, self.y_mm = nx, ny
                 self.walk_w, self.achieved = 0.0, 1.0
                 frames[j, :, :3] = np.round(pos)
                 frames[j, :, 3:] = np.round(quat * QUAT_SCALE)
                 contact[j] = cont
-                thorax[j] = (round(nx * 1000.0), round(ny * 1000.0), round(stand.thorax_z_um + lift))
+                _, tq = self._walker.render(0.0, body_surface.rz(self.yaw_rad), np.zeros(3))  # upright, eased from the surface frame
+                thorax[j] = (round(nx * 1000.0), round(ny * 1000.0), round(self._z_um))
+                tquat[j] = tq
                 yaw[j] = math.degrees(self.yaw_rad)
+                if not self.busy:  # landed: the fly stands on the floor again
+                    self._walker.place_floor(self.x_mm, self.y_mm, self.yaw_rad)
                 if not seq or seq[-1] != phase_now:
                     seq.append(phase_now)
                 continue
@@ -518,28 +554,16 @@ class KinematicBody:
             frames[j, :, :3] = np.round(pos)
             frames[j, :, 3:] = np.round(quat * QUAT_SCALE)
             contact[j] = (lead.contact[int(round(x)) % BINS * len(lead.contact) // BINS] if w >= 0.5 else stand.contact)
-            # root motion from the blended MEASURED speed / yaw rate, scaled by the walking weight
-            mid = self.yaw_rad + math.radians(rate * w) * FRAME_S * 0.5
+            # root motion from the blended MEASURED speed / yaw rate on the CURRENT SURFACE (see body_surface.py)
             fwd, lat = speed * w * FRAME_S, lateral * w * FRAME_S
-            nx = self.x_mm + fwd * math.cos(mid) - lat * math.sin(mid)
-            ny = self.y_mm + fwd * math.sin(mid) + lat * math.cos(mid)
-            if self.bounds is not None:
-                cx, cy = min(max(nx, self.bounds[0]), self.bounds[1]), min(max(ny, self.bounds[2]), self.bounds[3])
-                blocked = blocked or cx != nx or cy != ny
-                if nx > cx: walls.add("x_max")
-                if nx < cx: walls.add("x_min")
-                if ny > cy: walls.add("y_max")
-                if ny < cy: walls.add("y_min")
-                nx, ny = cx, cy
-            want = math.hypot(fwd, lat)
-            got = math.hypot(nx - self.x_mm, ny - self.y_mm)
-            if want > 1e-9 and walking:
-                self.achieved += (min(1.0, got / want) - self.achieved) * (FRAME_S / BLOCK_TAU_S)
-            elif not walking:
-                self.achieved = 1.0
-            self.x_mm, self.y_mm = nx, ny
-            self.yaw_rad += math.radians(rate * w) * FRAME_S
-            thorax[j] = (round(nx * 1000.0), round(ny * 1000.0), round(z))
+            n_ev = len(self._walker.events)
+            self._walker.step(fwd, lat, math.radians(rate * w) * FRAME_S)
+            ev_frames.extend([j] * (len(self._walker.events) - n_ev))
+            self.achieved = 1.0  # pads never stall the legs: the gait keeps its full rate on any surface
+            tp, tq = self._walker.render(z / 1000.0 + FOOT_CLEARANCE_MM)
+            self.x_mm, self.y_mm, self.yaw_rad, self._z_um = float(tp[0]), float(tp[1]), self._walker.yaw, float(tp[2]) * 1000.0
+            thorax[j] = np.round(tp * 1000.0)
+            tquat[j] = tq
             yaw[j] = math.degrees(self.yaw_rad)
             if walking or w > 0.0:
                 self.ticks += 1
@@ -554,7 +578,7 @@ class KinematicBody:
             "contact": contact,
             "escape": np.full(n, int(escape)),
             "drive": np.tile(np.round(np.zeros(2) if escape else d, 4), (n, 1)),
-            "thorax": {"pos_um": thorax, "yaw_deg": np.round(yaw, 3)},
+            "thorax": {"pos_um": thorax, "yaw_deg": np.round(yaw, 3), "quat": np.round(tquat, 5)},
             "body_mode": self.mode,
         }
         if self._air is not None:
@@ -564,8 +588,11 @@ class KinematicBody:
             out["wings"] = np.round(wings, 2)
             out["wings_note"] = WING_NOTE
             out["wing_cycle"] = np.round([self._wing_angles(k / WING_CYCLE_SAMPLES) for k in range(WING_CYCLE_SAMPLES)], 2)
-        if self.bounds is not None:
-            out["world"] = {"bounds_mm": list(self.bounds), "blocked": blocked, "walls": sorted(walls), "note": WORLD_NOTE}
-        else:
-            out["world"] = {"bounds_mm": None, "blocked": False, "walls": [], "note": None}
+        w = self._walker
+        t0 = self.frames - n
+        trans = [{**e, "t_ms": round((t0 + j + 1) * FRAME_S * 1000.0, 3)} for e, j in zip(w.events, ev_frames)]
+        out["world"] = {"bounds_mm": list(self.bounds) if self.bounds is not None else None,
+                        "height_mm": self.height_mm if self.bounds is not None else None,
+                        "surface": "flight" if self.busy and self.state in ("airborne", "descending") else w.surface,
+                        "transitions": trans, "note": WORLD_NOTE if self.bounds is not None else None}
         return out

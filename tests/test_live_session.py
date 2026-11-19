@@ -298,13 +298,13 @@ def test_build_live_session_passes_the_arena_bounds_to_the_kinematic_body(monkey
     assert s.start_message()["arena"]["bounds_mm"] == [-25.0, 25.0, -25.0, 25.0]
 
 
-def test_a_fake_brain_driving_forward_is_stopped_by_the_wall_and_the_chunk_says_which():
+def test_a_fake_brain_driving_forward_walks_onto_the_wall_and_the_chunk_says_which_surface():
     from flybrain.body_kinematic import KinematicBody, load_library
     from flybrain.live import arena_spec
 
     clock = Clock()
     a = arena_spec(10.0)  # small cube: the wall is reached within a few seconds
-    body = KinematicBody(load_library(), bounds=tuple(a["bounds_mm"]))
+    body = KinematicBody(load_library(), bounds=tuple(a["bounds_mm"]), height_mm=a["interior_mm"])
     s, *_ = make(clock, brain=FakeBrain(clock, script=walking_script(200)), body=body, arena=a)
     first, last, xs = None, None, []
     for _ in range(120):
@@ -312,8 +312,7 @@ def test_a_fake_brain_driving_forward_is_stopped_by_the_wall_and_the_chunk_says_
         first = first or m
         last = m
         xs.extend(p[0] for p in m["thorax"]["pos_um"])
-    assert first["world"]["blocked"] is False and last["world"]["blocked"] is True
-    assert "x_max" in last["world"]["walls"]
+    assert first["world"]["surface"] == "floor" and last["world"]["surface"] != "floor"
     assert max(xs) <= 5000 and last["world"]["bounds_mm"] == [-5.0, 5.0, -5.0, 5.0]
     assert "world rule" in last["world"]["note"].lower()
 
@@ -338,8 +337,8 @@ def test_physics_mode_clamps_the_reported_root_and_reports_the_wall():
     s, *_ = make(clock, body=Walker(clock), arena=arena_spec(10.0))
     msgs = [s.step() for _ in range(4)]
     xs = [p[0] for m in msgs for p in m["thorax"]["pos_um"]]
-    assert max(xs) == 5000 and msgs[-1]["world"]["blocked"] is True and msgs[-1]["world"]["walls"] == ["x_max"]
-    assert msgs[0]["world"]["blocked"] is False
+    assert max(xs) == 5000 and msgs[-1]["world"]["clamped_walls"] == ["x_max"] and msgs[-1]["world"]["surface"] == "floor"
+    assert msgs[0]["world"]["clamped_walls"] == []
     assert "display" in msgs[-1]["world"]["note"].lower()  # honest: the clamp is of the reported root, not physics
 
 

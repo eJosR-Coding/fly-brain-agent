@@ -30,7 +30,9 @@ export interface WalkClip {
   /** per-frame 1 = the drive said "escape" (legs stopped, wings raised); empty when absent */
   escape: Uint8Array;
   /** whole-body motion of the thorax in the world, viewer axes and mm, relative to the first frame; null when absent */
-  world: { pos: Float64Array; yawRad: Float64Array } | null;
+  world: { pos: Float64Array; yawRad: Float64Array; quat?: Float64Array } | null;
+  /* `quat`, when present (live chunks), is the full 3D thorax orientation per frame, w x y z in the server's arena frame (x forward, y left, z up):
+   *  the fly may stand on a wall or the ceiling. It also means `pos` is the thorax itself in the arena frame (the arena origin is the thorax start, not the mesh's thorax origin). */
   /** flight wing angles, frame-major [frame][6] (degrees, flybody convention, left then right), from a live chunk; absent otherwise */
   wings?: Float64Array;
   /** one whole wingbeat, [sample][6] (same units), for the viewer to flap at its own display rate; absent when the chunk has no flight wings */
@@ -192,6 +194,30 @@ export function worldPose(clip: WalkClip, t: number): WorldPose | null {
   const { i, j, a } = locate(clip, t);
   const p: Vec3 = [0, 0, 0];
   for (let k = 0; k < 3; k++) p[k] = (1 - a) * w.pos[i * 3 + k] + a * w.pos[j * 3 + k];
+  if (w.quat && w.quat.length >= 4 * clip.nFrames) {
+    // full 3D orientation: nlerp of the two frames' unit quaternions (short way round), arena axes (x fwd, y left, z up) -> viewer (X = y, Y = z, Z = x)
+    const q = [0, 0, 0, 0];
+    let dot = 0;
+    for (let k = 0; k < 4; k++) dot += w.quat[i * 4 + k] * w.quat[j * 4 + k];
+    const sgn = dot < 0 ? -1 : 1;
+    for (let k = 0; k < 4; k++) q[k] = (1 - a) * w.quat[i * 4 + k] + a * sgn * w.quat[j * 4 + k];
+    const len = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
+    const [qw, qx, qy, qz] = q.map((v) => v / len);
+    const R = [
+      [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+      [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
+      [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)],
+    ];
+    const perm = [1, 2, 0];
+    const Rv = (r: number, c: number) => R[perm[r]][perm[c]];
+    const T3 = clip.thoraxOrigin;
+    const t3 = [0, 0, 0];
+    for (let r = 0; r < 3; r++) t3[r] = T3[r] + p[r] - (r === 1 ? 0 : T3[r]) - (Rv(r, 0) * T3[0] + Rv(r, 1) * T3[1] + Rv(r, 2) * T3[2]);
+    const m: number[] = [];
+    for (let c = 0; c < 3; c++) m.push(Rv(0, c), Rv(1, c), Rv(2, c), 0);
+    m.push(t3[0], t3[1], t3[2], 1);
+    return { matrix: m, offset: p };
+  }
   const yaw = (1 - a) * w.yawRad[i] + a * w.yawRad[j];
   const c = Math.cos(yaw), s = Math.sin(yaw);
   const T = clip.thoraxOrigin;
