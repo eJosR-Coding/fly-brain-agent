@@ -12,6 +12,8 @@ import { createLiveSession, type LiveSession, type LiveStatus, type SocketLike }
 /** The dev entry's drive: forward-walking neurons DNg100 at 50 Hz (the same preset as the "walk (DNg100)" chip). */
 export const DEV_PRESET = "dng100";
 export const DEV_RATE_HZ = 50;
+/** How long the dev entry pushes DNg100 once the session runs, before releasing it. */
+export const DEV_PUSH_MS = 1000;
 
 /** The API's live socket, on the page's own host (the dev server proxies /api with WebSocket upgrades). */
 export function liveUrl(loc: { protocol: string; host: string }): string {
@@ -25,6 +27,7 @@ export interface LiveBody {
   setCaption(text: string): void;
   setSandbox(on: boolean): void;
   setArena?(arena: Arena | null): void;
+  setObjects?(objects: unknown): void;
 }
 
 export interface LiveClientDeps {
@@ -87,7 +90,18 @@ export function createLiveClient(deps: LiveClientDeps): LiveClient {
       session.start({ preset, rateHz });
     },
     stop() { session.stop(); },
-    toggle() { if (busy()) session.stop(); else this.start(DEV_PRESET, DEV_RATE_HZ); },
+    toggle() {
+      if (busy()) { session.stop(); return; }
+      deps.prepare?.();
+      // Dev entry: the fly sees the arena (closed-loop eye) and gets a short push; after DEV_PUSH_MS of running the
+      // push is released, so what it does next comes from its brain and what it sees.
+      session.start({ preset: DEV_PRESET, rateHz: DEV_RATE_HZ, vision: "arena" });
+      const release = (tries: number) => {
+        if (session.status.state === "live") { setTimeout(() => { if (session.status.state === "live") session.stimulus(null, 0); }, DEV_PUSH_MS); return; }
+        if (busy() && tries > 0) setTimeout(() => release(tries - 1), 250);
+      };
+      release(240);
+    },
     stimulus: (preset, rateHz) => session.stimulus(preset, rateHz),
     onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     dispose() {

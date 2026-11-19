@@ -780,6 +780,7 @@ async function boot(): Promise<void> {
       setFrame: (mats) => body.setClipFrame(mats), setWorld: (w) => body.setWorld(w), setPose: (a) => body.setPose(a),
       setCaption: (t) => body.setCaption(t), setSandbox: (on) => body.setSandbox(on),
       setArena: (a) => body.setArena(a),
+      setObjects: (o) => { body.setObjects(o); },
     },
     defaultCaption: DEFAULT_BODY_CAPTION,
     prepare: () => { // the live session owns the body now

@@ -32,6 +32,8 @@ export interface LiveSinks {
   setCaption(text: string): void;
   /** The arena the server enforces (null: none sent, draw the fallback cube). Called once per `started`. */
   setArena?(arena: Arena | null): void;
+  /** The server's world objects (sugar/coffee cubes), viewer frame: `[{ id, kind, pos_mm: [x, y above floor, z], size_mm }]`. */
+  setObjects?(objects: unknown): void;
 }
 
 export type LiveState = "idle" | "connecting" | "starting" | "live" | "closed";
@@ -55,7 +57,7 @@ export interface LiveStatus {
   bufferedMs: number;
 }
 
-export interface LiveStartOptions { preset: string | null; rateHz: number; seed?: number; chunkMs?: number }
+export interface LiveStartOptions { preset: string | null; rateHz: number; seed?: number; chunkMs?: number; vision?: "arena" }
 
 export interface LiveDeps {
   url: string;
@@ -133,6 +135,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
   let shownT = -1;
   let sentEscape: boolean | null = null;
   let lastCaption: string | null = null;
+  let lastObjects: string | null = null;
   let info = { speedLabel: null as string | null, backend: null as string | null, fallback: null as string | null, bodyMode: null as string | null, worldBlocked: false };
   let serverCaption = "";
   let note = "";
@@ -157,6 +160,8 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
     guard("frame", () => deps.sinks.setFrame(null));
     guard("world", () => deps.sinks.setWorld(null));
     guard("pose", () => deps.sinks.setPose({}));
+    if (lastObjects !== null) guard("objects", () => deps.sinks.setObjects?.([]));
+    lastObjects = null;
     sentEscape = false;
   };
   const release = () => { // drop the socket and everything tied to it
@@ -227,6 +232,17 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
         playback.push(parsed.chunk);
         info = { speedLabel: parsed.chunk.info.speedLabel, backend: parsed.chunk.info.backend ?? info.backend, fallback: parsed.chunk.info.fallback, bodyMode: parsed.chunk.info.bodyMode, worldBlocked: parsed.chunk.info.worldBlocked };
         refreshCaption();
+        const wo = (msg.world as { objects?: unknown } | undefined)?.objects;
+        if (Array.isArray(wo)) {
+          const sig = JSON.stringify(wo);
+          if (sig !== lastObjects) {
+            lastObjects = sig;
+            // server frame (x forward, y left, mm; pos_mm = [x, y, height of the centre]) -> viewer (X = y, Z = x, Y above floor)
+            const list = wo.flatMap((o: { id?: unknown; kind?: unknown; pos_mm?: number[]; size_mm?: unknown }) =>
+              Array.isArray(o?.pos_mm) && o.pos_mm.length === 3 ? [{ id: o.id, kind: o.kind, pos_mm: [o.pos_mm[1], o.pos_mm[2], o.pos_mm[0]], size_mm: o.size_mm }] : []);
+            guard("objects", () => deps.sinks.setObjects?.(list));
+          }
+        }
         return;
       }
       case "stimulus": return;
@@ -264,6 +280,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
         const cmd: Record<string, unknown> = { type: "start", preset: opts.preset, rate_hz: opts.rateHz };
         if (opts.seed !== undefined) cmd.seed = opts.seed;
         if (opts.chunkMs !== undefined) cmd.chunk_ms = opts.chunkMs;
+        if (opts.vision) cmd.vision = opts.vision;
         setState("starting");
         send(cmd);
       };

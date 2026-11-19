@@ -340,3 +340,17 @@ def test_physics_mode_clamps_the_reported_root_and_reports_the_wall():
     assert max(xs) == 5000 and msgs[-1]["world"]["blocked"] is True and msgs[-1]["world"]["walls"] == ["x_max"]
     assert msgs[0]["world"]["blocked"] is False
     assert "display" in msgs[-1]["world"]["note"].lower()  # honest: the clamp is of the reported root, not physics
+
+
+def test_a_touched_cube_drives_its_taste_neurons_and_is_reported_in_the_chunk():
+    from flybrain import live_world
+
+    s, *_ = make()
+    s.brain.set_rates = lambda rows, rates: s.brain.stimuli.append((list(rows), list(rates)))
+    s.taste_rows = {"sugar": np.array([1, 2]), "bitter": np.array([3])}
+    s.world_add("sugar", ahead_mm=2.0)
+    msg = s.step()
+    assert msg["world"]["objects"][0]["kind"] == "sugar"
+    assert msg["world"]["touching"] == ["sugar1"] and msg["world"]["taste_hz"] == {"sugar": live_world.TASTE_HZ}
+    assert s.world_clear() == 1
+    assert s.step()["world"]["touching"] == []

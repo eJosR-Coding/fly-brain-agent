@@ -11,6 +11,7 @@ def test_server_lists_the_tools(tiny_atlas):
         "search_neurons", "count_neurons", "describe_neuron", "list_selection",
         "neighbors", "find_path", "lesion_effect", "top_hubs", "preset_selection", "stimulate",
         "fly", "dose_response", "silencing_screen", "looming_escape",
+        "world_add", "world_clear",
     }
 
 
@@ -155,7 +156,7 @@ def test_find_path_doc_explains_strength_fields(tiny_atlas):
 
 # --- token budget: the tool definitions ride on EVERY model call ---------------------------------
 
-TOOL_DEFS_BUDGET_CHARS = 10280  # ~2,570 tokens (measured 10,262 with 14 tools): was 12,320 before trimming; +2 experiments; +stimulate(preset); +fly (1,184); +looming_escape (592, 6 params). Merged from three branches that each raised this cap
+TOOL_DEFS_BUDGET_CHARS = 11300  # ~2,570 tokens (measured 10,262 with 14 tools): was 12,320 before trimming; +2 experiments; +stimulate(preset); +fly (1,184); +looming_escape (592, 6 params). Merged from three branches that each raised this cap
 
 
 def _definition_chars(tiny_atlas) -> dict[str, int]:
@@ -168,7 +169,7 @@ def _definition_chars(tiny_atlas) -> dict[str, int]:
 
 def test_tool_definitions_stay_within_the_token_budget(tiny_atlas):
     sizes = _definition_chars(tiny_atlas)
-    assert len(sizes) == 14
+    assert len(sizes) == 16
     assert sum(sizes.values()) <= TOOL_DEFS_BUDGET_CHARS, sizes
 
 

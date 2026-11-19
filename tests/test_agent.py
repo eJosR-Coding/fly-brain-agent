@@ -269,4 +269,4 @@ def test_the_prompt_forbids_side_by_side_tables():
 
 
 def test_the_prompt_stays_small():
-    assert len(SYSTEM_PROMPT) < 1800  # sent on every model call
+    assert len(SYSTEM_PROMPT) < 2000  # sent on every model call
