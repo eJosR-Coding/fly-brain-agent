@@ -343,6 +343,14 @@ function assembleBodyScene(
     for (const j of rigged) {
       const deg = angles[j.id];
       const rad = typeof deg === "number" && Number.isFinite(deg) ? (deg * Math.PI) / 180 : 0;
+      const fl = (k: string) => { const v = (angles as Record<string, number | undefined>)[`${j.id}_${k}`]; return typeof v === "number" && Number.isFinite(v) ? (v * Math.PI) / 180 : null; };
+      const [st, dv, ro] = j.id === "wing_l" || j.id === "wing_r" ? [fl("stroke"), fl("dev"), fl("rot")] : [null, null, null];
+      if (st !== null || dv !== null || ro !== null) { // flight wing: R_up(stroke) R_fore(deviation) R_span(rotation) about the hinge (viewer axes)
+        const r = (axis: Vec3, a: number | null) => new THREE.Matrix4().fromArray(rotationMatrix(axis, a ?? 0, j.pivot));
+        own.set(j.group, r([0, 1, 0], st).multiply(r([0, 0, 1], dv)).multiply(r([1, 0, 0], ro)));
+        placeGroup(j.group);
+        continue;
+      }
       own.set(j.group, new THREE.Matrix4().fromArray(rotationMatrix(j.axis, rad, j.pivot)));
       placeGroup(j.group);
     }

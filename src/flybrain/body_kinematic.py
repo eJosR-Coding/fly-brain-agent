@@ -53,16 +53,47 @@ RATE_FLOOR = 0.2
 
 
 # Takeoff (short mode of the giant-fibre escape, von Reyn et al. 2014, Nat Neurosci 17:1 : GF-driven, middle legs extend,
-# little wing raise). Everything numeric below is OUR labelled choice, not fitted and not validated; there is no flight model.
+# little wing raise) followed by FLIGHT replayed from real fly flight data (flybody flight-imitation dataset, Vaxenburg et al.
+# 2025, Nature; GPL-3.0+; see data/fly-flight-clips.json). Everything numeric below is OUR labelled choice, not validated.
 TAKEOFF_PREP_MS = 20.0  # middle legs extend; the root is still
 TAKEOFF_LEG_EXTENSION = 1.35  # middle-leg bodies move to 1.35 x their distance from the coxa (pose only; quaternions untouched)
-TAKEOFF_V_UP_MM_S = 300.0  # ballistic launch: 300 mm/s up, 200 mm/s away from the threat, gravity 9810 mm/s^2
-TAKEOFF_V_AWAY_MM_S = 200.0
-GRAVITY_MM_S2 = 9810.0
-LANDED_MS = 100.0  # after touchdown the legs relax back to the standing pose
-TAKEOFF_NOTE = ("takeoff (ours, not validated): short-mode jump after the giant fibre rule fired: middle legs extend, ballistic hop "
-                "(300 mm/s up, 200 mm/s away), then a fall and landing; there is no flight model yet")
+FLIGHT_PATH = Path(__file__).resolve().parent / "data" / "fly-flight-clips.json"
+FLIGHT_SLOWDOWN = 10.0  # the recorded flight (0.2-0.6 s) plays 10x slower, so it lasts seconds on screen
+FLIGHT_SCALE_MM = 5.0  # mm of world per dataset length unit (assumed cm: 10 mm) x 0.5, so the flight stays inside the 50 mm cube
+FLIGHT_CEILING_MM = 45.0  # world rule: the glass ceiling
+FLIGHT_TURN_MS = 150.0  # the body swings from its heading to the flight heading
+RAMP_MS = 100.0  # wings unfold and legs tuck (and the reverse at landing)
+LEG_TUCK = 0.55  # leg bodies move to 0.55 x their distance from the coxa in flight (a labelled flight pose)
+DESCENT_S = 1.0  # after the clip: height eases to the floor, forward speed decays to zero
+WING_DISPLAY_HZ = 10.0  # wingbeat pattern replayed at 10 Hz in simulated time (real ~200 Hz aliases at the 200 Hz frame rate)
+LANDED_MS = 100.0  # after touchdown the legs relax back to the standing pose and the wings fold
+WING_NOTE = (f"wings: flybody flight-imitation wingbeat (one real cycle: stroke, deviation, rotation) replayed at {WING_DISPLAY_HZ:g} Hz instead of "
+             "~200 Hz (the real rate aliases at the display frame rate); both wings share it (no steering asymmetry yet)")
+TAKEOFF_NOTE = ("takeoff + flight (ours, not validated): short-mode jump after the giant fibre rule fired, then a real fly flight clip "
+                "(flybody dataset, Vaxenburg et al. 2025, GPL-3.0+) played "
+                f"{FLIGHT_SLOWDOWN:g}x slower with the path scaled x{FLIGHT_SCALE_MM / 10:g} to fit the cube, a simple eased descent and a landing. "
+                f"The wingbeat (~200 Hz in the data) is replayed at {WING_DISPLAY_HZ:g} Hz, a stated slowdown; legs tucked; no flight physics")
 MIDDLE_LEGS = ("lm", "rm")
+
+
+@dataclass
+class Flight:
+    clips: list[dict]
+    wing: np.ndarray  # (samples, 3) one wingbeat: stroke, deviation, rotation (rad)
+    doc: dict
+
+
+def load_flight(path: str | Path | None = None) -> Flight:
+    doc = json.loads(Path(path or FLIGHT_PATH).read_text())
+    if doc.get("format") != "fly-flight-clips/1":
+        raise ValueError("not a fly-flight-clips/1 file")
+    clips = [{**c, **{k: np.asarray(c[k], float) for k in ("x", "y", "z_abs", "yaw_deg")}} for c in doc["clips"]]
+    return Flight(clips, np.asarray(doc["wing_pattern"]["rad"], float), doc)
+
+
+def _smooth(u: float) -> float:
+    u = min(max(u, 0.0), 1.0)
+    return u * u * (3.0 - 2.0 * u)
 
 
 def _unpack(b64: str, shape: tuple[int, ...]) -> np.ndarray:
@@ -201,7 +232,8 @@ class KinematicBody:
     caption = CAPTION
     takeoff_note = TAKEOFF_NOTE
 
-    def __init__(self, library: MotionLibrary | None = None, bounds: tuple[float, float, float, float] | None = None) -> None:
+    def __init__(self, library: MotionLibrary | None = None, bounds: tuple[float, float, float, float] | None = None,
+                 flight: Flight | None = None) -> None:
         self.lib = library or load_library()
         if bounds is not None:
             xmin, xmax, ymin, ymax = (float(v) for v in bounds)
@@ -221,10 +253,21 @@ class KinematicBody:
         self._to_t_ms: float | None = None  # ms since the takeoff trigger (None = no takeoff running)
         self._to_dir = (0.0, 0.0)
         self._land_ms = 0.0
-        self._air_ms = 0.0  # time since lift-off
+        self._air_ms = 0.0  # time since lift-off (flight clip clock, simulated ms)
+        self._desc_s = 0.0
+        self._flight: Flight | None = flight
+        self._clip: dict | None = None
+        self._fl_head = self._fl_yaw0 = 0.0
+        self._fl_prev = (0.0, 0.0)  # previous flight target (mm, heading frame x, y)
+        self._fl_vel = (0.0, 0.0)  # last flight step (mm per frame, world frame)
+        self._fl_lift_mm = 0.0
+        self._wing_cycles = 0.0
+        self._tuck = 0.0
+        self._wing_w = 0.0
         lib = self.lib
-        self._mid = [i for i, b in enumerate(lib.bodies) if b[:2] in MIDDLE_LEGS]
-        self._mid_coxa = {i: next(j for j, b in enumerate(lib.bodies) if b == lib.bodies[i][:3] + "coxa") for i in self._mid}
+        self._leg_idx = [i for i, b in enumerate(lib.bodies) if b[:2] in lib.legs]
+        self._leg_cox = [next(j for j, b in enumerate(lib.bodies) if b == lib.bodies[i][:3] + "coxa") for i in self._leg_idx]
+        self._leg_mid = np.array([lib.bodies[i][:2] in MIDDLE_LEGS for i in self._leg_idx])
         self.header = {
             "format": "fly-walk/1",
             "units": {"position": "um", "quaternion": f"w,x,y,z x {QUAT_SCALE}", "time": "s"},
@@ -257,46 +300,95 @@ class KinematicBody:
         """A takeoff is running (takeoff, airborne or landed)."""
         return self._to_t_ms is not None
 
-    def takeoff(self, away_deg: float = 180.0) -> bool:
-        """Start the labelled short-mode takeoff, jumping `away_deg` from the heading (180 = backwards). False if busy."""
+    def takeoff(self, away_deg: float = 180.0, kind: str = "straight") -> bool:
+        """Start the labelled takeoff + flight, heading `away_deg` from the current heading (180 = backwards). `kind` picks a
+        flight clip: "straight", "left" or "right" (by the recorded net yaw). False if busy."""
         if self.busy:
             return False
-        a = self.yaw_rad + math.radians(away_deg)
-        self._to_dir = (math.cos(a), math.sin(a))
-        self._to_t_ms, self._air_ms, self._land_ms = 0.0, 0.0, 0.0
+        if self._flight is None:
+            self._flight = load_flight()
+        pool = [c for c in self._flight.clips if c["kind"] == kind] or self._flight.clips
+        self._clip = pool[0]
+        self._fl_head = self.yaw_rad + math.radians(away_deg)
+        self._to_dir = (math.cos(self._fl_head), math.sin(self._fl_head))
+        self._to_t_ms, self._air_ms, self._land_ms, self._desc_s = 0.0, 0.0, 0.0, 0.0
+        self._fl_prev, self._fl_vel, self._fl_lift_mm = (0.0, 0.0), (0.0, 0.0), 0.0
+        self._wing_cycles = self._tuck = self._wing_w = 0.0
         self.state = "takeoff"
         return True
 
-    def _takeoff_frame(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float]:
-        """One 5 ms frame of the takeoff: (pos, quat, contact, lift_um, dx_mm, dy_mm). Advances the state machine."""
+    def _flight_at(self, t_s: float) -> tuple[float, float, float, float]:
+        """(x, y mm in the heading frame, z mm above the floor, yaw rad relative) of the clip at recorded time t_s."""
+        c = self._clip
+        u = min(t_s * self._flight.doc["sample_rate_hz"], len(c["x"]) - 1.0)
+        f = lambda k: float(np.interp(u, np.arange(len(c[k])), c[k]))
+        return f("x") * FLIGHT_SCALE_MM, f("y") * FLIGHT_SCALE_MM, f("z_abs") * FLIGHT_SCALE_MM, math.radians(f("yaw_deg"))
+
+    def _wing_angles(self) -> np.ndarray:
+        """(6,) raw flybody wing angles in degrees [stroke, deviation, rotation] left then right, scaled by the wing weight."""
+        pat = self._flight.wing
+        u = (self._wing_cycles % 1.0) * len(pat)
+        i = int(u) % len(pat)
+        a = pat[i] + (pat[(i + 1) % len(pat)] - pat[i]) * (u - int(u))
+        deg = np.degrees(a) * self._wing_w
+        return np.concatenate([deg, deg])
+
+    def _takeoff_frame(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float, np.ndarray]:
+        """One 5 ms frame of takeoff / flight / descent / landing: (pos, quat, contact, lift_um, dx_mm, dy_mm, wings).
+        Advances the state machine and the yaw."""
         stand, ms = self.lib.stand, FRAME_S * 1000.0
         dx = dy = lift = 0.0
+        ext = tuck = 0.0
         if self.state == "takeoff":
             ext = min(1.0, (self._to_t_ms + ms) / TAKEOFF_PREP_MS)
             self._to_t_ms += ms
             if self._to_t_ms >= TAKEOFF_PREP_MS:
                 self.state, self._air_ms = "airborne", 0.0
+                self._fl_yaw0 = self.yaw_rad
         elif self.state == "airborne":
-            ext = 1.0
             self._air_ms += ms
-            ts = self._air_ms / 1000.0
-            h = TAKEOFF_V_UP_MM_S * ts - 0.5 * GRAVITY_MM_S2 * ts * ts
-            if h <= 0.0:
-                self.state, self._land_ms, h = "landed", 0.0, 0.0
-            lift = h * 1000.0
-            dx, dy = (TAKEOFF_V_AWAY_MM_S * FRAME_S * c for c in self._to_dir)
+            t_rec = self._air_ms / 1000.0 / FLIGHT_SLOWDOWN
+            x, y, z, yaw_rel = self._flight_at(t_rec)
+            ramp = _smooth(self._air_ms / RAMP_MS)
+            self._tuck = ramp
+            self._wing_w = ramp
+            turn = (self._fl_head - self._fl_yaw0 + math.pi) % (2 * math.pi) - math.pi
+            self.yaw_rad = self._fl_yaw0 + turn * _smooth(self._air_ms / FLIGHT_TURN_MS) + yaw_rel
+            ch, sh = self._to_dir
+            tx, ty = x * ch - y * sh, x * sh + y * ch
+            dx, dy = tx - self._fl_prev[0], ty - self._fl_prev[1]
+            self._fl_prev, self._fl_vel = (tx, ty), (dx, dy)
+            self._fl_lift_mm = min(z * _smooth(self._air_ms / 100.0), FLIGHT_CEILING_MM)
+            lift = self._fl_lift_mm * 1000.0
+            ext = 1.0 - ramp
+            if t_rec >= (len(self._clip["x"]) - 1) / self._flight.doc["sample_rate_hz"]:
+                self.state, self._desc_s = "descending", 0.0
+        elif self.state == "descending":
+            self._desc_s += FRAME_S
+            u = self._desc_s / DESCENT_S
+            e = _smooth(u)
+            lift = self._fl_lift_mm * (1.0 - e) * 1000.0
+            dx, dy = (v * (1.0 - e) for v in self._fl_vel)
+            self._tuck = 1.0 - _smooth((self._desc_s - (DESCENT_S - 0.15)) / 0.15)  # legs come down before touchdown
+            if u >= 1.0:
+                self.state, self._land_ms, lift = "landed", 0.0, 0.0
         else:  # landed
             self._land_ms += ms
-            ext = max(0.0, 1.0 - self._land_ms / LANDED_MS)
+            r = max(0.0, 1.0 - self._land_ms / LANDED_MS)
+            ext, self._tuck, self._wing_w = r, 0.0, r
             if self._land_ms >= LANDED_MS:
                 self._to_t_ms, self.state = None, "standing"
+        flying = self.state in ("airborne", "descending")
+        if flying or self._wing_w > 0.0:
+            self._wing_cycles += WING_DISPLAY_HZ / SAMPLE_HZ
+        tuck = self._tuck
         pos = stand.pos.copy()
-        for i in self._mid:
-            c = pos[self._mid_coxa[i]].copy()
-            if i != self._mid_coxa[i]:
-                pos[i] = c + (stand.pos[i] - c) * (1.0 + (TAKEOFF_LEG_EXTENSION - 1.0) * ext)
-        contact = np.zeros_like(stand.contact) if self.state == "airborne" else stand.contact
-        return pos, stand.quat, contact, lift, dx, dy
+        idx, cox = self._leg_idx, self._leg_cox
+        scale = 1.0 + np.where(self._leg_mid, (TAKEOFF_LEG_EXTENSION - 1.0) * ext * (1.0 - tuck), 0.0) + (LEG_TUCK - 1.0) * tuck
+        c = stand.pos[cox]
+        pos[idx] = c + (stand.pos[idx] - c) * scale[:, None]
+        contact = np.zeros_like(stand.contact) if flying else stand.contact
+        return pos, stand.quat, contact, lift, dx, dy, self._wing_angles()
 
     # -- command ------------------------------------------------------------------------
 
@@ -334,13 +426,15 @@ class KinematicBody:
         contact = np.empty((n, len(lib.legs)), int)
         thorax = np.empty((n, 3), int)
         yaw = np.empty(n)
+        wings = np.zeros((n, 6))
         blocked = False
         walls: set[str] = set()
         seq: list[str] = []
         for j in range(n):
             if self.busy:
                 phase_now = self.state
-                pos, quat, cont, lift, tdx, tdy = self._takeoff_frame()
+                pos, quat, cont, lift, tdx, tdy, wing = self._takeoff_frame()
+                wings[j] = wing
                 nx, ny = self.x_mm + tdx, self.y_mm + tdy
                 if self.bounds is not None:
                     cx, cy = min(max(nx, self.bounds[0]), self.bounds[1]), min(max(ny, self.bounds[2]), self.bounds[3])
@@ -423,6 +517,9 @@ class KinematicBody:
             "thorax": {"pos_um": thorax, "yaw_deg": np.round(yaw, 3)},
             "body_mode": self.mode,
         }
+        if wings.any():
+            out["wings"] = np.round(wings, 2)
+            out["wings_note"] = WING_NOTE
         if self.bounds is not None:
             out["world"] = {"bounds_mm": list(self.bounds), "blocked": blocked, "walls": sorted(walls), "note": WORLD_NOTE}
         else:

@@ -40,3 +40,18 @@ export function followStep(cur: ArrayLike<number>, want: ArrayLike<number>, alph
   if (alpha >= 1 || Math.hypot(d[0], d[1], d[2]) <= eps) return { pos: [want[0], want[1], want[2]], settled: true };
   return { pos: [cur[0] + d[0] * alpha, cur[1] + d[1] * alpha, cur[2] + d[2] * alpha], settled: false };
 }
+
+/** Flight wing pose from one frame of the server's `wings` (6 numbers, degrees, flybody convention: left [stroke, deviation,
+ *  rotation] then right): wing_*_stroke/dev/rot for the viewer, which composes R_up(stroke) R_fore(dev) R_span(rotation) about
+ *  the wing hinge (viewer axes: up = Y, fore = Z, lateral span = X). The flybody model is a different fly and its angle
+ *  conventions are not documented in the data, so the signs are OUR choice: the two wings mirror each other, stroke > 0 sweeps
+ *  forward, deviation > 0 lifts, rotation > 0 raises the leading edge. Right-hand rule about the viewer axes: the left wing (at +X)
+ *  swept forward turns about -Y, the right (at -X) about +Y; deviation +X / -X; rotation -X for both (mirror of a rotation about
+ *  the lateral axis keeps its sense). */
+export function flightWingPose(w: ArrayLike<number>): Partial<Record<JointId, number>> {
+  if (w.length !== 6 || !Array.from(w).every(Number.isFinite)) return {};
+  return {
+    wing_l_stroke: -w[0], wing_l_dev: w[1], wing_l_rot: -w[2],
+    wing_r_stroke: w[3], wing_r_dev: -w[4], wing_r_rot: -w[5],
+  };
+}

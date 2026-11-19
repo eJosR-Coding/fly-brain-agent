@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MAPPING } from "../src/bodyPose";
-import { escapePose, followStep, gridSegments, gridSnap, WING_RAISE_DEG } from "../src/bodyWorld";
+import { escapePose, flightWingPose, followStep, gridSegments, gridSnap, WING_RAISE_DEG } from "../src/bodyWorld";
 
 describe("escape -> wings", () => {
   it("raises both wings by the dnp01 mapping's full angle, and nothing otherwise", () => {
@@ -42,5 +42,18 @@ describe("camera follow", () => {
     let p: [number, number, number] = [0, 0, 0];
     for (let k = 0; k < 200; k++) p = followStep(p, [1, 2, 3], 0.2, 1e-4).pos as [number, number, number];
     expect(p).toEqual([1, 2, 3]);
+  });
+});
+
+describe("flightWingPose", () => {
+  it("mirrors the two wings: stroke and deviation flip sign, rotation keeps its sense", () => {
+    const p = flightWingPose([10, 20, 30, 10, 20, 30]);
+    expect(p.wing_l_stroke).toBe(-p.wing_r_stroke!);
+    expect(p.wing_l_dev).toBe(-p.wing_r_dev!);
+    expect(p.wing_l_rot).toBe(p.wing_r_rot);
+  });
+  it("is empty for anything that is not six finite numbers", () => {
+    expect(flightWingPose([1, 2, 3])).toEqual({});
+    expect(flightWingPose([1, 2, 3, 4, 5, NaN])).toEqual({});
   });
 });

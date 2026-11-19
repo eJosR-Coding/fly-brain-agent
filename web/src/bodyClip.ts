@@ -31,6 +31,8 @@ export interface WalkClip {
   escape: Uint8Array;
   /** whole-body motion of the thorax in the world, viewer axes and mm, relative to the first frame; null when absent */
   world: { pos: Float64Array; yawRad: Float64Array } | null;
+  /** flight wing angles, frame-major [frame][6] (degrees, flybody convention, left then right), from a live chunk; absent otherwise */
+  wings?: Float64Array;
 }
 
 /** Root transform of the whole fly at one time: `matrix` (column-major 4x4, viewer frame, mm) carries the mesh from the
@@ -151,6 +153,14 @@ function locate(clip: WalkClip, t: number): { i: number; j: number; a: number } 
   if (u < 0) u += n;
   const i = Math.min(Math.floor(u), n - 1);
   return { i, j: (i + 1) % n, a: u - i };
+}
+
+/** The six flight wing angles of the frame at time t, or null when the clip carries none (all zeros counts as none). */
+export function wingsAt(clip: WalkClip, t: number): number[] | null {
+  if (!clip.wings || clip.wings.length !== clip.nFrames * 6) return null;
+  const i = locate(clip, t).i;
+  const w = Array.from(clip.wings.subarray(i * 6, i * 6 + 6));
+  return w.some((v) => v !== 0) ? w : null;
 }
 
 /** The escape flag of the frame at time t (false when the clip carries none). */

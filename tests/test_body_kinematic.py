@@ -217,12 +217,40 @@ def test_gait_phase_slows_when_a_wall_blocks_the_fly():
     assert held.cycles < 0.35 * free.cycles  # held at the wall: legs no longer pedal at full rate
 
 
-def test_takeoff_runs_takeoff_airborne_landed_then_stands_and_the_root_leaves_the_floor():
-    b = body()
+def _fly(bounds=None, away=180.0, kind="straight"):
+    b = KinematicBody(bounds=bounds)
     run(b, 2, pace=0.0)
-    assert b.takeoff(180.0) and not b.takeoff(180.0)  # busy
-    outs = [b.advance(50.0, [0.0, 0.0], False, pace=0.0, turn=0.0) for _ in range(6)]
+    assert b.takeoff(away, kind) and not b.takeoff(away)  # busy
+    outs = [b.advance(50.0, [0.0, 0.0], False, pace=0.0, turn=0.0) for _ in range(90)]
+    return b, outs
+
+
+def test_takeoff_flies_a_real_clip_then_descends_lands_and_stands():
+    b, outs = _fly()
     seq = [s for o in outs for s in o["state_seq"]]
-    assert [s for i, s in enumerate(seq) if i == 0 or seq[i - 1] != s][:3] == ["takeoff", "airborne", "landed"]
+    assert [s for i, s in enumerate(seq) if i == 0 or seq[i - 1] != s][:4] == ["takeoff", "airborne", "descending", "landed"]
     z = np.concatenate([o["thorax"]["pos_um"][:, 2] for o in outs])
     assert z.max() > z.min() + 2000 and outs[-1]["state"] == "standing" and not b.busy
+    assert z[-1] == pytest.approx(z[0], abs=1)  # back on the floor
+    w = np.concatenate([o["wings"] for o in outs if "wings" in o])
+    assert w.shape[1] == 6 and np.ptp(w[:, 0]) > 100  # stroke sweeps > 100 deg (flybody wingbeat), both wings alike
+    assert np.allclose(w[:, :3], w[:, 3:]) and "wings" not in outs[-1]  # wings folded at the end
+
+
+def test_flight_stays_inside_the_glass_and_legs_tuck():
+    b, outs = _fly(bounds=(-8, 8, -8, 8))
+    p = np.concatenate([o["thorax"]["pos_um"] for o in outs]) / 1000.0
+    assert np.abs(p[:, :2]).max() <= 8.0 + 1e-6 and (p[:, 2] - p[0, 2]).max() <= 45.0
+    mid = next(o for o in outs if o["state"] == "airborne" and o["contact"].sum() == 0)
+    stand = b.lib.stand.pos
+    i = b.lib.bodies.index("lf_tibia")
+    c = b.lib.bodies.index("lf_coxa")
+    assert np.linalg.norm(mid["frames"][-1][i][:3] - stand[c]) < 0.7 * np.linalg.norm(stand[i] - stand[c])
+
+
+def test_flight_asset_carries_its_provenance():
+    from flybrain.body_kinematic import load_flight
+    f = load_flight()
+    prov = f.doc["provenance"]
+    assert prov["doi"] == "10.25378/janelia.25309105.v4" and prov["license"] == "GPL-3.0-or-later"
+    assert {c["kind"] for c in f.clips} == {"straight", "left", "right"} and f.wing.shape == (100, 3)
