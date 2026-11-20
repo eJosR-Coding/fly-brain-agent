@@ -15,8 +15,15 @@ noun
 [![MCP](https://img.shields.io/badge/tools-MCP-000000)](https://modelcontextprotocol.io)
 [![LangGraph](https://img.shields.io/badge/agent-LangGraph-1C3C3C?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
 [![FlyWire](https://img.shields.io/badge/data-FlyWire%20v783-6A5ACD)](https://flywire.ai)
-![Tests](https://img.shields.io/badge/tests-330%20passing-brightgreen)
-![Status](https://img.shields.io/badge/status-agent%20and%203D%20viewer%20work-orange)
+![Tests](https://img.shields.io/badge/tests-1207%20python%20%2B%20974%20web-brightgreen)
+![Status](https://img.shields.io/badge/status-live%20sandbox%20v1-orange)
+
+<p align="center">
+  <a href="assets/fly-brain-agent-trailer.mp4"><img src="assets/fly-brain-agent-trailer.webp" alt="Live session: the user types Give him a sugar cube in the chat, the fly walks to the cube and feeds until it is gone, then the 3D brain view is rotated" width="800"></a>
+  <br>
+  <sub>A live session: chat "Give him a sugar cube", the fly walks over and feeds, then the brain view. Click for the full video (MP4).
+  Cursor in the video: <a href="https://github.com/ful1e5/apple_cursor">Apple Cursor</a> by ful1e5 (GPL-3.0).</sub>
+</p>
 
 **Ask a question in plain language. An agent searches 139,248 real neurons and answers.**
 
