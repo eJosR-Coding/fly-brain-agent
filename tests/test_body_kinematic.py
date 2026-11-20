@@ -198,11 +198,11 @@ def test_kinematic_speed_and_yaw_match_the_physics_run_it_was_recorded_from():
     def measure(pos_um, yaw_deg):
         """(forward speed mm/s along the heading, yaw rate deg/s) over frames i0..i1, the library's own definition."""
         pos = np.asarray(pos_um, float)[:, :2] / 1000.0
-        yaw = np.radians(np.asarray(yaw_deg, float))
+        yaw = np.unwrap(np.radians(np.asarray(yaw_deg, float)))  # the reported yaw wraps at +-180 deg (3D pose)
         mid = 0.5 * (yaw[i0 + 1:i1 + 1] + yaw[i0:i1])
         vel = np.diff(pos[i0:i1 + 1], axis=0) * 200.0
         fwd = np.mean(vel[:, 0] * np.cos(mid) + vel[:, 1] * np.sin(mid))
-        return float(fwd), float((yaw_deg[i1] - yaw_deg[i0]) / ((i1 - i0) / 200))
+        return float(fwd), float(np.degrees(yaw[i1] - yaw[i0]) / ((i1 - i0) / 200))
 
     phys_speed, phys_rate = measure(w["pos_um"], w["yaw_deg"])
     outs = run(body(), 60, pace=pace, turn=turn)
