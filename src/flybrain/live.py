@@ -394,6 +394,14 @@ class LiveSession:
         t0 = self._clock()
         seen = None
         self._touched = self.world.touching(*self._pose)
+        feeding = self.spont is not None and self.spont.state == "feed"
+        if feeding and self._touched:
+            # the meal uses the cube up over this feeding bout (ours): a cube is one meal, so it is gone when the fly stops eating
+            self.world.consume(self._touched, self.chunk_ms, meal_ms=getattr(self.spont, "_feed_ms", live_world.MEAL_MS))
+            self._fed_ids = getattr(self, "_fed_ids", set()) | set(self._touched)
+        elif not feeding and getattr(self, "_fed_ids", None):
+            self.world.consume(self._fed_ids, float("inf"))  # the meal ended: no crumb is left behind
+            self._fed_ids = set()
         head_deg = 0.0
         if self.spont is not None:
             pos, yaw = self._pose

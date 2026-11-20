@@ -111,7 +111,7 @@ export function closeMessage(code: number, reason: string, state: LiveState | "l
 
 /** The line under the body while a session runs: only what the server reported, plus the server's own caption. */
 /** display flapping rate of a flying fly (Hz of wall time) */
-export const WING_FLAP_HZ = 20;
+export const WING_FLAP_HZ = 8;
 
 export function liveCaption(s: Pick<LiveStatus, "speedLabel" | "backend" | "fallback" | "bodyMode" | "dropped" | "serverCaption"> & { surface?: string | null; flightNote?: string }): string {
   const parts = ["live", s.speedLabel ?? "waiting for the first chunk"];

@@ -390,3 +390,16 @@ def test_moving_sphere_darkens_the_rays_it_covers_and_grows():
     scene.moving = [fly_eye.MovingSphere((10.0, 0.0, 1.3), (-25.0, 0.0, 0.0), 1.0, 0.0)]
     lum = scene.luminance(np.array([[0.0, 0.0, 1.3]]), np.zeros(1), dirs)
     assert lum[0, 0] < 0.2 * base[0, 0] and abs(lum[0, 1] - base[0, 1]) < 1e-6
+
+
+def test_feeding_uses_up_a_sugar_cube_and_never_coffee():
+    from flybrain import live_world
+
+    w = live_world.World(None)
+    sugar = w.add("sugar", 0.0, 0.0)
+    coffee = w.add("coffee", 5.0, 0.0)
+    w.consume([sugar["id"], coffee["id"]], live_world.MEAL_MS / 2)
+    assert 0.0 < sugar["amount"] < 1.0 and sugar["size_mm"] < live_world.CUBE_MM
+    assert coffee.get("amount", 1.0) == 1.0
+    assert w.consume([sugar["id"]], live_world.MEAL_MS) == [sugar["id"]]
+    assert [o["id"] for o in w.objects] == [coffee["id"]]

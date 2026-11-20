@@ -20,6 +20,7 @@ TOUCH_MM = 1.0
 TASTE_HZ = 100.0
 CUBE_MM = 1.5
 MAX_OBJECTS = 16
+MEAL_MS = 8000.0  # OUR choice: a sugar cube is one meal; it is used up after this much feeding time (labelled, not a measured intake)
 MOUTH_MAX_Z_MM = CUBE_MM + TOUCH_MM + 1.0  # contact needs the thorax this low (cubes sit on the floor); 2D contact on a wall was a false feed
 # "Lanzale algo" / "asustala": a dark sphere thrown at the fly's head on a straight line (OUR choice, not validated).
 # It reproduces the eye calibration's looming disc: r / v = 1 mm / 25 mm/s = 40 ms, starting 20 mm away (half-angle 2.9 deg),
@@ -54,7 +55,8 @@ class World:
             y_mm = min(max(y_mm, self.bounds[2] + m), self.bounds[3] - m)
         self._n += 1
         self.used = True
-        obj = {"id": f"{key}{self._n}", "kind": key, "pos_mm": [round(x_mm, 3), round(y_mm, 3), CUBE_MM / 2], "size_mm": CUBE_MM}
+        obj = {"id": f"{key}{self._n}", "kind": key, "pos_mm": [round(x_mm, 3), round(y_mm, 3), CUBE_MM / 2], "size_mm": CUBE_MM,
+               "amount": 1.0}
         self.objects.append(obj)
         return obj
 
@@ -107,6 +109,21 @@ class World:
                 o["pos_mm"] = [round(p + v * te / 1000.0, 3) for p, v in zip(o["p0_mm"], o["vel_mm_s"])]
             keep.append(o)
         self.objects = keep
+
+    def consume(self, ids, dt_ms: float, meal_ms: float = MEAL_MS) -> list[str]:
+        """Feeding eats the touched SUGAR cubes: each loses dt_ms / meal_ms of its amount and shrinks (same volume
+        fraction); a cube at 0 is removed. Returns the ids eaten up. Our labelled rule (coffee is never eaten)."""
+        gone = []
+        for o in self.objects:
+            if o["kind"] == "sugar" and o["id"] in ids:
+                o["amount"] = max(0.0, o.get("amount", 1.0) - float(dt_ms) / max(float(meal_ms), 1.0))
+                o["size_mm"] = round(CUBE_MM * o["amount"] ** (1.0 / 3.0), 3)
+                o["pos_mm"][2] = o["size_mm"] / 2.0
+                if o["amount"] <= 0.0:
+                    gone.append(o["id"])
+        if gone:
+            self.objects = [o for o in self.objects if o["id"] not in gone]
+        return gone
 
     def clear(self) -> int:
         n = len(self.objects)
