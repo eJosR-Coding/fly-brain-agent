@@ -81,7 +81,7 @@ def test_seek_turns_toward_sugar_and_feed_stops_then_cooldown():
     sp = _sp()
     sugar = {"id": "sugar1", "kind": "sugar", "pos_mm": [5.0, 8.0, 0.75]}  # about 58 deg to the left
     out = sp.step(0.0, ctx=_ctx([sugar]))
-    assert out["state"] == "seek" and "dna02_left" in out["rates"] and "dna02_right" not in out["rates"] and out["rates"]["dng100"] > 0
+    assert out["state"] == "seek" and "dna02_left" in out["rates"] and "dna02_right" not in out["rates"] and "dng100" not in out["rates"]  # 58 deg off: turn first, no walking
     assert sp.food["target"] == "sugar1"
     out = sp.step(50.0, ctx=_ctx([sugar], touched=["sugar1"]))
     assert out["state"] == "feed" and out["rates"] == {}
@@ -99,3 +99,25 @@ def test_coffee_turns_away_and_touch_pauses():
     assert out["state"] == "avoid" and ("dna02_left" in out["rates"] or "dna02_right" in out["rates"])
     out = sp.step(50.0, ctx=_ctx([coffee], touched=["coffee1"]))
     assert out["state"] == "feed" and out["rates"] == {}
+
+
+def test_seek_from_wall_and_ceiling_and_no_false_wall_contact():
+    import numpy as np
+    from flybrain import live_world, spontaneous as sp
+
+    cube = {"id": "sugar1", "kind": "sugar", "pos_mm": [10.0, 0.0, 0.75], "size_mm": 1.5}
+    # on the x_max wall (n = -x), heading up (+z): sugar present -> seek, bearing points down (180 deg)
+    ctx = {"x_mm": 30.0, "y_mm": 0.0, "z_um": 8000.0, "yaw_deg": 0.0, "objects": [cube], "touched": [], "n": np.array([-1.0, 0, 0]),
+           "f": np.array([0.0, 0, 1.0]), "bounds_mm": [-30, 30, -30, 30]}
+    s = sp.Spontaneous(rows={})
+    want, tgt, bearing, _ = s._rule(0.0, ctx)
+    assert want == "seek" and tgt is cube and abs(abs(bearing) - 180.0) < 1e-6
+    # ceiling: heads to the nearest wall (x_max here, +x)
+    ctx2 = {**ctx, "x_mm": 25.0, "z_um": 30000.0, "n": np.array([0.0, 0, -1.0]), "f": np.array([1.0, 0, 0])}
+    want, _, bearing, _ = s._rule(0.0, ctx2)
+    assert want == "seek" and abs(bearing) < 1e-6
+    # a fly on a wall does not "touch" a floor cube by 2D projection
+    w = live_world.World((-30, 30, -30, 30))
+    o = w.add("sugar", 10.0, 0.0)
+    assert w.touching(np.array([[9.5e3, 0.0, 8000.0]]), np.array([0.0])) == []
+    assert w.touching(np.array([[9.5e3, 0.0, 900.0]]), np.array([0.0])) == [o["id"]]

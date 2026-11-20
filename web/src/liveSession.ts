@@ -7,6 +7,7 @@
  *
  *  State is plain fields, not reactive: `tick` runs from requestAnimationFrame (see liveClient) and writes straight to
  *  the sinks. */
+import { poseFor } from "./bodyPose";
 import { clipMatrices, escapeAt, headAt, wingCycleAt, wingsAt, worldPose } from "./bodyClip";
 import type { JointId } from "./bodyPose";
 import { escapePose, flightWingPose } from "./bodyWorld";
@@ -139,6 +140,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
   let sentEscape: boolean | null = null;
   let sentWings = false;
   let sentHead: number | null = null;
+  let sentPro = 0;
   let lastCaption: string | null = null;
   let lastObjects: string | null = null;
   let info = { speedLabel: null as string | null, backend: null as string | null, fallback: null as string | null, bodyMode: null as string | null, surface: null as string | null };
@@ -182,7 +184,7 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
   };
   const reset = () => {
     playback.reset();
-    header = null; z0 = null; lastSeq = -1; stopped = false; lastTick = null; shownSeq = -1; shownT = -1; sentEscape = null; sentWings = false; sentHead = null;
+    header = null; z0 = null; lastSeq = -1; stopped = false; lastTick = null; shownSeq = -1; shownT = -1; sentEscape = null; sentWings = false; sentHead = null; sentPro = 0;
     lastCaption = null; message = null; serverCaption = ""; note = "";
     info = { speedLabel: null, backend: null, fallback: null, bodyMode: null, surface: null };
     n.received = n.played = n.ignored = n.malformed = 0;
@@ -328,15 +330,21 @@ export function createLiveSession(deps: LiveDeps): LiveSession {
       const wing = wingsAt(clip, f.tSec) ? (wingCycleAt(clip, (nowMs / 1000) * WING_FLAP_HZ) ?? wingsAt(clip, f.tSec)) : null;
       // head yaw (spontaneous saccades, turn lead, grooming sweep; ours): carried in every pose message while the chunk has it
       const head = headAt(clip, f.tSec);
-      const withHead = (p: Record<string, number>) => (head === null ? p : { ...p, head });
+      // proboscis extension follows the chunk's MN9 readout (labelled illustration, same mapping as recorded runs: MAPPING.mn9)
+      const pro = Math.round((poseFor({ mn9: clip.mn9Hz ?? 0 }, 0).proboscis ?? 0) * 10) / 10;
+      const withHead = (p: Record<string, number>) => {
+        const q: Record<string, number> = head === null ? p : { ...p, head };
+        return pro > 0 || sentPro !== 0 ? { ...q, proboscis: pro } : q;
+      };
       if (wing || sentWings) { guard("pose", () => deps.sinks.setPose(withHead(wing ? flightWingPose(wing) : {}))); sentEscape = null; }
       sentWings = wing !== null;
       const esc = wing ? false : escapeAt(clip, f.tSec);
-      if (!wing && (esc !== (sentEscape ?? false) || sentEscape === null && esc || head !== sentHead)) {
+      if (!wing && (esc !== (sentEscape ?? false) || sentEscape === null && esc || head !== sentHead || pro !== sentPro)) {
         guard("pose", () => deps.sinks.setPose(withHead(escapePose(esc))));
       }
       sentEscape = esc;
       sentHead = head;
+      sentPro = pro;
       return true;
     },
     dispose() {

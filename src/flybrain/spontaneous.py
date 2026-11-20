@@ -45,9 +45,11 @@ GROOM_OFF_HZ = 3.0
 # it only injects DNg100 + a unilateral DNa02 proportional to the bearing error; the body is never moved by it.
 SMELL_RADIUS_MM = 40.0  # a sugar cube closer than this "is smelled" (proxy: no odour model)
 BITTER_RADIUS_MM = 10.0  # coffee closer than this is avoided (bitter avoidance is real in flies; radius and gains are ours)
-FLOOR_Z_UM = 1600.0  # the drive seeks only while the thorax is low (on the floor), not on walls / in the air
-TURN_GAIN = 40.0 / 60.0  # Hz of DNa02 per degree of bearing error (saturates at 40 Hz at 60 deg); dead zone below
-TURN_DEADZONE_DEG = 8.0
+FLOOR_Z_UM = 1600.0  # fallback floor test when the body gives no orientation (physics body): thorax this low = on the floor
+TURN_GAIN = 60.0 / 40.0  # Hz of DNa02 per degree of bearing error (saturates at SEEK_TURN_MAX_HZ at 40 deg); dead zone below
+SEEK_TURN_MAX_HZ = 60.0  # ours: a stronger unilateral DNa02 drive for seeking (the body turn saturates at 1)
+SEEK_WALK_DEG = 25.0  # seek walks (DNg100) only when the bearing error is below this; otherwise it turns first (ours)
+TURN_DEADZONE_DEG = 6.0
 FEED_S = (5.0, 15.0)  # stand still this long after sugar contact (uniform draw)
 BITTER_PAUSE_S = 1.0  # stop this long after coffee contact, then walk away
 COOLDOWN_S = 60.0  # a fed-from cube is ignored this long (satiety); a cube that was avoided likewise after contact
@@ -126,9 +128,42 @@ class Spontaneous:
         else:
             self.left_ms = self._draw(state)
 
+    @staticmethod
+    def _surface_dir(ctx: dict) -> tuple | None:
+        """Off the floor: the world direction the fly should walk to get back down (ours): straight down on a wall, toward the nearest wall on the
+        ceiling. Returns (bearing deg + left in the surface frame, label) or None when the pose has no orientation or the fly is on the floor."""
+        n, f = ctx.get("n"), ctx.get("f")
+        if n is None or f is None or n[2] > 0.5:
+            return None
+        if n[2] < -0.5:  # ceiling: head to the nearest wall (outward direction of that wall, tangent to the ceiling)
+            b = ctx.get("bounds_mm")
+            if not b:
+                return None
+            x, y = ctx["x_mm"], ctx["y_mm"]
+            cands = [(x - b[0], (-1.0, 0.0, 0.0)), (b[1] - x, (1.0, 0.0, 0.0)), (y - b[2], (0.0, -1.0, 0.0)), (b[3] - y, (0.0, 1.0, 0.0))]
+            w, label = min(cands)[1], "ceiling"
+        else:
+            w, label = (0.0, 0.0, -1.0), "wall"
+        n3, f3, w3 = np.asarray(n, float), np.asarray(f, float), np.asarray(w, float)
+        p = w3 - float(w3 @ n3) * n3
+        if np.linalg.norm(p) < 1e-6:
+            return 0.0, label
+        left = np.cross(n3, f3)
+        return math.degrees(math.atan2(float(left @ p), float(f3 @ p))), label
+
     def _rule(self, t_ms: float, ctx: dict) -> tuple[str | None, dict | None, float, float]:
         """(wanted state, target, bearing deg + left, distance mm) from the pose and objects, or (None, ...) when no rule applies."""
         x, y, yaw = ctx["x_mm"], ctx["y_mm"], ctx["yaw_deg"]
+        off = self._surface_dir(ctx)
+        if off is not None:  # on a wall / the ceiling: any sugar within smell range (3D) sends the fly down; coffee is ignored here
+            z = ctx["z_um"] / 1000.0
+            near = [(math.dist((o["pos_mm"][0], o["pos_mm"][1], o["pos_mm"][2]), (x, y, z)), o) for o in ctx["objects"]
+                    if o.get("kind") == "sugar" and self._ignore.get(o["id"], -1.0) <= t_ms]
+            near = [q for q in near if q[0] <= SMELL_RADIUS_MM]
+            if not near:
+                return None, None, 0.0, 0.0
+            d, o = min(near, key=lambda q: q[0])
+            return "seek", o, off[0], d
         best = None
         for o in ctx["objects"]:
             if o.get("kind") not in ("sugar", "coffee") or self._ignore.get(o["id"], -1.0) > t_ms:
@@ -178,7 +213,8 @@ class Spontaneous:
                     self._feed_kind = o["kind"]
                     self._enter(t_ms, "feed")
             if self.state != "feed":
-                want, tgt, bearing, dist = self._rule(t_ms, ctx) if ctx["z_um"] < FLOOR_Z_UM else (None, None, 0.0, 0.0)
+                on_floor = (ctx["n"][2] > 0.5) if ctx.get("n") is not None else ctx["z_um"] < FLOOR_Z_UM
+                want, tgt, bearing, dist = self._rule(t_ms, ctx) if (on_floor or self._surface_dir(ctx) is not None) else (None, None, 0.0, 0.0)
                 if want and self.state != want:
                     self._enter(t_ms, want)
                 elif not want and self.state in ("seek", "avoid"):
@@ -187,9 +223,10 @@ class Spontaneous:
         s = self.state
         rates: dict[str, float] = {}
         if s in ("seek", "avoid") and bearing is not None:
-            rates = {} if (s == "avoid" and abs(bearing) > 90.0) else {"dng100": INJECT_HZ["walk"]["dng100"]}  # avoid: turn first, walk once facing away
+            lim = 90.0 if s == "avoid" else SEEK_WALK_DEG  # avoid: turn first, walk once facing away; seek: walk once facing the cube
+            rates = {} if abs(bearing) > lim else {"dng100": INJECT_HZ["walk"]["dng100"]}
             if abs(bearing) > TURN_DEADZONE_DEG:
-                rates["dna02_left" if bearing > 0 else "dna02_right"] = min(abs(bearing) * TURN_GAIN, 40.0)
+                rates["dna02_left" if bearing > 0 else "dna02_right"] = min(abs(bearing) * TURN_GAIN, SEEK_TURN_MAX_HZ)
         elif s == "feed":
             rates = {}
         elif s == "walk":
@@ -213,6 +250,20 @@ class Spontaneous:
         self.food = {"state": s if s in ("seek", "feed", "avoid") else "none", "target": self._target["id"] if self._target and s in ("seek", "feed", "avoid") else None,
                      "bearing_deg": None if bearing is None else round(bearing, 1), "distance_mm": None if dist is None else round(dist, 2), "note": FOOD_NOTE}
         return {"rates": rates, "state": s, "head_deg": head}
+
+    def flight_target(self, ctx: dict) -> dict | None:
+        """In flight with sugar present: the nearest sugar cube (xy mm) the flight is steered to and lands beside (OUR labelled rule), else None."""
+        if self.mode == "off" or ctx is None:
+            return None
+        t_ms = self.log[-1][0] if self.log else 0.0
+        best = None
+        for o in ctx["objects"]:
+            if o.get("kind") != "sugar" or self._ignore.get(o["id"], -1.0) > ctx.get("t_ms", t_ms):
+                continue
+            d = math.hypot(o["pos_mm"][0] - ctx["x_mm"], o["pos_mm"][1] - ctx["y_mm"])
+            if d <= SMELL_RADIUS_MM and (best is None or d < best[0]):
+                best = (d, o)
+        return None if best is None else {"id": best[1]["id"], "x_mm": best[1]["pos_mm"][0], "y_mm": best[1]["pos_mm"][1], "dist_mm": best[0]}
 
     def inject(self, rates: dict[str, float]) -> tuple[np.ndarray, np.ndarray]:
         """(rows, hz) for the group rates of `step` (unknown or empty groups are skipped)."""

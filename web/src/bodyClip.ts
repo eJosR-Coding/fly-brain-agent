@@ -39,6 +39,8 @@ export interface WalkClip {
   wingCycle?: Float64Array;
   /** head yaw per frame (degrees, + left), from a live chunk; absent otherwise */
   head?: Float64Array;
+  /** MN9 (proboscis motor neuron) readout of the chunk in Hz, from a live chunk; absent otherwise */
+  mn9Hz?: number;
 }
 
 /** Root transform of the whole fly at one time: `matrix` (column-major 4x4, viewer frame, mm) carries the mesh from the

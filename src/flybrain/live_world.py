@@ -20,6 +20,7 @@ TOUCH_MM = 1.0
 TASTE_HZ = 100.0
 CUBE_MM = 1.5
 MAX_OBJECTS = 16
+MOUTH_MAX_Z_MM = CUBE_MM + TOUCH_MM + 1.0  # contact needs the thorax this low (cubes sit on the floor); 2D contact on a wall was a false feed
 # "Lanzale algo" / "asustala": a dark sphere thrown at the fly's head on a straight line (OUR choice, not validated).
 # It reproduces the eye calibration's looming disc: r / v = 1 mm / 25 mm/s = 40 ms, starting 20 mm away (half-angle 2.9 deg),
 # half-angle growing as asin(r / d) up to 75 deg after 800 ms; there it stops (no collision physics) and is held THREAT_HOLD_MS
@@ -117,6 +118,8 @@ class World:
         if not self.objects:
             return []
         x, y = float(pos_um[-1][0]) / 1000.0, float(pos_um[-1][1]) / 1000.0
+        if float(pos_um[-1][2]) / 1000.0 > MOUTH_MAX_Z_MM:  # on a wall / ceiling / in the air the mouth is far above the floor cubes
+            return []
         yaw = math.radians(float(yaw_deg[-1]))
         hx, hy = x + HEAD_AHEAD_MM * math.cos(yaw), y + HEAD_AHEAD_MM * math.sin(yaw)
         out = []
