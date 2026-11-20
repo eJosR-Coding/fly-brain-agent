@@ -22,7 +22,7 @@ noun
   <a href="assets/fly-brain-agent-trailer.mp4"><img src="assets/fly-brain-agent-trailer.webp" alt="Live session: the user types Give him a sugar cube in the chat, the fly walks to the cube and feeds until it is gone, then the 3D brain view is rotated" width="800"></a>
   <br>
   <sub>A live session: chat "Give him a sugar cube", the fly walks over and feeds, then the brain view. Click for the full video (MP4).
-  Cursor in the video: <a href="https://github.com/ful1e5/apple_cursor">Apple Cursor</a> by ful1e5 (GPL-3.0).</sub>
+  Cursor in the video: <a href="https://github.com/ful1e5/apple_cursor">Apple Cursor</a> by ful1e5 (GPL-3.0); whoosh and keystroke sounds from <a href="https://mixkit.co/free-sound-effects/">Mixkit</a>.</sub>
 </p>
 
 **Ask a question in plain language. An agent searches 139,248 real neurons and answers.**
