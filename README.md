@@ -56,6 +56,8 @@ same tools work from Claude Code or any other MCP client without changing a line
 
 ## Architecture
 
+For the full picture with diagrams, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 Dependencies point inward. The core knows nothing about MCP, the web or LLMs.
 
 ```text
