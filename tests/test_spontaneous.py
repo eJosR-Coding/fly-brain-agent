@@ -81,7 +81,7 @@ def test_seek_turns_toward_sugar_and_feed_stops_then_cooldown():
     sp = _sp()
     sugar = {"id": "sugar1", "kind": "sugar", "pos_mm": [5.0, 8.0, 0.75]}  # about 58 deg to the left
     out = sp.step(0.0, ctx=_ctx([sugar]))
-    assert out["state"] == "seek" and "dna02_left" in out["rates"] and "dna02_right" not in out["rates"] and out["rates"]["dng100"] > 0
+    assert out["state"] == "seek" and "dna02_left" in out["rates"] and "dna02_right" not in out["rates"] and "dng100" not in out["rates"]  # 58 deg off: turn first, no walking
     assert sp.food["target"] == "sugar1"
     out = sp.step(50.0, ctx=_ctx([sugar], touched=["sugar1"]))
     assert out["state"] == "feed" and out["rates"] == {}
