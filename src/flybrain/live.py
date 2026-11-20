@@ -442,7 +442,8 @@ class LiveSession:
                 self.body.set_air(dn.get("dng02", 0.0), dn.get("dnp03_left", 0.0), dn.get("dnp03_right", 0.0),
                                   self._land_trigger(float(dn.get("dnp07", 0.0)) + float(dn.get("dnp10", 0.0)), self.body.state == "airborne"))
             if getattr(self.body, "takes_command", False):  # kinematic body: the exact pace and turn, not a clipped drive
-                out = self.body.advance(self.chunk_ms, sample.drive, sample.escape, pace=sample.pace, turn=sample.turn)
+                feeding = self.spont is not None and self.spont.state == "feed"  # OUR labelled gate: while feeding, the commanded pace and turn are zero (the DNs still report what the brain did)
+                out = self.body.advance(self.chunk_ms, sample.drive, sample.escape, pace=0.0 if feeding else sample.pace, turn=0.0 if feeding else sample.turn)
             else:
                 out = self.body.advance(self.chunk_ms, sample.drive, sample.escape)
         t2 = self._clock()

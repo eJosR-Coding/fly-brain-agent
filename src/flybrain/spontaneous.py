@@ -46,8 +46,10 @@ GROOM_OFF_HZ = 3.0
 SMELL_RADIUS_MM = 40.0  # a sugar cube closer than this "is smelled" (proxy: no odour model)
 BITTER_RADIUS_MM = 10.0  # coffee closer than this is avoided (bitter avoidance is real in flies; radius and gains are ours)
 FLOOR_Z_UM = 1600.0  # fallback floor test when the body gives no orientation (physics body): thorax this low = on the floor
-TURN_GAIN = 40.0 / 60.0  # Hz of DNa02 per degree of bearing error (saturates at 40 Hz at 60 deg); dead zone below
-TURN_DEADZONE_DEG = 8.0
+TURN_GAIN = 60.0 / 40.0  # Hz of DNa02 per degree of bearing error (saturates at SEEK_TURN_MAX_HZ at 40 deg); dead zone below
+SEEK_TURN_MAX_HZ = 60.0  # ours: a stronger unilateral DNa02 drive for seeking (the body turn saturates at 1)
+SEEK_WALK_DEG = 25.0  # seek walks (DNg100) only when the bearing error is below this; otherwise it turns first (ours)
+TURN_DEADZONE_DEG = 6.0
 FEED_S = (5.0, 15.0)  # stand still this long after sugar contact (uniform draw)
 BITTER_PAUSE_S = 1.0  # stop this long after coffee contact, then walk away
 COOLDOWN_S = 60.0  # a fed-from cube is ignored this long (satiety); a cube that was avoided likewise after contact
@@ -221,9 +223,10 @@ class Spontaneous:
         s = self.state
         rates: dict[str, float] = {}
         if s in ("seek", "avoid") and bearing is not None:
-            rates = {} if (s == "avoid" and abs(bearing) > 90.0) else {"dng100": INJECT_HZ["walk"]["dng100"]}  # avoid: turn first, walk once facing away
+            lim = 90.0 if s == "avoid" else SEEK_WALK_DEG  # avoid: turn first, walk once facing away; seek: walk once facing the cube
+            rates = {} if abs(bearing) > lim else {"dng100": INJECT_HZ["walk"]["dng100"]}
             if abs(bearing) > TURN_DEADZONE_DEG:
-                rates["dna02_left" if bearing > 0 else "dna02_right"] = min(abs(bearing) * TURN_GAIN, 40.0)
+                rates["dna02_left" if bearing > 0 else "dna02_right"] = min(abs(bearing) * TURN_GAIN, SEEK_TURN_MAX_HZ)
         elif s == "feed":
             rates = {}
         elif s == "walk":
