@@ -852,7 +852,9 @@ The fly body mesh in `web/public/fly-body.*` comes from NeuroMechFly v2 / flygym
 
 This project only exists because these teams published their work openly. Please cite them:
 
-- **FlyWire** whole-brain connectome (Dorkenwald et al. 2024; Schlegel et al. 2024, Nature) and the FlyWire consortium.
+- **FlyWire** whole-brain connectome and the FlyWire consortium:
+  - Dorkenwald et al. 2024, "Neuronal wiring diagram of an adult brain", Nature. DOI [10.1038/s41586-024-07558-y](https://doi.org/10.1038/s41586-024-07558-y)
+  - Schlegel et al. 2024, "Whole-brain annotation and multi-connectome cell typing of Drosophila", Nature. DOI [10.1038/s41586-024-07686-5](https://doi.org/10.1038/s41586-024-07686-5)
 - **Whole-brain LIF model**: Shiu et al. 2024, Nature.
 - **BANC** brain and nerve cord connectome: Bates et al. (bioRxiv 10.1101/2025.07.31.667571), CC BY 4.0.
 - **NeuroMechFly v2 / flygym**: Wang-Chen et al. 2024, Nature Methods (Apache-2.0).
